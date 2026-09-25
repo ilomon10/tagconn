@@ -1,0 +1,93 @@
+import type { Session } from '@tagconn/shared';
+import type { Deps } from '../../core/di/index.js';
+import type { HookContext } from '../../core/event-bus/index.js';
+
+export const PROMPT_MAX = 200;
+
+export const truncate = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
+
+/** Sweep cadence, same as the agents idle/removal sweeper. */
+const SWEEP_MS = 5_000;
+
+export class SessionsService {
+  private sweeper?: NodeJS.Timeout;
+
+  constructor(private readonly deps: Deps<'sessionsRepository' | 'agentsRepository' | 'settings' | 'bus'>) {}
+
+  start(): void {
+    this.sweep();
+    this.sweeper = setInterval(() => this.sweep(), SWEEP_MS);
+    this.sweeper.unref();
+  }
+
+  stop(): void {
+    clearInterval(this.sweeper);
+  }
+
+  /** Lazily creates the session and applies lifecycle transitions. */
+  onHook(ctx: HookContext): void {
+    const { payload: p, ts } = ctx;
+    const repo = this.deps.sessionsRepository;
+    const prev = repo.get(ctx.sessionId);
+    const next: Session = prev ? { ...prev } : { id: ctx.sessionId, projectId: ctx.projectId, status: 'active', startedAt: ts };
+    next.projectId = ctx.projectId;
+    if (p.permission_mode) next.permissionMode = p.permission_mode;
+
+    const inMain = !p.agent_id;
+    switch (p.hook_event_name) {
+      case 'SessionStart':
+        next.status = 'active';
+        next.endedAt = undefined;
+        break;
+      case 'UserPromptSubmit':
+        if (inMain) {
+          next.status = 'active';
+          if (p.prompt) next.lastPrompt = truncate(p.prompt, PROMPT_MAX);
+        }
+        break;
+      case 'Stop':
+        if (inMain) next.status = 'idle';
+        break;
+      case 'SessionEnd':
+        next.status = 'ended';
+        next.endedAt = ts;
+        break;
+    }
+
+    const changed = !prev || JSON.stringify(prev) !== JSON.stringify(next);
+    repo.upsert(next, ts);
+    if (changed) this.deps.bus.emit('session.upserted', next);
+  }
+
+  /**
+   * Marks sessions idle/ended purely from inactivity: 'idle' after sessions.idleAfterSec with no hook
+   * event, 'ended' after sessions.endAfterSec with no live agents left either. Uses setStatus (not
+   * upsert) so marking a session idle doesn't reset the staleness clock the ended-transition measures
+   * from.
+   */
+  sweep(now = Date.now()): void {
+    const { idleAfterSec, endAfterSec } = this.deps.settings.get().sessions;
+    const idleCutoff = now - idleAfterSec * 1000;
+    const endedCutoff = now - endAfterSec * 1000;
+    const repo = this.deps.sessionsRepository;
+    const endedIds = new Set<string>();
+
+    for (const s of repo.staleSince(endedCutoff)) {
+      // "No live agents": every agent of this session is either off the floor already (removed) or
+      // itself stale past the ended cutoff. A plain `!removed` check would never fire here in
+      // practice — the always-present main agent only leaves 'active' via an explicit SessionEnd,
+      // which is exactly the event this sweep exists to cover for sessions that never sent one
+      // (crashed/killed CLI). Recency, not the removed flag alone, is what actually indicates "live".
+      if (this.deps.agentsRepository.bySession(s.id).some((a) => !a.removed && a.updatedAt >= endedCutoff)) continue;
+      endedIds.add(s.id);
+      repo.setStatus(s.id, 'ended', now);
+      this.deps.bus.emit('session.upserted', { ...s, status: 'ended', endedAt: now });
+    }
+
+    for (const s of repo.staleSince(idleCutoff)) {
+      if (endedIds.has(s.id) || s.status !== 'active') continue;
+      repo.setStatus(s.id, 'idle');
+      this.deps.bus.emit('session.upserted', { ...s, status: 'idle' });
+    }
+  }
+}

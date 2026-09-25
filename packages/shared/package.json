@@ -1,0 +1,10 @@
+{
+  "name": "@tagconn/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc -p tsconfig.json", "test": "vitest run --passWithNoTests" },
+  "dependencies": { "zod": "^4.1.0" },
+  "devDependencies": { "@tagconn/tsconfig": "workspace:*" }
+}

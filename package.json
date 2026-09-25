@@ -1,0 +1,36 @@
+{
+  "name": "tagconn",
+  "version": "0.1.0",
+  "description": "A magical 2D office that visualizes Claude Code sessions and subagents as characters, powered by hooks. No API key needed.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ilomon10/tagconn.git"
+  },
+  "homepage": "https://github.com/ilomon10/tagconn#readme",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "test": "turbo run test && pnpm run test:scripts",
+    "test:scripts": "vitest run --config scripts/vitest.config.ts",
+    "typecheck": "turbo run typecheck",
+    "office:install": "node scripts/install.ts",
+    "office:uninstall": "node scripts/install.ts --uninstall",
+    "office:doctor": "node scripts/doctor.ts",
+    "office:up": "docker compose up -d --build",
+    "office:down": "docker compose down",
+    "release": "node scripts/release.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.6",
+    "turbo": "^2.11.3",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

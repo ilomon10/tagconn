@@ -1,0 +1,150 @@
+import { useMemo, useState } from 'react';
+import { ALL_FLOORS, onFloor, useOfficeStore, visibleProjects, type ConnectionState } from '../stores/officeStore';
+import { enterDemo, exitDemo, startLive } from '../lib/connection';
+import { notificationsSupported, requestNotificationPermission } from '../lib/notify';
+import { formatTokens } from '../lib/format';
+import { sumUsage, totalTokens } from '../lib/tokens';
+import { FloorManager } from '../features/office/FloorManager';
+import { Button, Select, cx } from '../components/ui';
+
+export type Tab = 'office' | 'board' | 'log' | 'roles' | 'settings';
+export const TABS: { id: Tab; label: string }[] = [
+  { id: 'office', label: 'Office' },
+  { id: 'board', label: 'Board' },
+  { id: 'log', label: 'Log' },
+  { id: 'roles', label: 'Roles' },
+  { id: 'settings', label: 'Settings' },
+];
+
+const CONNECTION: Record<ConnectionState, { label: string; dot: string }> = {
+  idle: { label: 'Idle', dot: 'bg-ink-400' },
+  connecting: { label: 'Connecting…', dot: 'bg-amber-400 animate-pulse' },
+  connected: { label: 'Live', dot: 'bg-emerald-400' },
+  disconnected: { label: 'Offline', dot: 'bg-red-500' },
+  demo: { label: 'Demo', dot: 'bg-fuchsia-400' },
+};
+
+function FloorSelect() {
+  const projects = useOfficeStore((s) => s.projects);
+  const agents = useOfficeStore((s) => s.agents);
+  const selected = useOfficeStore((s) => s.selectedProjectId);
+  const select = useOfficeStore((s) => s.selectProject);
+  const [managing, setManaging] = useState(false);
+  const list = useMemo(() => visibleProjects(projects, { selectedId: selected }), [projects, selected]);
+  const count = (id: string) => Object.values(agents).filter((a) => id === ALL_FLOORS || a.projectId === id).length;
+  return (
+    <div className="flex items-center gap-1.5">
+      <Select aria-label="Floor" className="w-56" value={selected} onChange={(e) => select(e.target.value)}>
+        <option value={ALL_FLOORS}>All floors ({count(ALL_FLOORS)})</option>
+        {list.map((p) => (
+          <option key={p.id} value={p.id} title={p.cwd}>
+            {p.name}
+            {p.archived ? ' (archived)' : ''} ({count(p.id)})
+          </option>
+        ))}
+        {selected !== ALL_FLOORS && !projects[selected] && <option value={selected}>{selected}</option>}
+      </Select>
+      <Button variant="ghost" title="Rename or archive floors" onClick={() => setManaging(true)}>
+        Manage
+      </Button>
+      {managing && <FloorManager onClose={() => setManaging(false)} />}
+    </div>
+  );
+}
+
+/** Sum of active sessions' usage on the selected floor. Unobtrusive — hidden until there's something to show. */
+function FloorUsage() {
+  const sessions = useOfficeStore((s) => s.sessions);
+  const selected = useOfficeStore((s) => s.selectedProjectId);
+  const usage = useMemo(() => {
+    const active = Object.values(sessions).filter((s) => s.status === 'active' && onFloor(selected, s.projectId));
+    return sumUsage(active.map((s) => s.usage));
+  }, [sessions, selected]);
+  if (usage.messages === 0) return null;
+  return (
+    <span
+      className="hidden items-center gap-1 rounded-full bg-ink-800 px-2.5 py-1 text-[11px] text-ink-400 sm:flex"
+      title={`${formatTokens(usage.contextTokens)} context tokens · ${usage.messages} messages this floor`}
+    >
+      {formatTokens(totalTokens(usage))} tok
+    </span>
+  );
+}
+
+function ConnectionBadge() {
+  const connection = useOfficeStore((s) => s.connection);
+  const error = useOfficeStore((s) => s.connectionError);
+  const c = CONNECTION[connection];
+  return (
+    <div className="flex items-center gap-2">
+      <span className="flex items-center gap-1.5 rounded-full bg-ink-800 px-2.5 py-1 text-[11px] text-ink-300" title={error}>
+        <span className={cx('size-2 rounded-full', c.dot)} />
+        {c.label}
+      </span>
+      {connection === 'disconnected' && (
+        <>
+          <Button variant="ghost" onClick={startLive}>
+            Retry
+          </Button>
+          <Button variant="primary" onClick={enterDemo} title="Server unreachable — watch a simulated team instead">
+            Demo
+          </Button>
+        </>
+      )}
+      {connection === 'demo' && (
+        <Button variant="ghost" onClick={exitDemo}>
+          Exit demo
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function NotifyButton() {
+  const [perm, setPerm] = useState(() => (notificationsSupported() ? Notification.permission : 'denied'));
+  if (!notificationsSupported() || perm !== 'default') return null;
+  return (
+    <Button
+      variant="ghost"
+      title="Allow browser notifications when agents wait, block or finish"
+      onClick={async () => {
+        const p = await requestNotificationPermission();
+        if (p !== 'unsupported') setPerm(p);
+      }}
+    >
+      Enable alerts
+    </Button>
+  );
+}
+
+export function TopBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+  return (
+    <header className="flex h-12 shrink-0 items-center gap-4 border-b border-ink-700 bg-ink-900 px-4">
+      <div className="flex items-center gap-2">
+        <span className="grid size-6 place-items-center rounded bg-cozy text-[11px] font-black text-ink-950">tc</span>
+        <span className="font-pixel text-sm font-semibold tracking-tight text-ink-100">tagconn</span>
+      </div>
+      <FloorSelect />
+      <nav className="flex items-center gap-0.5 rounded-lg bg-ink-850 p-0.5">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onTab(t.id)}
+            className={cx(
+              'rounded-md px-3 py-1 text-xs transition',
+              tab === t.id ? 'bg-ink-600 text-ink-100 shadow' : 'text-ink-400 hover:text-ink-100',
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+      <div className="ml-auto flex items-center gap-2">
+        <FloorUsage />
+        <NotifyButton />
+        <ConnectionBadge />
+      </div>
+    </header>
+  );
+}

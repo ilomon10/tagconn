@@ -1,0 +1,114 @@
+# tagconn server configuration.
+#
+# This file is one layer in the settings stack:
+#   schema defaults (packages/shared/src/settings.ts)
+#     -> this file (path from env OFFICE_CONFIG, default ./config/office.yaml)
+#     -> env vars OFFICE_<SECTION>__<KEY_SNAKE> (+ shortcut OFFICE_HOOK_TOKEN)
+#     -> runtime overrides saved in SQLite (edited from the web GUI)
+#
+# Every value below is commented out and shown at its in-code default, so
+# this file works unmodified. Uncomment and edit only what you want to
+# override; everything else keeps its default. Keys marked "restart
+# required" only take effect after the server process restarts (see
+# RESTART_REQUIRED_SETTINGS in packages/shared/src/settings.ts).
+
+server: {}
+  # host: "127.0.0.1"                   # restart required. Docker sets 0.0.0.0
+  #                                       # internally via OFFICE_SERVER__HOST env
+  #                                       # (docker-compose.yml); the published
+  #                                       # port still binds 127.0.0.1 on the host.
+  # port: 4317                          # restart required. env: OFFICE_SERVER__PORT
+  # corsOrigins:                        # restart required
+  #   - "http://localhost:4318"
+  #   - "http://127.0.0.1:4318"
+  #   - "http://localhost:5173"
+  # Accepted Host header hostnames (port ignored); requests with any other
+  # Host are rejected. Blocks DNS-rebinding attacks. "server" is the
+  # docker-compose service name nginx proxies to internally.
+  # allowedHosts:
+  #   - "localhost"
+  #   - "127.0.0.1"
+  #   - "[::1]"
+  #   - "server"
+  # Shared secret the hook sends as `x-office-token`. Empty = no auth
+  # (fine for local-only use). Prefer the OFFICE_HOOK_TOKEN env shortcut,
+  # or let `pnpm office:install` generate and wire one up for you, over
+  # committing a real token to this file. `office:install` writes the same
+  # token into ~/.config/tagconn/curl.conf (mode 600) for the hook script.
+  # hookToken: ""                       # env shortcut: OFFICE_HOOK_TOKEN
+  # logLevel: "info"                    # fatal | error | warn | info | debug | trace
+  #
+  # The entire `server` section, `storage.dbPath`, `paths`,
+  # `runner.permissionMode` and `runner.allowedProjectDirs` can only be set
+  # here or via env - never from the web GUI (see GUI_IMMUTABLE_SETTINGS in
+  # packages/shared/src/settings.ts).
+
+storage: {}
+  # dbPath: "./data/office.db"          # restart required. env: OFFICE_STORAGE__DB_PATH
+  # eventRetentionDays: 14
+  # snapshotEventLimit: 200
+
+ingest: {}
+  # enabledEvents:
+  #   - SessionStart
+  #   - SessionEnd
+  #   - UserPromptSubmit
+  #   - PreToolUse
+  #   - PostToolUse
+  #   - PostToolUseFailure
+  #   - SubagentStart
+  #   - SubagentStop
+  #   - Stop
+  #   - Notification
+  #   - PreCompact
+  # Regexes (compiled with flags "gi"); matches in tool input/response text
+  # become "[redacted]" before storage/broadcast.
+  # redactPatterns:
+  #   - '(api[_-]?key|secret|token|password|passwd|authorization)["\s:=]+[^\s"'',]+'
+  #   - 'sk-[A-Za-z0-9_-]{20,}'
+  #   - 'gh[pousr]_[A-Za-z0-9]{20,}'
+  # storeToolPayloads: false
+  # maxPayloadBytes: 1048576
+
+paths: {}
+  # claudeDir: "~/.claude"
+  # agentsDir: "~/.claude/agents"       # restart required. env: OFFICE_PATHS__AGENTS_DIR
+  #                                       # (docker: /claude/agents)
+  # projectsDir: "~/.claude/projects"   # restart required. env: OFFICE_PATHS__PROJECTS_DIR
+  #                                       # (docker: /claude/projects)
+
+agents: {}
+  # doneLingerSec: 20     # seconds a finished subagent lingers before it despawns
+  # idleAfterSec: 90      # seconds without events before an active agent looks idle
+  # typeToRole:            # map Claude agent_type -> role name when they differ
+  #   general-purpose: developer
+  #   Explore: analyst
+  #   Plan: architect
+
+activity: {}
+  # rules: []   # see DEFAULT_ACTIVITY_RULES in packages/shared/src/settings.ts for
+  #             # the full default list (tool/input regex -> activity/zone/bubble).
+  #             # Overriding this key replaces the whole list, not just one rule.
+
+office: {}
+  # theme: "auto"          # day | night | auto
+  # walkSpeed: 120
+  # maxCharacters: 40
+  # showBubbles: true
+  # bubbleSeconds: 6
+  # zoom: 1
+  # sound: false
+  # zones: {}              # optional zone rectangle overrides, in tile units:
+  #                         # zones: { desks: { x: 0, y: 0, w: 10, h: 6 } }
+
+notifications: {}
+  # onWaiting: true
+  # onDone: false
+  # onBlocked: true
+
+runner: {}
+  # enabled: false
+  # maxConcurrent: 3
+  # defaultModel: "sonnet"          # opus | sonnet | haiku
+  # permissionMode: "acceptEdits"   # default | acceptEdits | plan | bypassPermissions
+  # allowedProjectDirs: []

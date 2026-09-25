@@ -1,0 +1,48 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: docker/server.Dockerfile
+    image: tagconn-server
+    user: "${UID:-1000}:${GID:-1000}"
+    env_file:
+      - .env
+    environment:
+      # Container-internal bind address only; the published port below stays
+      # bound to 127.0.0.1 on the host. The server also validates the Host
+      # header against server.allowedHosts (default includes "server", the
+      # compose service name nginx proxies to internally).
+      OFFICE_SERVER__HOST: 0.0.0.0
+      OFFICE_PATHS__AGENTS_DIR: /claude/agents
+      OFFICE_PATHS__PROJECTS_DIR: /claude/projects
+      OFFICE_CONFIG: /app/config/office.yaml
+    volumes:
+      # Named volume (not ./data): Docker would create a host bind dir as root, which the non-root server can't write.
+      - office-data:/data
+      - ${HOME}/.claude/agents:/claude/agents
+      - ${HOME}/.claude/projects:/claude/projects:ro
+      - ./config:/app/config:ro
+    ports:
+      - "127.0.0.1:${OFFICE_PORT:-4317}:4317"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4317/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    image: tagconn-web
+    ports:
+      - "127.0.0.1:${OFFICE_WEB_PORT:-4318}:4318"
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  office-data:

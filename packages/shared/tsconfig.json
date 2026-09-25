@@ -1,0 +1,1 @@
+{ "extends": "@tagconn/tsconfig/node.json", "include": ["src"] }
