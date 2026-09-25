@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  CLAUDE_SESSION_ID_RE,
   isTerminalRunStatus,
   type Run,
   type RunDetail,
@@ -12,6 +13,7 @@ import {
   type RunnerHello,
   type RunnerStatus,
   type RunStartCommand,
+  RunStartCommandSchema,
   type RunStartRequest,
   type RunStopCommand,
   type Settings,
@@ -20,7 +22,13 @@ import type { Deps } from '../../core/di/index.js';
 import { HttpError, notFound } from '../../core/http/index.js';
 import { redactValue } from '../../core/redact/index.js';
 import type { RunListFilter } from './runs.repository.js';
-import { assertPromptWithinLimit, buildQuestAllowedTools, buildQuestDisallowedTools, resolvePermissionMode } from './runs.validate.js';
+import {
+  assertProjectDirAllowed,
+  assertPromptWithinLimit,
+  buildQuestAllowedTools,
+  buildQuestDisallowedTools,
+  resolvePermissionMode,
+} from './runs.validate.js';
 
 /** Display-only prompt preview stored on the `Run` row (never the full prompt sent to the runner). */
 const PROMPT_PREVIEW_CHARS = 2_000;
@@ -28,8 +36,15 @@ const PROMPT_PREVIEW_CHARS = 2_000;
 const RESULT_TEXT_PREVIEW_CHARS = 8_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_SWEEP_MS = 60 * 60 * 1000;
+/** M5: upper bound when re-summing a run's stored event bytes at boot (`settings.runner.maxEventsPerRun` tops out at 100_000). */
+const MAX_EVENTS_TO_SEED = 200_000;
 
 const truncate = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max)}…[truncated]` : s);
+
+/** Same byte accounting `onRunEvent` uses, applied to already-stored events (M5: reseeded at boot so
+ * the cap survives a server restart instead of resetting to 0). */
+const sumEventBytes = (events: readonly RunEventEnvelope[]): number =>
+  events.reduce((sum, e) => sum + Buffer.byteLength(JSON.stringify(e.event)), 0);
 
 /** Implemented by `RunnerGateway` once a runner has completed the HMAC handshake and sent `runner:hello`. */
 export interface RunnerConnection {
@@ -81,6 +96,9 @@ export class RunsService implements RunDispatcher, RunLinker {
         this.markEnded(run, 'lost', undefined, now);
       } else if ((run.status === 'dispatched' || run.status === 'running') && run.runnerId) {
         orphanedRunnerIds.add(run.runnerId);
+        // M5: reseed the byte counter from what's already stored, so a restart mid-run doesn't reset
+        // the output cap back to 0 and let the run double its allowance across the restart.
+        this.eventBytes.set(run.id, sumEventBytes(this.deps.runsRepository.listEvents(run.id, MAX_EVENTS_TO_SEED)));
       }
     }
     for (const runnerId of orphanedRunnerIds) this.scheduleLostGraceCheck(runnerId, now);
@@ -113,6 +131,7 @@ export class RunsService implements RunDispatcher, RunLinker {
     const project = this.deps.projectsRepository.get(req.projectId);
     if (!project) throw notFound(`Project ${req.projectId}`);
     const { runner: runnerCfg } = this.deps.settings.get();
+    assertProjectDirAllowed(project.cwd, runnerCfg.allowedProjectDirs);
     assertPromptWithinLimit(req.prompt, runnerCfg.maxPromptChars);
     const permissionMode = resolvePermissionMode(req.permissionMode, runnerCfg);
     const model = req.model ?? runnerCfg.defaultModel;
@@ -148,11 +167,21 @@ export class RunsService implements RunDispatcher, RunLinker {
     const original = this.requireRun(req.runId);
     if (original.kind !== 'quest') throw new HttpError(400, 'runs:followUp only accepts quest runs');
     if (!original.sessionId) throw new HttpError(409, 'This run has no session yet to resume');
+    // L6: a follow-up may only resume a session id this run's OWN `init` event actually reported —
+    // never one that only ever came from the `x-tagconn-run-id` hook hint (runLinker.hint), which is a
+    // correlation guess, not the CLI's own authoritative session id.
+    if (!this.sessionIdConfirmedByInit(original)) {
+      throw new HttpError(409, "resume_not_allowed: this run's session id was never confirmed by its own init event");
+    }
     if (!original.projectId) throw new HttpError(409, 'This run has no project to resume into');
     const project = this.deps.projectsRepository.get(original.projectId);
     if (!project) throw notFound(`Project ${original.projectId}`);
     const { runner: runnerCfg } = this.deps.settings.get();
+    assertProjectDirAllowed(project.cwd, runnerCfg.allowedProjectDirs);
     assertPromptWithinLimit(req.prompt, runnerCfg.maxPromptChars);
+    // L2: the mode chosen for the original run may no longer be allowed (settings changed since); a
+    // follow-up must re-check it, not just trust what was recorded on the original run.
+    const permissionMode = resolvePermissionMode(original.permissionMode, runnerCfg);
 
     const id = randomUUID();
     const run = this.buildRun({
@@ -164,13 +193,23 @@ export class RunsService implements RunDispatcher, RunLinker {
       heroId: original.heroId,
       resumeSessionId: original.sessionId,
       prompt: req.prompt,
-      permissionMode: original.permissionMode,
+      permissionMode,
       model: original.model,
       createdBy,
     });
-    const command = this.buildQuestCommand(run.id, project.cwd, req.prompt, original.permissionMode, original.model, runnerCfg, original.sessionId);
+    const command = this.buildQuestCommand(run.id, project.cwd, req.prompt, permissionMode, original.model, runnerCfg, original.sessionId);
     this.enqueue(run, command);
     return run;
+  }
+
+  /** L6: true only if `run.sessionId` was actually reported by this run's own `init` event (persisted
+   * in `run_events`, so this survives a server restart) — never merely set by `hint()`'s hook
+   * correlation. */
+  private sessionIdConfirmedByInit(run: Run): boolean {
+    if (!run.sessionId) return false;
+    return this.deps.runsRepository
+      .listEvents(run.id, MAX_EVENTS_TO_SEED)
+      .some((e) => e.event.kind === 'init' && e.event.sessionId === run.sessionId);
   }
 
   stopQuest(runId: string, _createdBy: string): Run {
@@ -236,6 +275,7 @@ export class RunsService implements RunDispatcher, RunLinker {
     if (input.projectId) {
       const project = this.deps.projectsRepository.get(input.projectId);
       if (!project) throw notFound(`Project ${input.projectId}`);
+      assertProjectDirAllowed(project.cwd, runnerCfg.allowedProjectDirs);
       cwd = project.cwd;
     }
     const id = randomUUID();
@@ -290,6 +330,7 @@ export class RunsService implements RunDispatcher, RunLinker {
   /** Links only an existing, non-terminal, unlinked QUEST run. `init` (see `onRunEvent`) always wins:
    * it overwrites whatever this hint set, since it is the authoritative Claude session id. */
   hint(runId: string, sessionId: string): void {
+    if (!CLAUDE_SESSION_ID_RE.test(sessionId)) return; // L6: malformed id, never trusted
     const run = this.deps.runsRepository.get(runId);
     if (!run || run.kind !== 'quest' || isTerminalRunStatus(run.status) || run.sessionId) return;
     const updated: Run = { ...run, sessionId };
@@ -354,10 +395,13 @@ export class RunsService implements RunDispatcher, RunLinker {
     for (const run of this.deps.runsRepository.activeForRunner(runnerId)) this.markEnded(run, 'lost');
   }
 
-  /** Ownership + dedupe + caps + redaction (§2.5 "Server side"). */
+  /** Ownership + dedupe + caps + redaction (§2.5 "Server side"). M5: once a run has tripped the cap
+   * (`run.truncated`), every further event is dropped outright — no more storage, no more repeated
+   * stop commands — instead of quietly continuing to grow past the limit until `run:end` arrives. */
   onRunEvent(runnerId: string, env: RunEventEnvelope): void {
     const run = this.deps.runsRepository.get(env.runId);
     if (!run || run.runnerId !== runnerId || isTerminalRunStatus(run.status)) return; // not ours, or too late
+    if (run.truncated) return; // already over cap: the single stop + synthetic notice were already sent
     const { ingest, runner: runnerCfg } = this.deps.settings.get();
     const redacted = redactValue(env.event, ingest.redactPatterns);
     const capped = capPreviews(redacted, runnerCfg.previewChars);
@@ -369,7 +413,7 @@ export class RunsService implements RunDispatcher, RunLinker {
     const eventCount = run.eventCount + 1;
     const overCap = eventCount > runnerCfg.maxEventsPerRun || bytes > runnerCfg.maxEventBytesPerRun;
 
-    let updated: Run = { ...run, eventCount, truncated: run.truncated || overCap };
+    let updated: Run = { ...run, eventCount, truncated: overCap };
     if (capped.kind === 'init') updated = { ...updated, sessionId: capped.sessionId };
     if (capped.kind === 'result') {
       updated = {
@@ -390,10 +434,17 @@ export class RunsService implements RunDispatcher, RunLinker {
     this.deps.bus.emit('run.event', { ...env, event: capped });
     if (capped.kind === 'init') this.deps.bus.emit('run.linked', { runId: run.id, sessionId: capped.sessionId, projectId: run.projectId });
 
-    if (overCap && this.runner && run.runnerId === this.runner.runnerId) {
-      // The server's own (re-applied) caps were exceeded; ask the runner to stop it. `RunStopCommand`
-      // has no "output_cap" reason, so this uses the closest fit; a `run:end` that still arrives wins.
-      this.runner.sendStop({ runId: run.id, reason: 'timeout' });
+    if (overCap) {
+      // M5: exactly one synthetic notice, then exactly one stop (reason: output_cap) — never again for
+      // this run, since `run.truncated` is now true and every future event returns at the top.
+      const notice: RunEventEnvelope = {
+        runId: run.id,
+        seq: env.seq + 1,
+        ts: Date.now(),
+        event: { kind: 'notice', level: 'warn', message: 'output cap exceeded (runner.maxEventsPerRun/maxEventBytesPerRun); stopping the run' },
+      };
+      if (this.deps.runsRepository.appendEvent(notice)) this.deps.bus.emit('run.event', notice);
+      if (this.runner && run.runnerId === this.runner.runnerId) this.runner.sendStop({ runId: run.id, reason: 'output_cap' });
     }
   }
 
@@ -401,7 +452,6 @@ export class RunsService implements RunDispatcher, RunLinker {
     const run = this.deps.runsRepository.get(end.runId);
     if (!run || run.runnerId !== runnerId || isTerminalRunStatus(run.status)) return;
     this.markEnded(run, end.status, end.reason, undefined, end.exitCode, end.message);
-    this.eventBytes.delete(run.id);
     this.tryDispatch();
   }
 
@@ -493,6 +543,10 @@ export class RunsService implements RunDispatcher, RunLinker {
   }
 
   private enqueue(run: Run, command: RunStartCommand): void {
+    // M3: settings.runner.enabled defaults to false; the installer turns it on (OFFICE_RUNNER__ENABLED=true)
+    // once it has written a runner.json + token. The /runner namespace itself refuses handshakes the
+    // same way (runs.gateway.ts), so this is what actually surfaces the 409 to the browser.
+    if (!this.deps.settings.get().runner.enabled) throw new HttpError(409, 'runner_disabled: settings.runner.enabled is false');
     if (!this.runner) throw new HttpError(409, 'No verified runner is connected');
     if (this.queue.length >= this.deps.settings.get().runner.maxQueued) {
       throw new HttpError(429, 'Run queue is full (runner.maxQueued)');
@@ -519,14 +573,30 @@ export class RunsService implements RunDispatcher, RunLinker {
     this.pendingDispatch.delete(runId);
     if (!pending || !run || run.status !== 'queued') return; // stopped/cancelled while queued
 
+    // M4: parse the fully-built command against its own contract before it is ever put on the wire —
+    // catches a server-side bug in the builders above rather than shipping a malformed command.
+    const parsedCommand = RunStartCommandSchema.safeParse(pending.command);
+    if (!parsedCommand.success) {
+      this.deps.logger.error({ err: parsedCommand.error, runId }, 'built RunStartCommand failed its own schema; refusing to dispatch');
+      this.markEnded(run, 'rejected', 'invalid_command');
+      this.tryDispatch();
+      return;
+    }
+
     const dispatched: Run = { ...run, status: 'dispatched', runnerId: runner.runnerId, startedAt: Date.now() };
     this.deps.runsRepository.update(dispatched);
     this.deps.bus.emit('run.upserted', dispatched);
 
-    runner.sendStart(pending.command, (res) => {
+    runner.sendStart(parsedCommand.data, (res) => {
       const current = this.deps.runsRepository.get(runId);
       if (!current || current.status !== 'dispatched') return; // stopped/ended already
       if (!res.ok || res.data.pid === null) {
+        // L7: the ack can fail or time out right as a newer runner connection replaces this one, after
+        // the older connection already forwarded run:start. Ask it to stop proactively in case it's
+        // still the live socket and actually spawned something; if that socket is already gone, the
+        // next runner:hello's reconcile (runnerConnected's killRunIds) catches the orphan instead,
+        // since this run is terminal by the time that hello arrives and so never counts as "known active".
+        runner.sendStop({ runId, reason: 'timeout' });
         this.markEnded(current, 'rejected', 'spawn_failed', undefined, null, res.ok ? undefined : res.error);
         this.tryDispatch();
         return;
@@ -559,16 +629,20 @@ export class RunsService implements RunDispatcher, RunLinker {
     exitCode: number | null = null,
     error?: string,
   ): Run {
+    // L1: `error` is either the runner's free-text `run:end.message` or a runner ack error string —
+    // neither is redacted upstream, so redact it here before it's ever stored or broadcast.
+    const redactedError = error && redactValue(error, this.deps.settings.get().ingest.redactPatterns);
     const updated: Run = {
       ...run,
       status,
       endReason,
       endedAt: now,
       exitCode: exitCode ?? undefined,
-      error: error ? truncate(error, RESULT_TEXT_PREVIEW_CHARS) : undefined,
+      error: redactedError ? truncate(redactedError, RESULT_TEXT_PREVIEW_CHARS) : undefined,
     };
     this.deps.runsRepository.update(updated);
     this.deps.bus.emit('run.upserted', updated);
+    this.eventBytes.delete(run.id); // M5: every terminal path releases the per-run byte counter here, once
     return updated;
   }
 }

@@ -68,6 +68,19 @@ export const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[
 export const isBareWebFetchRule = (rule: string): boolean => rule === 'WebFetch' || rule === 'WebFetch()';
 
 /**
+ * L4: the ONLY shape a WebFetch allow rule may take is exactly `WebFetch(domain:<DOMAIN_RE>)`. A rule
+ * that doesn't start with "WebFetch" is unrelated and passes (true); a bare `WebFetch`/`WebFetch()`,
+ * a different param name (e.g. `WebFetch(url:x)`), extra text, or an invalid/IP-literal domain all fail.
+ * `settings.ts`'s own refine on `runner.allowedTools` only rejects the exact string "WebFetch" today —
+ * it should be tightened to call this too (server-side re-check here is defense in depth regardless).
+ */
+export function isValidWebFetchAllowRule(rule: string): boolean {
+  if (!rule.startsWith('WebFetch')) return true;
+  const m = /^WebFetch\(domain:([^()]*)\)$/.exec(rule);
+  return m !== null && DOMAIN_RE.test(m[1]!);
+}
+
+/**
  * Backstop loopback/metadata denies (the primary control is: no bare WebFetch, domain allowlist only).
  * Domain rules cannot express every numeric/alternate loopback form, which is exactly why bare
  * WebFetch is forbidden rather than relying on this list.
@@ -156,8 +169,10 @@ export type RunEndReason = (typeof RUN_END_REASONS)[number];
 
 // ------------------------------------------------------------------ browser -> server requests
 
-/** Prompts may not contain NUL (argv/C-string truncation); the runner also rejects it. */
-const PromptSchema = z
+/** Prompts may not contain NUL (argv/C-string truncation); the runner also rejects it. Exported (L5)
+ * so REST bodies that carry a prompt (e.g. the follow-up route) reuse this exact strict schema instead
+ * of a laxer ad-hoc one. */
+export const PromptSchema = z
   .string()
   .trim()
   .min(1)
@@ -505,7 +520,8 @@ export type RunStartCommandInput = z.input<typeof RunStartCommandSchema>;
 
 export const RunStopCommandSchema = z.strictObject({
   runId: z.string().regex(UUID_RE),
-  reason: z.enum(['stopped_by_user', 'timeout', 'runner_shutdown']),
+  /** 'output_cap' (M5): the server's own re-applied maxEvents/maxEventBytes cap was exceeded. */
+  reason: z.enum(['stopped_by_user', 'timeout', 'runner_shutdown', 'output_cap']),
 });
 export type RunStopCommand = z.infer<typeof RunStopCommandSchema>;
 

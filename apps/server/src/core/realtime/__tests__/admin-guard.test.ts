@@ -1,8 +1,8 @@
 import { OFFICE_NAMESPACE, type ClientToServerEvents, type ServerToClientEvents } from '@tagconn/shared';
 import { io as connect, type Socket } from 'socket.io-client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { App } from '../../../app.js';
-import { adminSocketAuth, buildTestApp } from '../../../../test/helpers.js';
+import { adminSocketAuth, buildTestApp, mintAdminToken } from '../../../../test/helpers.js';
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -121,5 +121,32 @@ describe('admin-guard: socket gating (docs/design/runner-and-helpdesk.md §5.3)'
 
     expect((await changed).admin).toBe(false); // swept out of ADMIN_ROOM and told so
     expect(await emitAndSeeIfAcked(admin, 'auth:sessions', undefined)).toBe('timed-out'); // and re-checked per packet too
+  });
+
+  it('M1: a truly idle connected socket still expires after sessionIdleHours — the handshake and the periodic sweep never slide the idle expiry', async () => {
+    app = await buildTestApp({ settings: { auth: { sessionIdleHours: 1 } } });
+    const base = await listen(app);
+    const token = mintAdminToken(app); // expiresAt = createdAt + 1h, set only once, at creation
+    const admin = connectClient(base, { adminToken: token });
+    sockets.push(admin);
+    await waitConnected(admin); // the handshake's own ADMIN_ROOM join must not touch the session either
+
+    const changed = new Promise<{ admin: boolean }>((resolve) => admin.once('auth:changed', resolve));
+    vi.useFakeTimers({ toFake: ['Date'] }); // real timers keep running the socket; only Date.now() moves
+    try {
+      // Five sweep intervals pass while the socket stays connected but silent (no gated packet is ever
+      // sent, i.e. no real user activity). Before M1, every sweep called the touching `verify()` and
+      // would have reset the idle clock each time, so the session would NEVER expire no matter how many
+      // sweeps ran. With the fix, `adminChecker.check()` never touches, so once real elapsed time passes
+      // sessionIdleHours since creation, the very next sweep evicts it.
+      for (let i = 0; i < 5; i++) {
+        vi.setSystemTime(Date.now() + 20 * 60 * 1000);
+        await app.diContainer.cradle.adminGuard.sweepNow();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    expect((await changed).admin).toBe(false);
+    expect(app.diContainer.cradle.authService.verify(token).ok).toBe(false); // actually expired, not just swept
   });
 });

@@ -15,6 +15,8 @@ const toSession = (r: Row): Session => ({
   endedAt: r.endedAt ?? undefined,
   lastPrompt: r.lastPrompt ?? undefined,
   usage: r.usage ?? undefined,
+  runId: r.runId ?? undefined,
+  origin: r.origin ?? undefined,
 });
 
 export class SessionsRepository {
@@ -35,6 +37,8 @@ export class SessionsRepository {
       endedAt: s.endedAt ?? null,
       lastPrompt: s.lastPrompt ?? null,
       usage: s.usage ?? null,
+      runId: s.runId ?? null,
+      origin: s.origin ?? null,
       updatedAt,
     };
     const { id: _id, ...set } = values;

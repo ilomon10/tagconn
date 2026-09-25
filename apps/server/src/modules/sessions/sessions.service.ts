@@ -1,4 +1,4 @@
-import type { Session } from '@tagconn/shared';
+import { isTerminalRunStatus, type Session } from '@tagconn/shared';
 import type { Deps } from '../../core/di/index.js';
 import type { HookContext } from '../../core/event-bus/index.js';
 
@@ -12,7 +12,11 @@ const SWEEP_MS = 5_000;
 export class SessionsService {
   private sweeper?: NodeJS.Timeout;
 
-  constructor(private readonly deps: Deps<'sessionsRepository' | 'agentsRepository' | 'agentsService' | 'settings' | 'bus'>) {}
+  constructor(
+    private readonly deps: Deps<
+      'sessionsRepository' | 'agentsRepository' | 'agentsService' | 'settings' | 'bus' | 'logger' | 'runLinker' | 'runDispatcher'
+    >,
+  ) {}
 
   start(): void {
     this.sweep();
@@ -32,6 +36,8 @@ export class SessionsService {
     const next: Session = prev ? { ...prev } : { id: ctx.sessionId, projectId: ctx.projectId, status: 'active', startedAt: ts };
     next.projectId = ctx.projectId;
     if (p.permission_mode) next.permissionMode = p.permission_mode;
+    if (!prev) next.origin = 'cli';
+    this.linkRun(ctx, next);
 
     const inMain = !p.agent_id;
     switch (p.hook_event_name) {
@@ -57,6 +63,29 @@ export class SessionsService {
     const changed = !prev || JSON.stringify(prev) !== JSON.stringify(next);
     repo.upsert(next, ts);
     if (changed) this.deps.bus.emit('session.upserted', next);
+  }
+
+  /**
+   * M8 8k, S5 (§2.6 "Hint"): the `x-tagconn-run-id` header only ever links an existing,
+   * non-terminal, unlinked QUEST run — and never across projects. `runDispatcher.get` reads the run
+   * (never trusted on its own); a project mismatch is logged and ignored, leaving `origin: 'cli'`.
+   * `runLinker.hint` lets the runs module record the same link on its side (`run.linked`, so the
+   * quest board can show the live character) and is a no-op once `init` has already linked the run.
+   */
+  private linkRun(ctx: HookContext, next: Session): void {
+    if (next.runId || !ctx.runIdHint) return;
+    const run = this.deps.runDispatcher.get(ctx.runIdHint);
+    if (!run || isTerminalRunStatus(run.status)) return;
+    if (run.kind !== 'quest' || run.projectId !== next.projectId) {
+      this.deps.logger.warn(
+        { runId: ctx.runIdHint, sessionId: ctx.sessionId, runKind: run.kind, runProjectId: run.projectId, sessionProjectId: next.projectId },
+        'ignoring x-tagconn-run-id hint: run does not belong to this session project',
+      );
+      return;
+    }
+    next.runId = ctx.runIdHint;
+    next.origin = 'quest';
+    this.deps.runLinker.hint(ctx.runIdHint, ctx.sessionId);
   }
 
   /**

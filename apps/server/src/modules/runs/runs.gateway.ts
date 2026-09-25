@@ -24,6 +24,11 @@ import type { RunnerConnection, RunsService } from './runs.service.js';
  * against a wedged runner process, not a normal path). */
 const RUN_START_ACK_TIMEOUT_MS = 15_000;
 
+/** L8: caps sockets that have connected but not yet completed the HMAC proof (§2.2 steps 1-4). Without
+ * this, a slowloris-style flood of connections that never send `runner:prove` could pile up unbounded
+ * (each held open for up to RUNNER_PROOF_TIMEOUT_MS). */
+const MAX_UNVERIFIED_RUNNER_SOCKETS = 8;
+
 interface RunnerSocketData {
   auth: RunnerHandshakeAuth;
   verified: boolean;
@@ -40,6 +45,8 @@ type RunnerSocket = Socket<RunnerToServerEvents, ServerToRunnerEvents, DefaultEv
  */
 export class RunnerGateway {
   private currentSocket?: RunnerSocket;
+  /** L8: sockets connected but not yet past `runner:prove`. */
+  private unverifiedCount = 0;
 
   constructor(private readonly deps: Deps<'settings' | 'logger'> & { runsService: RunsService }) {}
 
@@ -49,21 +56,51 @@ export class RunnerGateway {
     const ns = raw as RunnerNamespace;
 
     ns.use((socket, next) => {
-      const { token } = this.deps.settings.get().runner;
+      const { token, enabled } = this.deps.settings.get().runner;
+      if (!enabled) return next(new Error('runner connections are refused: settings.runner.enabled is false'));
       if (!token) return next(new Error('runner connections are refused: settings.runner.token is empty'));
       if (socket.handshake.headers.origin) return next(new Error('runner connections must not carry an Origin header'));
       const parsed = RunnerHandshakeAuthSchema.safeParse(socket.handshake.auth);
       if (!parsed.success) return next(new Error('invalid runner handshake'));
+      if (this.unverifiedCount >= MAX_UNVERIFIED_RUNNER_SOCKETS) {
+        return next(new Error('too many unverified runner connections; try again shortly'));
+      }
       socket.data.auth = parsed.data;
       socket.data.verified = false;
       next();
     });
 
-    ns.on('connection', (socket) => this.handleConnection(socket));
+    ns.on('connection', (socket) => {
+      // H1: a listener that throws crashes the whole process (socket.io calls listeners synchronously
+      // and nothing upstream catches it). Nothing runner-controlled — a garbage payload, a missing ack,
+      // a mid-handler exception — may ever escape a listener; every path here disconnects instead.
+      try {
+        this.handleConnection(socket);
+      } catch (err) {
+        this.deps.logger.error({ err }, 'runner connection handler failed; disconnecting');
+        socket.disconnect(true);
+      }
+    });
+  }
+
+  /** H1 safe-ack helper: an ack-taking event sent without a callback function must never throw
+   * (`ack is not a function`) — it disconnects the offending socket instead. */
+  private static requireAck(ack: unknown, socket: RunnerSocket): ack is (res: unknown) => void {
+    if (typeof ack === 'function') return true;
+    socket.disconnect(true);
+    return false;
   }
 
   private handleConnection(socket: RunnerSocket): void {
     const auth = socket.data.auth;
+    this.unverifiedCount++;
+    let stillUnverified = true;
+    const releaseUnverifiedSlot = () => {
+      if (!stillUnverified) return;
+      stillUnverified = false;
+      this.unverifiedCount--;
+    };
+
     const token = this.deps.settings.get().runner.token;
     const Ns = freshNonce();
     const serverProof = computeProof(token, proofMessage(HMAC_CONTEXTS.runner, 'server', auth.nonce, Ns));
@@ -80,44 +117,75 @@ export class RunnerGateway {
     // §2.2 step 4: nothing but 'runner:prove' is processed before verification; any other event,
     // including a stray retry, disconnects the socket outright.
     socket.use(([event], next) => {
-      if (!socket.data.verified && event !== 'runner:prove') {
+      try {
+        if (!socket.data.verified && event !== 'runner:prove') {
+          socket.disconnect(true);
+          return;
+        }
+        next();
+      } catch (err) {
+        this.deps.logger.error({ err, event }, 'runner packet guard failed; disconnecting');
         socket.disconnect(true);
-        return;
       }
-      next();
     });
 
     socket.on('runner:prove', (p, ack) => {
-      if (socket.data.verified) return;
-      const parsed = RunnerProveSchema.safeParse(p);
-      const currentToken = this.deps.settings.get().runner.token;
-      const expected = proofMessage(HMAC_CONTEXTS.runner, 'runner', Ns, auth.nonce);
-      if (!parsed.success || !currentToken || !verifyProof(currentToken, expected, parsed.data.proof)) {
-        ack({ ok: false, error: 'server proof invalid: wrong token' });
-        // Deferred so the ack packet actually reaches the client before the transport closes.
-        setImmediate(() => socket.disconnect(true));
-        return;
+      if (!RunnerGateway.requireAck(ack, socket)) return;
+      try {
+        if (socket.data.verified) return;
+        const parsed = RunnerProveSchema.safeParse(p);
+        const currentToken = this.deps.settings.get().runner.token;
+        const expected = proofMessage(HMAC_CONTEXTS.runner, 'runner', Ns, auth.nonce);
+        if (!parsed.success || !currentToken || !verifyProof(currentToken, expected, parsed.data.proof)) {
+          ack({ ok: false, error: 'server proof invalid: wrong token' });
+          // Deferred so the ack packet actually reaches the client before the transport closes.
+          setImmediate(() => socket.disconnect(true));
+          return;
+        }
+        clearTimeout(proveTimer);
+        socket.data.verified = true;
+        releaseUnverifiedSlot();
+        ack({ ok: true, data: true });
+      } catch (err) {
+        this.deps.logger.error({ err }, 'runner:prove handler failed; disconnecting');
+        socket.disconnect(true);
       }
-      clearTimeout(proveTimer);
-      socket.data.verified = true;
-      ack({ ok: true, data: true });
     });
 
-    socket.on('runner:hello', (hello, ack) => this.handleHello(socket, auth, hello, ack));
+    socket.on('runner:hello', (hello, ack) => {
+      if (!RunnerGateway.requireAck(ack, socket)) return;
+      try {
+        this.handleHello(socket, auth, hello, ack as (res: { ok: true; data: RunnerHelloAckData } | { ok: false; error: string }) => void);
+      } catch (err) {
+        this.deps.logger.error({ err }, 'runner:hello handler failed; disconnecting');
+        socket.disconnect(true);
+      }
+    });
 
     socket.on('run:event', (env) => {
-      const parsed = RunEventEnvelopeSchema.safeParse(env);
-      if (!parsed.success) return;
-      this.deps.runsService.onRunEvent(auth.runnerId, parsed.data);
+      try {
+        const parsed = RunEventEnvelopeSchema.safeParse(env);
+        if (!parsed.success) return;
+        this.deps.runsService.onRunEvent(auth.runnerId, parsed.data);
+      } catch (err) {
+        this.deps.logger.error({ err }, 'run:event handler failed; disconnecting');
+        socket.disconnect(true);
+      }
     });
 
     socket.on('run:end', (end) => {
-      const parsed = RunEndSchema.safeParse(end);
-      if (!parsed.success) return;
-      this.deps.runsService.onRunEnd(auth.runnerId, parsed.data);
+      try {
+        const parsed = RunEndSchema.safeParse(end);
+        if (!parsed.success) return;
+        this.deps.runsService.onRunEnd(auth.runnerId, parsed.data);
+      } catch (err) {
+        this.deps.logger.error({ err }, 'run:end handler failed; disconnecting');
+        socket.disconnect(true);
+      }
     });
 
     socket.on('disconnect', () => {
+      releaseUnverifiedSlot();
       clearTimeout(proveTimer);
       if (this.currentSocket === socket) {
         this.currentSocket = undefined;

@@ -6,7 +6,7 @@ import { AUTH_MODES, AUTH_PROTECT_LEVELS } from './auth.js';
 import { DEFAULT_HERO_NAME_POOLS, HERO_LIMITS, HeroNamePoolsSchema } from './heroes.js';
 import { DEFAULT_LAYOUT_ID, LAYOUT_ID_RE, OFFICE_STYLES } from './layout.js';
 import { MULTIVERSE_LIMITS } from './multiverse.js';
-import { DOMAIN_RE, RUN_MODELS, RUN_PERMISSION_MODES, TOOL_RULE_RE } from './runner.js';
+import { DOMAIN_RE, isValidWebFetchAllowRule, RUN_MODELS, RUN_PERMISSION_MODES, TOOL_RULE_RE } from './runner.js';
 
 export const ActivityRuleSchema = z.object({
   /** Regex matched against tool_name (anchored). */
@@ -216,7 +216,7 @@ export const SettingsSchema = z.object({
       allowedPermissionModes: z.array(z.enum(RUN_PERMISSION_MODES)).default(['plan', 'dontAsk', 'default', 'acceptEdits']),
       /** Bare "WebFetch" is rejected here too (only WebFetch(domain:x)); the runner re-checks. */
       allowedTools: z
-        .array(z.string().regex(TOOL_RULE_RE).refine((r) => r !== 'WebFetch', 'use WebFetch(domain:x)'))
+        .array(z.string().regex(TOOL_RULE_RE).refine(isValidWebFetchAllowRule, 'use WebFetch(domain:x)'))
         .default([]),
       disallowedTools: z.array(z.string().regex(TOOL_RULE_RE)).default([]),
       maxQueued: z.number().int().min(0).default(20),

@@ -96,7 +96,7 @@ describe('auth module (M8 8m)', () => {
     }
 
     it('mints a code through the full challenge/response flow, and redeems it exactly once', async () => {
-      const token = 'runner-shared-secret';
+      const token = 'a'.repeat(32);
       app = await buildTestApp({ settings: { runner: { token } } });
 
       const nc = generateNonce();
@@ -131,7 +131,7 @@ describe('auth module (M8 8m)', () => {
     });
 
     it('refuses a reused challengeId and a proof computed for another challenge', async () => {
-      const token = 'runner-shared-secret';
+      const token = 'a'.repeat(32);
       app = await buildTestApp({ settings: { runner: { token } } });
       const nc = generateNonce();
       const { challengeId, nonce: ns } = (
@@ -158,7 +158,7 @@ describe('auth module (M8 8m)', () => {
     });
 
     it('keeps at most 3 live codes, evicting the oldest first', async () => {
-      const token = 'secret';
+      const token = 'a'.repeat(32);
       app = await buildTestApp({ settings: { runner: { token } } });
       const c1 = await mintCode(app, token);
       const c2 = await mintCode(app, token);
@@ -174,7 +174,7 @@ describe('auth module (M8 8m)', () => {
     });
 
     it('pairing endpoints refuse any request carrying an Origin header', async () => {
-      app = await buildTestApp({ settings: { runner: { token: 'secret' } } });
+      app = await buildTestApp({ settings: { runner: { token: 'a'.repeat(32) } } });
       const res = await app.inject({
         method: 'POST',
         url: '/api/auth/pairing-challenge',
@@ -190,14 +190,55 @@ describe('auth module (M8 8m)', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('rate-limits pairing attempts to 429 past the global cap', async () => {
-      app = await buildTestApp({ settings: { runner: { token: 'secret' } } });
-      let last: number | undefined;
+    it('M2: minting pairing-challenge requests is never rate-limited — only a failed proof counts', async () => {
+      app = await buildTestApp({ settings: { runner: { token: 'a'.repeat(32) } } });
       for (let i = 0; i < 15; i++) {
         const res = await app.inject({ method: 'POST', url: '/api/auth/pairing-challenge', payload: { nonce: generateNonce() } });
+        expect(res.statusCode).toBe(200);
+      }
+    });
+
+    it('M2: repeated wrong proofs at /pairing-codes hit 429, but a correct proof still succeeds afterwards', async () => {
+      const token = 'a'.repeat(32);
+      app = await buildTestApp({ settings: { runner: { token } } });
+      let last: number | undefined;
+      for (let i = 0; i < 15; i++) {
+        const nc = generateNonce();
+        const { challengeId } = (
+          await app.inject({ method: 'POST', url: '/api/auth/pairing-challenge', payload: { nonce: nc } })
+        ).json<{ challengeId: string }>();
+        // Schema-valid shape (43-char base64url, like a real proof) but wrong, so it reaches
+        // `pairingCode()`'s own check instead of being rejected by request validation first.
+        const res = await app.inject({ method: 'POST', url: '/api/auth/pairing-codes', payload: { challengeId, proof: generateNonce() } });
         last = res.statusCode;
       }
       expect(last).toBe(429);
+
+      // The failure bucket is exhausted, but a CORRECT proof is never checked against it.
+      const nc = generateNonce();
+      const challenge = (
+        await app.inject({ method: 'POST', url: '/api/auth/pairing-challenge', payload: { nonce: nc } })
+      ).json<{ challengeId: string; nonce: string }>();
+      const proof = hmacProof(token, HMAC_CONTEXTS.pairing, 'client', challenge.nonce, nc);
+      const ok = await app.inject({ method: 'POST', url: '/api/auth/pairing-codes', payload: { challengeId: challenge.challengeId, proof } });
+      expect(ok.statusCode).toBe(200);
+    });
+
+    it('M2 (lockout-DoS): repeated wrong /pair codes hit 429, but the real code still redeems successfully', async () => {
+      const token = 'a'.repeat(32);
+      app = await buildTestApp({ settings: { runner: { token } } });
+      const realCode = await mintCode(app, token);
+
+      let last: number | undefined;
+      for (let i = 0; i < 15; i++) {
+        const res = await app.inject({ method: 'POST', url: '/api/auth/pair', payload: { code: 'AAAA-AAAA-AAAA' } });
+        last = res.statusCode;
+      }
+      expect(last).toBe(429);
+
+      // An attacker flooding /pair with wrong guesses must never be able to lock the real user out.
+      const redeemed = await app.inject({ method: 'POST', url: '/api/auth/pair', payload: { code: realCode } });
+      expect(redeemed.statusCode).toBe(200);
     });
   });
 
@@ -292,7 +333,7 @@ describe('auth module (M8 8m)', () => {
   });
 
   it('masks runner.token like server.hookToken in every settings response', async () => {
-    app = await buildTestApp({ settings: { runner: { token: 'super-secret' } } });
+    app = await buildTestApp({ settings: { runner: { token: 'a'.repeat(32) } } });
     const rest = (await app.inject({ url: '/api/settings' })).json<{ runner: { token: string } }>();
     expect(rest.runner.token).not.toBe('super-secret');
     expect(rest.runner.token).toBe('********');

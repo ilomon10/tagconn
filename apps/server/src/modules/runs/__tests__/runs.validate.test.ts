@@ -1,7 +1,14 @@
-import type { Settings } from '@tagconn/shared';
+import { isValidWebFetchAllowRule, type Settings } from '@tagconn/shared';
 import { describe, expect, it } from 'vitest';
 import { HttpError } from '../../../core/http/index.js';
-import { assertNoBareWebFetch, assertPromptWithinLimit, buildQuestAllowedTools, buildQuestDisallowedTools, resolvePermissionMode } from '../runs.validate.js';
+import {
+  assertNoBareWebFetch,
+  assertProjectDirAllowed,
+  assertPromptWithinLimit,
+  buildQuestAllowedTools,
+  buildQuestDisallowedTools,
+  resolvePermissionMode,
+} from '../runs.validate.js';
 
 function runnerCfg(overrides: Partial<Settings['runner']> = {}): Settings['runner'] {
   return {
@@ -59,5 +66,42 @@ describe('runs.validate (pure, unit-tested independently of settings schema)', (
     expect(disallowed).toContain('Bash');
     expect(disallowed).toContain('WebFetch(domain:localhost)');
     expect(disallowed.filter((t) => t === 'WebFetch(domain:127.0.0.1)')).toHaveLength(1);
+  });
+
+  describe('assertProjectDirAllowed (M4, §2.3/§2.7 server-side dir check)', () => {
+    it('allows an exact match or a path lexically below an allowed root', () => {
+      expect(() => assertProjectDirAllowed('/home/user/proj', ['/home/user'])).not.toThrow();
+      expect(() => assertProjectDirAllowed('/home/user', ['/home/user'])).not.toThrow();
+      expect(() => assertProjectDirAllowed('/home/user/proj/', ['/home/user/'])).not.toThrow(); // trailing separators normalize
+    });
+
+    it('an empty allowlist denies everything', () => {
+      expect(() => assertProjectDirAllowed('/home/user/proj', [])).toThrow(/dir_not_allowed/);
+    });
+
+    it('denies a non-absolute path', () => {
+      expect(() => assertProjectDirAllowed('relative/path', ['/home/user'])).toThrow(/dir_not_allowed/);
+    });
+
+    it('denies a sibling directory that merely shares a string prefix (not a real path boundary)', () => {
+      expect(() => assertProjectDirAllowed('/home/username-evil', ['/home/user'])).toThrow(/dir_not_allowed/);
+    });
+  });
+
+  describe('isValidWebFetchAllowRule / assertNoBareWebFetch (L4: exactly WebFetch(domain:x))', () => {
+    it('accepts a non-WebFetch rule and the exact WebFetch(domain:x) shape; rejects everything else', () => {
+      expect(isValidWebFetchAllowRule('Read')).toBe(true);
+      expect(isValidWebFetchAllowRule('WebFetch(domain:example.com)')).toBe(true);
+      expect(isValidWebFetchAllowRule('WebFetch')).toBe(false);
+      expect(isValidWebFetchAllowRule('WebFetch()')).toBe(false);
+      expect(isValidWebFetchAllowRule('WebFetch(url:example.com)')).toBe(false);
+      expect(isValidWebFetchAllowRule('WebFetch(domain:127.0.0.1)')).toBe(false); // IP literal, not DOMAIN_RE
+      expect(isValidWebFetchAllowRule('WebFetch(domain:example.com,domain:evil.com)')).toBe(false);
+    });
+
+    it('assertNoBareWebFetch/buildQuestAllowedTools reject a WebFetch rule that is well-formed-looking but not exactly WebFetch(domain:x)', () => {
+      const cfg = runnerCfg({ allowedTools: ['Read', 'WebFetch(url:evil.com)'] });
+      expect(() => buildQuestAllowedTools(cfg)).toThrow(/tool_not_allowed/);
+    });
   });
 });

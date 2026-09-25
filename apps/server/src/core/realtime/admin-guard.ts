@@ -7,16 +7,42 @@ import {
   type OfficeHandshakeAuth,
 } from '@tagconn/shared';
 import type { FastifyInstance } from 'fastify';
+import type { AdminSessionCheck } from '../http/index.js';
 import type { OfficeNamespace } from './index.js';
 
 const PUBLIC = new Set<string>(PUBLIC_SOCKET_EVENTS);
 const WRITES = new Set<string>(ADMIN_SOCKET_EVENTS_WRITES);
 
+/**
+ * M1: implemented by `modules/auth`'s `AuthService` (registered under this DI key alongside
+ * `adminVerifier`, both `aliasTo('authService')`), and used ONLY by the two passive checks below
+ * (the `/office` handshake's initial join, and the periodic ADMIN_ROOM sweep). Unlike
+ * `AdminVerifier.verify`, `check` never slides the idle expiry: a socket reconnecting, or a timer
+ * firing, is not "the user did something" — only a REST request or a gated packet that actually runs a
+ * handler counts as activity (see the per-packet guard below, which still calls `adminVerifier.verify`).
+ * Without this split, an idle-but-connected tab would never expire: the handshake and/or the 60s sweep
+ * would keep re-touching the session forever just by existing.
+ */
+export interface AdminSessionChecker {
+  check(token: string | undefined): AdminSessionCheck;
+}
+
+declare module '@fastify/awilix' {
+  interface Cradle {
+    adminChecker: AdminSessionChecker;
+  }
+}
+
 /** Read lazily off `app.diContainer.cradle` (never destructured at registration time): `core-realtime`
- * is registered before `auth` in app.ts, so `adminVerifier` and `settings.auth.*` must only be read
- * inside connection/packet/sweep callbacks, which all run after the whole app has booted. */
-function authStatusOf(app: FastifyInstance, token: string | undefined): { admin: boolean; sessionId?: string; expiresAt?: number } {
-  const check = app.diContainer.cradle.adminVerifier.verify(token);
+ * is registered before `auth` in app.ts, so `adminVerifier`/`adminChecker` and `settings.auth.*` must
+ * only be read inside connection/packet/sweep callbacks, which all run after the whole app has booted.
+ * `touch: true` slides the idle expiry (real activity); `touch: false` (M1) never does. */
+function authStatusOf(
+  app: FastifyInstance,
+  token: string | undefined,
+  touch: boolean,
+): { admin: boolean; sessionId?: string; expiresAt?: number } {
+  const check = touch ? app.diContainer.cradle.adminVerifier.verify(token) : app.diContainer.cradle.adminChecker.check(token);
   return check.ok ? { admin: true, sessionId: check.sessionId, expiresAt: check.expiresAt } : { admin: false };
 }
 
@@ -53,7 +79,8 @@ export function registerAdminGuard(app: FastifyInstance, office: OfficeNamespace
   office.use((socket, next) => {
     const auth = socket.handshake.auth as OfficeHandshakeAuth | undefined;
     const token = auth?.adminToken;
-    const status = authStatusOf(app, token);
+    // M1: passive (a connect/reconnect is not itself user activity) — never slides the idle expiry.
+    const status = authStatusOf(app, token, false);
     socket.data.admin = status.admin;
     socket.data.adminToken = status.admin ? token : undefined;
     if (status.admin) void socket.join(ADMIN_ROOM);
@@ -68,7 +95,8 @@ export function registerAdminGuard(app: FastifyInstance, office: OfficeNamespace
       const protect = app.diContainer.cradle.settings.get().auth.protect;
       if (WRITES.has(event) && protect !== 'all-writes') return next();
 
-      const status = authStatusOf(app, socket.data.adminToken as string | undefined);
+      // M1: this packet is the actual gated action the user just took — real activity, so it touches.
+      const status = authStatusOf(app, socket.data.adminToken as string | undefined, true);
       socket.data.admin = status.admin;
       if (!status.admin) {
         void socket.leave(ADMIN_ROOM);
@@ -81,7 +109,8 @@ export function registerAdminGuard(app: FastifyInstance, office: OfficeNamespace
   const sweep = async () => {
     const sockets = await office.in(ADMIN_ROOM).fetchSockets();
     for (const s of sockets) {
-      const status = authStatusOf(app, s.data.adminToken as string | undefined);
+      // M1: a background timer, not the user doing anything — never slides the idle expiry.
+      const status = authStatusOf(app, s.data.adminToken as string | undefined, false);
       if (!status.admin) {
         s.data.admin = false;
         void s.leave(ADMIN_ROOM);

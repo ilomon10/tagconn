@@ -66,8 +66,9 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS heroes_bound_agent_idx ON heroes (bound_agent_id);
   `,
   // M8 slots (final order; insert your SQL string at your slot, keep this order):
-  //   5: auth (S1)  6: runs (S2)  7: receptionist (S3)  8: attribution (S4)
+  //   5: auth (S1)  6: runs (S2)  7: receptionist (S3)  8: session run linking (S5, below)  9: attribution (S4)
   // Define new drizzle tables inside your module (e.g. modules/runs/runs.tables.ts), not in core/db/schema.ts.
+  // (S5 modifies the existing core `sessions` table, so its migration lives here instead.)
   /* 5: admin auth sessions (M8 8m, S1) */ `
   CREATE TABLE IF NOT EXISTS admin_sessions (
     id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, label TEXT, user_agent TEXT,
@@ -94,7 +95,31 @@ export const MIGRATIONS: string[] = [
   CREATE UNIQUE INDEX IF NOT EXISTS run_events_run_seq_idx ON run_events (run_id, seq);
   CREATE INDEX IF NOT EXISTS run_events_run_idx ON run_events (run_id, id);
   `,
-  // slot 7 (receptionist, S3) and slot 8 (attribution, S4): inserted here by those tasks.
+  /* 7: receptionist conversations + messages (M8 8l, S3) */ `
+  CREATE TABLE IF NOT EXISTS receptionist_conversations (
+    id TEXT PRIMARY KEY, title TEXT NOT NULL, scope TEXT NOT NULL, project_id TEXT, session_id TEXT,
+    active_run_id TEXT, message_count INTEGER NOT NULL DEFAULT 0, busy INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS receptionist_conversations_updated_idx ON receptionist_conversations (updated_at);
+  CREATE TABLE IF NOT EXISTS receptionist_messages (
+    id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL,
+    run_id TEXT, status TEXT, tools TEXT, cost_usd REAL, created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS receptionist_messages_conversation_idx ON receptionist_messages (conversation_id, created_at);
+  CREATE INDEX IF NOT EXISTS receptionist_messages_run_idx ON receptionist_messages (run_id);
+  `,
+  /* 8: session <-> run linking (M8 8k, S5) */ `
+  ALTER TABLE sessions ADD COLUMN run_id TEXT;
+  ALTER TABLE sessions ADD COLUMN origin TEXT;
+  `,
+  /* 9: attribution imports (M8 8j, S4). Table defined in modules/attribution/attribution.tables.ts. */ `
+  CREATE TABLE IF NOT EXISTS attribution_imports (
+    project_id TEXT PRIMARY KEY, status TEXT NOT NULL, project_cwd TEXT NOT NULL, received_at INTEGER NOT NULL,
+    floor_name TEXT NOT NULL, tagconn_version TEXT NOT NULL, has_layout INTEGER NOT NULL, hero_count INTEGER NOT NULL,
+    unknown_roles TEXT NOT NULL, profile TEXT NOT NULL, imported_at INTEGER, source TEXT
+  );
+  `,
 ];
 
 export function migrate(sqlite: Database.Database): number {

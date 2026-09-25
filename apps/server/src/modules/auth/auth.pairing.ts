@@ -20,24 +20,47 @@ interface Code {
  * codes are ephemeral by design (tied to the current server boot's `instanceId`), so they live only in
  * memory, not the DB. One instance per `AuthService` (never a module-level singleton), so separate
  * `buildApp()` calls in the same test process never share rate limits or codes.
+ *
+ * M2: previously a single shared bucket counted EVERY attempt (successes included) across `/pair`,
+ * `/pairing-challenge` and `/pairing-codes` alike. That let a flood of wrong `/pair` guesses exhaust
+ * the same bucket the legitimate `pnpm office:pair` flow needs, and vice versa — a lockout-DoS against
+ * the real pairing code. Now there are two buckets, and each counts only FAILURES:
+ *   - `pairFailures`: wrong/expired/already-used codes at `POST /api/auth/pair`. A CORRECT code always
+ *     succeeds, even while this bucket is exhausted — only guessing is rate-limited.
+ *   - `challengeFailures`: an unknown/expired/reused challengeId or a wrong proof at
+ *     `POST /api/auth/pairing-codes`. Minting a challenge, and a correct proof, never consume it.
  */
 export class PairingStore {
   private challenges = new Map<string, Challenge>();
   private codes = new Map<string, Code>();
-  private attempts: number[] = [];
+  private pairFailures: number[] = [];
+  private challengeFailures: number[] = [];
 
   private prune(now: number): void {
     for (const [id, c] of this.challenges) if (now - c.createdAt > PAIRING_CHALLENGE_TTL_MS) this.challenges.delete(id);
     for (const [code, c] of this.codes) if (now > c.expiresAt) this.codes.delete(code);
-    this.attempts = this.attempts.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+    this.pairFailures = this.pairFailures.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+    this.challengeFailures = this.challengeFailures.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
   }
 
-  /** Global limit shared by code redemption and challenge/code minting (§5.2: "10 per minute", no per-code lockout). */
-  recordAttempt(now = Date.now()): boolean {
-    this.prune(now);
-    if (this.attempts.length >= RATE_LIMIT_MAX) return false;
-    this.attempts.push(now);
+  private static recordInto(bucket: number[], now: number): boolean {
+    if (bucket.length >= RATE_LIMIT_MAX) return false;
+    bucket.push(now);
     return true;
+  }
+
+  /** Records one wrong/expired/already-used `/pair` code; false once that bucket is exhausted (429).
+   * `auth.service.ts`'s `pair()` never calls this for a correct code. */
+  recordPairFailure(now = Date.now()): boolean {
+    this.prune(now);
+    return PairingStore.recordInto(this.pairFailures, now);
+  }
+
+  /** Records one failed challenge lookup or proof at `/pairing-codes`; false once that bucket is
+   * exhausted (429). Minting a challenge, and a correct proof, never call this. */
+  recordChallengeFailure(now = Date.now()): boolean {
+    this.prune(now);
+    return PairingStore.recordInto(this.challengeFailures, now);
   }
 
   addChallenge(id: string, nonceClient: string, nonceServer: string, now = Date.now()): void {

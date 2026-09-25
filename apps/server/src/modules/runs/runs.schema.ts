@@ -1,4 +1,4 @@
-import { RUN_KINDS, UUID_RE } from '@tagconn/shared';
+import { PromptSchema, RUN_KINDS, UUID_RE } from '@tagconn/shared';
 import { z } from 'zod';
 
 /** REST query string version of `RunListQuery` (shared schema takes real numbers; a query string needs coercion). */
@@ -10,4 +10,6 @@ export const RunsListQuerySchema = z.object({
 
 export const RunIdParamsSchema = z.object({ runId: z.string().regex(UUID_RE) });
 
-export const RunFollowUpBodySchema = z.object({ prompt: z.string().trim().min(1).max(100_000) });
+/** L5: the same strict `PromptSchema` the socket path (`RunFollowUpRequestSchema`) already used —
+ * this REST body previously allowed a bare `z.string()` with no NUL check. */
+export const RunFollowUpBodySchema = z.strictObject({ prompt: PromptSchema });

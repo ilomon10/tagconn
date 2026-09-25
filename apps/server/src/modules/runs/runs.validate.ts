@@ -1,4 +1,4 @@
-import { isBareWebFetchRule, type RunPermissionMode, type Settings, WEBFETCH_LOOPBACK_DENY_RULES } from '@tagconn/shared';
+import { isValidWebFetchAllowRule, type RunPermissionMode, type Settings, WEBFETCH_LOOPBACK_DENY_RULES } from '@tagconn/shared';
 import { HttpError } from '../../core/http/index.js';
 
 /**
@@ -13,6 +13,23 @@ export function assertPromptWithinLimit(prompt: string, maxPromptChars: number):
   }
 }
 
+/**
+ * §2.3 / §2.7 "Server-side checks run first": `project.cwd` must be an absolute path equal to, or
+ * lexically below, one of `runner.allowedProjectDirs` (an empty list denies everything). This is a
+ * lexical prefix check on the STRING the project was registered with — not a realpath resolution (the
+ * runner does its own independent realpath + symlink-aware check, T6 defense in depth; this only
+ * bounds which registered project a run may target before it is ever queued). Failure: `dir_not_allowed`.
+ */
+export function assertProjectDirAllowed(cwd: string, allowedProjectDirs: readonly string[]): void {
+  if (!cwd.startsWith('/')) throw new HttpError(400, 'dir_not_allowed: project.cwd must be an absolute path');
+  const normalized = cwd.replace(/\/+$/, '') || '/';
+  const allowed = allowedProjectDirs.some((raw) => {
+    const root = raw.replace(/\/+$/, '') || '/';
+    return normalized === root || normalized.startsWith(`${root}/`);
+  });
+  if (!allowed) throw new HttpError(400, `dir_not_allowed: "${cwd}" is not inside runner.allowedProjectDirs`);
+}
+
 /** `mode_not_allowed` if the requested (or default) mode isn't in `settings.runner.allowedPermissionModes`. */
 export function resolvePermissionMode(requested: RunPermissionMode | undefined, runner: Settings['runner']): RunPermissionMode {
   const mode = requested ?? runner.permissionMode;
@@ -23,16 +40,18 @@ export function resolvePermissionMode(requested: RunPermissionMode | undefined, 
 }
 
 /**
- * `settings.runner.allowedTools` is already schema-refined to reject bare "WebFetch" (V11), but this
- * is the second, independent server-side check the design calls for (T6 defense in depth: a settings
- * override that somehow bypassed the schema must still be caught here, not just trusted).
+ * `settings.runner.allowedTools` is already schema-refined to reject the exact string "WebFetch"
+ * (V11), but this is the second, independent server-side check the design calls for (T6 defense in
+ * depth: a settings override that somehow bypassed the schema must still be caught here, not just
+ * trusted) — and it is strictly wider (L4): every WebFetch rule must be EXACTLY
+ * `WebFetch(domain:<DOMAIN_RE>)`, not just "not literally the bare word".
  */
 export function assertNoBareWebFetch(tools: readonly string[]): void {
-  const bare = tools.find((t) => isBareWebFetchRule(t));
-  if (bare) throw new HttpError(400, `tool_not_allowed: bare "${bare}" is never allowed (use WebFetch(domain:x))`);
+  const bad = tools.find((t) => !isValidWebFetchAllowRule(t));
+  if (bad) throw new HttpError(400, `tool_not_allowed: "${bad}" — WebFetch allow rules must be exactly WebFetch(domain:x)`);
 }
 
-/** `settings.runner.allowedTools`, re-checked for a bare WebFetch rule before it is ever sent to a runner. */
+/** `settings.runner.allowedTools`, re-checked for an invalid WebFetch rule before it is ever sent to a runner. */
 export function buildQuestAllowedTools(runner: Settings['runner']): string[] {
   assertNoBareWebFetch(runner.allowedTools);
   return [...runner.allowedTools];

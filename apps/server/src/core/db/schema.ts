@@ -1,4 +1,4 @@
-import type { HeroAppearance, TokenUsage } from '@tagconn/shared';
+import type { HeroAppearance, SessionOrigin, TokenUsage } from '@tagconn/shared';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 // Keep in sync with migrations.ts (runtime DDL; drizzle-kit is not needed at runtime).
@@ -26,6 +26,9 @@ export const sessions = sqliteTable(
     lastPrompt: text('last_prompt'),
     /** Sum over the main agent and all its subagents; read from Claude Code transcripts. */
     usage: text('usage', { mode: 'json' }).$type<TokenUsage | null>(),
+    /** Runner run that started this session, linked from the `x-tagconn-run-id` hint (M8 8k, S5). */
+    runId: text('run_id'),
+    origin: text('origin').$type<SessionOrigin | null>(),
     updatedAt: integer('updated_at').notNull(),
   },
   (t) => [index('sessions_project_idx').on(t.projectId)],

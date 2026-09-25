@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { defaultSettings, SettingsSchema, type Settings, type SettingsPatch } from '@tagconn/shared';
+import { defaultSettings, RUNNER_TOKEN_RE, SettingsSchema, type Settings, type SettingsPatch } from '@tagconn/shared';
 import YAML from 'yaml';
 import { deepMerge, expandHome, getPath, isPlainObject, type PlainObject, setPath } from './merge.js';
 
@@ -92,6 +92,15 @@ export function loadConfig(opts: LoadConfigOptions = {}): LoadedConfig {
   const result = SettingsSchema.safeParse(layered);
   if (!result.success) {
     throw new Error(`Invalid configuration${configFile ? ` (${configFile})` : ''}: ${result.error.message}`);
+  }
+  // L3: settings.ts's own schema accepts any string here (empty = runner disabled), so a malformed,
+  // non-empty token would otherwise only surface later as an opaque handshake failure. Fail loudly at
+  // boot instead, with the exact shape the installer/pnpm office:pair generate.
+  if (result.data.runner.token && !RUNNER_TOKEN_RE.test(result.data.runner.token)) {
+    throw new Error(
+      `Invalid configuration${configFile ? ` (${configFile})` : ''}: runner.token does not match ${RUNNER_TOKEN_RE} ` +
+        '(32-128 lowercase hex characters, as the installer generates); leave it empty to keep the runner disabled.',
+    );
   }
   return { base: normalizeSettings(result.data), layered, configFile };
 }

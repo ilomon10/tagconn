@@ -2,6 +2,7 @@ import { type ClientToServerEvents, OFFICE_NAMESPACE, rooms, type ServerToClient
 import { asValue } from 'awilix';
 import fp from 'fastify-plugin';
 import { type Namespace, Server, type Socket } from 'socket.io';
+export type { AdminSessionChecker } from './admin-guard.js';
 import { registerAdminGuard } from './admin-guard.js';
 import { hostnameFromHostHeader } from '../http/host.js';
 // Deliberate module → module import: the settings module owns the hookToken masking policy, and

@@ -25,6 +25,8 @@ export const authModule = fp(
       authRepository: asClass(AuthRepository).singleton(),
       authService: asClass(AuthService).singleton(),
       adminVerifier: aliasTo('authService'),
+      // M1: non-touching session check used by core/realtime/admin-guard.ts's handshake + sweep.
+      adminChecker: aliasTo('authService'),
     });
     const { cradle } = app.diContainer;
     cradle.authService.logBootPairingCodeIfNeeded();

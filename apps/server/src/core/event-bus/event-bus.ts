@@ -5,7 +5,10 @@ import type {
   HookPayload,
   OfficeEvent,
   OfficeLayout,
+  PendingProfileImport,
   Project,
+  ReceptionistConversation,
+  ReceptionistMessage,
   Role,
   Run,
   RunEventEnvelope,
@@ -36,6 +39,12 @@ export interface HookContext {
   linkedToolUseId?: string;
   /** Set by ingest when settings.ingest.storeToolPayloads is on. */
   storePayload?: boolean;
+  /**
+   * Set by ingest from the `x-tagconn-run-id` header (M8 8k, S5), already validated as UUID-shaped.
+   * Sessions uses it to set `Session.runId`/`origin` via `runLinker`/`runDispatcher`; see
+   * docs/design/runner-and-helpdesk.md §2.6 "Hint". Never authoritative on its own (`init` wins).
+   */
+  runIdHint?: string;
 }
 
 export interface BusEvents {
@@ -66,6 +75,16 @@ export interface BusEvents {
   'run.heroRequested': { runId: string; projectId: string; heroId: string; role: string };
   /** The single connected runner's connection/capabilities/queue state changed. */
   'runner.status': RunnerStatus;
+  /** A Receptionist conversation was created, or its scope/session/busy/title state changed (M8 8l, S3). */
+  'receptionist.conversationUpserted': ReceptionistConversation;
+  /** A Receptionist conversation was deleted. */
+  'receptionist.conversationRemoved': string;
+  /** A Receptionist message was created or updated (the assistant message upserts as its turn streams). */
+  'receptionist.messageUpserted': ReceptionistMessage;
+  /** A `.tagconn/office.json` import became pending admin review, or an existing one was refreshed (M8 8j, S4). */
+  'attribution.pending': PendingProfileImport;
+  /** A pending import was resolved (imported or dismissed); the admin toast for it should be cleared. */
+  'attribution.pendingCleared': string;
 }
 
 type Listener<T> = (payload: T) => void;

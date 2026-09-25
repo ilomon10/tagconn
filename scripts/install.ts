@@ -770,12 +770,18 @@ function removeRunnerConfig(configDir: string, dryRun: boolean): void {
   log(`  removed ${path}`);
 }
 
-/** Upserts OFFICE_RUNNER__TOKEN into the repo .env (same file/convention as OFFICE_HOOK_TOKEN). */
-function ensureRunnerTokenEnv(envFile: string, runnerToken: string, dryRun: boolean): void {
+/**
+ * Upserts OFFICE_RUNNER__TOKEN into the repo .env (same file/convention as OFFICE_HOOK_TOKEN), and mirrors
+ * the runner's allowed dirs to the server: the server re-checks them before queuing a quest (empty = deny
+ * all), and `runner.enabled` defaults to false, so the runner is only switched on when dirs are allowed.
+ */
+function ensureRunnerTokenEnv(envFile: string, runnerToken: string, allowedDirs: string[], dryRun: boolean): void {
   const text = existsSync(envFile) ? readFileSync(envFile, 'utf8') : '';
   let lines = text.split('\n');
   if (lines.length && lines[lines.length - 1] === '') lines = lines.slice(0, -1);
   lines = upsertEnvLine(lines, 'OFFICE_RUNNER__TOKEN', runnerToken);
+  lines = upsertEnvLine(lines, 'OFFICE_RUNNER__ALLOWED_PROJECT_DIRS', JSON.stringify(allowedDirs));
+  lines = upsertEnvLine(lines, 'OFFICE_RUNNER__ENABLED', allowedDirs.length > 0 ? 'true' : 'false');
   const newText = lines.join('\n') + '\n';
   if (dryRun) {
     log(`  [dry-run] would set OFFICE_RUNNER__TOKEN in ${envFile}`);
@@ -1162,7 +1168,7 @@ export async function main(): Promise<void> {
   log('\n[runner]');
   const runnerConfig = ensureRunnerConfig(args.configDir, args.url, args.allowDirs, args.dryRun);
   warnBroadAllowDirs(runnerConfig.allowedProjectDirs);
-  ensureRunnerTokenEnv(args.envFile, runnerConfig.token, args.dryRun);
+  ensureRunnerTokenEnv(args.envFile, runnerConfig.token, runnerConfig.allowedProjectDirs, args.dryRun);
 
   log('\n[settings.json]');
   backupSettings(settingsPath, args.dryRun);
