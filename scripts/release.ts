@@ -33,14 +33,19 @@ export function cutChangelog(text: string, version: string, date: string, repoUr
   const body = text.slice(bodyStart, bodyEnd).trim();
   if (!body) throw new Error('the Unreleased section is empty; nothing to release');
 
-  let out = `${text.slice(0, bodyStart)}\n\n## [${version}] - ${date}\n\n${body}\n${text.slice(bodyEnd)}`;
+  const out = `${text.slice(0, bodyStart)}\n\n## [${version}] - ${date}\n\n${body}\n${text.slice(bodyEnd)}`;
   const prev = /\n## \[(\d+\.\d+\.\d+)\]/.exec(text.slice(bodyEnd))?.[1];
-  out = out.replace(/\n\[Unreleased\]:.*(\n|$)/, '\n');
+  // Link references live in one block at the end: Unreleased first, then versions newest first.
+  const isLinkRef = (line: string) => /^\[[^\]]+\]:\s/.test(line);
+  const lines = out.trimEnd().split('\n');
+  const oldLinks = lines.filter((l) => isLinkRef(l) && !l.startsWith('[Unreleased]:'));
+  const content = lines.filter((l) => !isLinkRef(l)).join('\n').trimEnd();
   const links = [
     `[Unreleased]: ${repoUrl}/compare/v${version}...HEAD`,
     prev ? `[${version}]: ${repoUrl}/compare/v${prev}...v${version}` : `[${version}]: ${repoUrl}/releases/tag/v${version}`,
+    ...oldLinks,
   ].join('\n');
-  return `${out.trimEnd()}\n\n${links}\n`.replace(/\n{3,}/g, '\n\n');
+  return `${content}\n\n${links}\n`.replace(/\n{3,}/g, '\n\n');
 }
 
 function packageJsonPaths(): string[] {

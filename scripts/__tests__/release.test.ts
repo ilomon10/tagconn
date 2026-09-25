@@ -25,6 +25,11 @@ describe('cutChangelog', () => {
     expect(out).toContain(`[0.2.0]: ${repo}/compare/v0.1.0...v0.2.0`);
     expect(out).toContain(`[0.1.0]: ${repo}/releases/tag/v0.1.0`);
     expect(out.match(/\[Unreleased\]:/g)).toHaveLength(1);
+    expect(out.trimEnd().split('\n').slice(-3)).toEqual([
+      `[Unreleased]: ${repo}/compare/v0.2.0...HEAD`,
+      `[0.2.0]: ${repo}/compare/v0.1.0...v0.2.0`,
+      `[0.1.0]: ${repo}/releases/tag/v0.1.0`,
+    ]);
   });
 
   it('refuses an empty Unreleased section', () => {
