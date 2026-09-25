@@ -1,13 +1,39 @@
 import * as Phaser from 'phaser';
-import { DEFAULT_LAYOUT, type Agent, type OfficeLayout, type OfficeStyle, type Role, type Settings, type Zone } from '@tagconn/shared';
+import {
+  DEFAULT_LAYOUT,
+  MULTIVERSE_LIMITS,
+  MULTIVERSE_THEME_ID,
+  type Agent,
+  type Hero,
+  type MultiversePlan,
+  type MultiverseRealm,
+  type OfficeLayout,
+  type OfficeStyle,
+  type Role,
+  type Session,
+  type Settings,
+  type Zone,
+} from '@tagconn/shared';
 import { generateMap } from '../procgen';
-import type { GeneratedMap, Point, StairsSpot } from '../procgen/types';
+import type { GeneratedMap, Point, Rect, StairsSpot } from '../procgen/types';
 import { PathFinder } from '../pathfinding';
-import { SeatAllocator } from '../seats';
+import { SeatAllocator, type SeatScope } from '../seats';
 import { Character } from '../actors/Character';
 import { generateTextures } from '../textures';
 import { resolveCostume, resolveTitle } from '../lookResolver';
-import { getTheme, paintCostumeTextures, prefersReducedMotion, renderGeneratedMap, themedBubble, THEME_BASE_TEXTURE, type ThemeDefinition } from '../themes';
+import { resolveHeroCostume } from '../heroLook';
+import { resolveCast, type ActorKey, type Cast, type CastMember } from '../cast';
+import { nextLifecycle, type ActorLifecycleState, type LifecycleFrame } from '../actorLifecycle';
+import {
+  getTheme,
+  paintCostumeTextures,
+  prefersReducedMotion,
+  renderGeneratedMap,
+  themedBubble,
+  THEME_BASE_TEXTURE,
+  type ThemeDefinition,
+  type ThemeRegion,
+} from '../themes';
 import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets } from '../camera/insets';
 import { zoomCameraAboutPoint } from '../camera/zoom';
 import { isDragMove } from '../camera/drag';
@@ -24,8 +50,9 @@ export interface OfficeFloorNeighbor {
 }
 
 /**
- * Where the current floor sits in the stairs order (docs/design/guild-hall.md section 6). `null`
- * in "All floors" mode: there is no single floor to move relative to, and stairs open the picker.
+ * Where the current floor sits in the stairs order (docs/design/guild-hall.md section 6). M8 8h:
+ * the Multiverse is just another floor in that order (appended last by `lib/floors.ts`) — its `above`
+ * is absent (its own up stairs are disabled) and `below` is the top project floor (section 6.3).
  */
 export interface OfficeFloorInfo {
   index: number;
@@ -34,16 +61,35 @@ export interface OfficeFloorInfo {
   below?: OfficeFloorNeighbor;
 }
 
+/**
+ * The scene's input contract (docs/design/living-office.md section 7). `floorKey` stays; `heroes`,
+ * `sessions`, `multiverse` and `pinnedPrimary` are additive (M8 8b/8c/8h/8i) on top of the pre-M8
+ * shape — `OfficeView` (W7b) always populates them (including in demo mode), so they are required
+ * here rather than optional. On the Multiverse floor `layout` is `multiverse.layout` and `style` is
+ * `'rift'`; the host builds `multiverse` with `game/multiverse/plan.ts#planMultiverse` and this scene
+ * only renders it (regions, realm-scoped seats/hit-zones — stairs already fall out of `floor` alone).
+ */
 export interface OfficeState {
   agents: Agent[];
+  /** Heroes visible on this floor (every subscribed project's, on the Multiverse). */
+  heroes: Hero[];
+  /** Sessions visible on this floor — feeds Guild Master primary selection and its "+N" chip. */
+  sessions: Session[];
   settings: Settings;
   roles: Role[];
   /** Changing floors swaps the cast instantly instead of walking everyone out. */
   floorKey: string;
   layout: OfficeLayout;
-  /** Resolved style: `layout.style` wins over `settings.office.style`. */
-  style: OfficeStyle;
+  /** Resolved style: `layout.style` wins over `settings.office.style`; `'rift'` on the Multiverse. */
+  style: OfficeStyle | typeof MULTIVERSE_THEME_ID;
   floor: OfficeFloorInfo | null;
+  /** Non-null exactly on the Multiverse floor. */
+  multiverse: MultiversePlan | null;
+  /** M8 8b: web-local "pin this session as Guild Master" overrides, by projectId (`GmSessionsPopover`).
+   *  Seeded into the Guild Master hysteresis every call, the same convention `Roster`'s own
+   *  `resolveCast` call uses — a pin isn't absolute (a challenger that needs you can still preempt it
+   *  for one cycle), but it is fed back in every frame, so it wins back the next one. */
+  pinnedPrimary: Record<string, string>;
 }
 
 const parseColor = (c: string | undefined, fallback = 0x8e8e9e) => {
@@ -51,7 +97,9 @@ const parseColor = (c: string | undefined, fallback = 0x8e8e9e) => {
   return Number.isNaN(n) ? fallback : n;
 };
 
-/** Main-session first, then by start time — decides who gets on the floor when over maxCharacters. */
+/** Main-session first, then by start time. Pre-M8 helper, kept for compatibility; the scene itself
+ *  now orders and caps through `resolveCast` (docs/design/living-office.md section 4.1), which also
+ *  accounts for heroes, the Guild Master merge and "needs you" preemption. */
 export function visibleAgents(agents: Agent[], max: number): Agent[] {
   return [...agents].sort((a, b) => Number(b.isMain) - Number(a.isMain) || a.startedAt - b.startedAt).slice(0, Math.max(0, max));
 }
@@ -62,27 +110,134 @@ interface StairsSprite {
   ring: Phaser.GameObjects.Arc;
 }
 
+interface RealmZoneSprite {
+  zone: Phaser.GameObjects.Zone;
+  outline: Phaser.GameObjects.Graphics;
+}
+
+function rectContains(r: Rect, x: number, y: number): boolean {
+  return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
+}
+
+function unionRect(a: Rect, b: Rect): Rect {
+  const x0 = Math.min(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const x1 = Math.max(a.x + a.w, b.x + b.w);
+  const y1 = Math.max(a.y + a.h, b.y + b.h);
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** The drawn footprint of a realm's rooms (excludes the void margin in its 30x22 cell), used both
+ *  as the theme region's `rect` and as the floating-island edge boundary (section 6.2). */
+function realmBlockRect(map: GeneratedMap, realm: MultiverseRealm): Rect {
+  let rect: Rect | undefined;
+  for (const id of realm.roomIds) {
+    const room = map.rooms.find((r) => r.id === id);
+    if (!room) continue;
+    rect = rect ? unionRect(rect, room.footprint) : room.footprint;
+  }
+  return rect ?? realm.cell;
+}
+
+/** The realm floor tile nearest the Nexus that is reachable from the spawn (section 6.3): new
+ *  characters walk in from the Nexus spawn, and `entrance`/leave targets inside a realm resolve
+ *  here instead of the whole map's single `entrance` room (which the Multiverse doesn't scope to a realm). */
+function realmGate(map: GeneratedMap, realm: MultiverseRealm, nexusCenter: Point): Point {
+  const roomIds = new Set(realm.roomIds);
+  let best: Point | undefined;
+  let bestDist = Infinity;
+  for (const room of map.rooms) {
+    if (!roomIds.has(room.id)) continue;
+    for (const t of room.tiles) {
+      if (map.walkable[t.y]?.[t.x] !== 0) continue;
+      const d = Math.abs(t.x - nexusCenter.x) + Math.abs(t.y - nexusCenter.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = t;
+      }
+    }
+  }
+  return best ?? map.spawn;
+}
+
+/** A `GeneratedMap` restricted to one realm's decor/furniture/stairs (section 6.2: "the scene calls
+ *  each realm theme with a map slice"), so a realm's own `animate()` call never double-paints
+ *  objects that belong to a neighboring realm or the Nexus. Geometry fields are shared references —
+ *  `animate()` only reads, never mutates, its `map` argument. */
+function sliceMapForRect(map: GeneratedMap, rect: Rect): GeneratedMap {
+  return {
+    ...map,
+    decor: map.decor.filter((d) => rectContains(rect, d.x, d.y)),
+    furniture: map.furniture.filter((f) => rectContains(rect, f.x, f.y)),
+    stairs: map.stairs.filter((s) => rectContains(rect, s.x, s.y)),
+  };
+}
+
+/**
+ * M8 8h fair-share cap across realms (section 6.3): each realm gets `floor(cap/n)`, and the leftover
+ * is handed out one at a time to realms with a live Guild Master first, then in realm order — a
+ * simple, deterministic split rather than a fully demand-aware one (a realm's own `resolveCast` call
+ * still puts its Guild Master first within whatever share it gets, so a GM is never the one dropped).
+ */
+function splitMultiverseCap(total: number, realms: readonly MultiverseRealm[], agents: readonly Agent[]): Map<number, number> {
+  const n = realms.length;
+  const caps = new Map<number, number>();
+  if (n === 0) return caps;
+  const base = Math.floor(total / n);
+  let leftover = Math.max(0, total - base * n);
+  for (const r of realms) caps.set(r.index, base);
+  const hasLiveGm = (r: MultiverseRealm): boolean => {
+    const ids = new Set(r.projectIds);
+    return agents.some((a) => a.isMain && a.status !== 'done' && ids.has(a.projectId));
+  };
+  const order = [...realms].sort((a, b) => Number(hasLiveGm(b)) - Number(hasLiveGm(a)) || a.index - b.index);
+  for (const r of order) {
+    if (leftover <= 0) break;
+    caps.set(r.index, (caps.get(r.index) ?? 0) + 1);
+    leftover--;
+  }
+  return caps;
+}
+
+/** What this frame wants an actor to be doing, before the pure `nextLifecycle` reducer applies the
+ *  `idleLeaveSec` timer (docs/design/living-office.md section 4.2). A rebind (the key is back and,
+ *  for a persistent actor, its agent isn't `done`) always wins; otherwise an actor already mid-fade
+ *  (`alreadyLeaving` — whether from `idleLeaveSec` expiring or `enforceCaps`' eviction) stays
+ *  `leaving` rather than flip-flopping back to `resting` for one more frame. */
+function desiredLifecycle(persistent: boolean, member: CastMember | undefined, alreadyLeaving: boolean): ActorLifecycleState {
+  const rebind = !!member && !(persistent && member.agent.status === 'done');
+  if (rebind) return 'quest';
+  if (alreadyLeaving) return 'leaving';
+  return persistent ? 'resting' : 'leaving';
+}
+
 export class OfficeScene extends Phaser.Scene {
   private map!: GeneratedMap;
   private theme!: ThemeDefinition;
   private finder!: PathFinder;
   private seats!: SeatAllocator;
-  /** Static world art (base texture, room labels) — rebuilt on any geometry or style change and
-   *  never touched by anything else. */
+  /** Static world art (base texture, room labels/realm banners) — rebuilt on any geometry or style
+   *  change and never touched by anything else. */
   private worldLayer: Phaser.GameObjects.GameObject[] = [];
   /** `theme.animate()`'s objects (torches, motes, ...) — split out from `worldLayer` so toggling
    *  `office.ambientEffects` can refresh just these live, without a geometry rebuild (bug: it used
    *  to take effect only after the next rebuild/reskin). */
   private ambientLayer: Phaser.GameObjects.GameObject[] = [];
   private stairsSprites: StairsSprite[] = [];
+  /** M8 8h: one realm per Multiverse cell, `[]` on a normal floor. Rebuilt only on `buildWorld`. */
+  private regions: ThemeRegion[] = [];
+  private multiversePlan: MultiversePlan | null = null;
+  private realmScopes = new Map<number, SeatScope>();
+  private realmZoneSprites: RealmZoneSprite[] = [];
   private tooltip!: Phaser.GameObjects.Text;
-  private characters = new Map<string, Character>();
+  private characters = new Map<ActorKey, Character>();
   private night!: Phaser.GameObjects.Rectangle;
   private state?: OfficeState;
-  /** `layout.id + updatedAt` — a full geometry rebuild only happens when this changes (D2: a style
-   *  switch alone re-skins the same geometry, so seats and characters never move). */
+  /** `layout.id + updatedAt` (+ the Multiverse plan's own key) — a full geometry rebuild only
+   *  happens when this changes (D2: a style switch alone re-skins the same geometry, so seats and
+   *  characters never move). */
   private layoutKey = '';
-  private appliedStyle: OfficeStyle | null = null;
+  private appliedStyle: OfficeStyle | typeof MULTIVERSE_THEME_ID | null = null;
   private floorKey: string | null = null;
   private userZoom = 1;
   private panned = false;
@@ -100,11 +255,19 @@ export class OfficeScene extends Phaser.Scene {
   private preTransitionZoom: number | null = null;
   private preTransitionScrollY: number | null = null;
   /** M8 8d: the agent whose drawer is open (glow + focus dim) and the one currently hovered
-   *  (subtle highlight + expands a collapsed bubble badge). */
-  private selectedId: string | null = null;
-  private hoveredId: string | null = null;
+   *  (subtle highlight + expands a collapsed bubble badge) — both tracked by `ActorKey` internally;
+   *  `selectedAgentId` is the external (agent-id) handle `OfficeGame.setSelected` is called with. */
+  private selectedAgentId: string | null = null;
+  private selectedKey: ActorKey | null = null;
+  private hoveredKey: ActorKey | null = null;
   /** Countdown to the next throttled `refreshLabels()` pass (M8 8e); `<= 0` due next `update()`. */
   private labelTimer = 0;
+  /** M8 8b/8c: Guild Master hysteresis (`cast.ts`'s `prevPrimary`, seeded every call with
+   *  `OfficeState.pinnedPrimary`) and the agent-id -> `ActorKey` index rebuilt every
+   *  `setOfficeState` pass (external selection looks agents up by id; everything internal is keyed
+   *  by `ActorKey`). */
+  private prevPrimary = new Map<string, string>();
+  private agentIndex = new Map<string, ActorKey>();
   private endDragOnBlur = () => {
     this.drag = null;
   };
@@ -130,7 +293,7 @@ export class OfficeScene extends Phaser.Scene {
       .setDepth(200_000)
       .setVisible(false);
     this.cameras.main.setBackgroundColor('#15121e');
-    this.buildWorld(DEFAULT_LAYOUT, 'guild');
+    this.buildWorld(DEFAULT_LAYOUT, 'guild', null);
     this.night = this.add.rectangle(0, 0, this.worldW, this.worldH, 0x0b1030, 0).setOrigin(0).setDepth(90_000);
     this.setupCamera();
     this.themeTimer = this.time.addEvent({ delay: 60_000, loop: true, callback: () => this.applyLighting() });
@@ -154,20 +317,41 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   /** Full geometry rebuild: a new map, seats, pathfinding grid and stairs. Characters keep their
-   *  world position unless `setOfficeState` also decides to reseat them (a real layout change). */
-  private buildWorld(layout: OfficeLayout, style: OfficeStyle) {
+   *  world position unless `setOfficeState` also decides to reseat them (a real layout change).
+   *  `multiverse` is non-null exactly when this is the Multiverse floor (M8 8h). */
+  private buildWorld(layout: OfficeLayout, style: OfficeStyle | typeof MULTIVERSE_THEME_ID, multiverse: MultiversePlan | null) {
     this.map = generateMap(layout);
     this.theme = getTheme(style);
     this.appliedStyle = style;
+    this.multiversePlan = multiverse;
+    this.regions = multiverse ? this.buildRegions(multiverse) : [];
+    this.realmScopes = multiverse ? this.buildRealmScopes(multiverse) : new Map();
     this.finder = new PathFinder(this.map.walkable);
     this.seats = new SeatAllocator(this.map);
     this.renderVisuals();
     this.buildStairsInteractive();
+    this.buildRealmZones();
     if (this.night) this.night.setSize(this.worldW, this.worldH);
   }
 
-  /** Same geometry, new skin: repaint the texture, room decor and lighting only. */
-  private applySkin(style: OfficeStyle) {
+  private buildRegions(plan: MultiversePlan): ThemeRegion[] {
+    return plan.realms.filter((r) => !r.overflow && r.style).map((r) => ({ rect: realmBlockRect(this.map, r), theme: getTheme(r.style!) }));
+  }
+
+  private buildRealmScopes(plan: MultiversePlan): Map<number, SeatScope> {
+    const nexusCenter = { x: plan.nexus.x + Math.floor(plan.nexus.w / 2), y: plan.nexus.y + Math.floor(plan.nexus.h / 2) };
+    const scopes = new Map<number, SeatScope>();
+    for (const realm of plan.realms) {
+      const roomIds = new Set(realm.roomIds);
+      const rooms = this.map.rooms.filter((r) => roomIds.has(r.id));
+      scopes.set(realm.index, { roomIds, types: new Set(rooms.map((r) => r.type)), gate: realmGate(this.map, realm, nexusCenter) });
+    }
+    return scopes;
+  }
+
+  /** Same geometry, new skin: repaint the texture, room decor and lighting only. Never reached on
+   *  the Multiverse (its `layoutKey` includes the plan key, so any realm-set change is a `rebuild`). */
+  private applySkin(style: OfficeStyle | typeof MULTIVERSE_THEME_ID) {
     this.theme = getTheme(style);
     this.appliedStyle = style;
     this.renderVisuals();
@@ -178,35 +362,70 @@ export class OfficeScene extends Phaser.Scene {
     for (const o of this.worldLayer) o.destroy();
     this.worldLayer = [];
     const T = this.map.tileSize;
-    renderGeneratedMap(this, this.map, this.theme);
+    renderGeneratedMap(this, this.map, this.theme, this.regions);
     this.worldLayer.push(this.add.image(0, 0, THEME_BASE_TEXTURE).setOrigin(0).setDepth(-10));
 
-    for (const room of this.map.rooms) {
-      if (room.type === 'hall') continue;
-      const name = (room.name ?? this.theme.roomNames[room.type]).toUpperCase();
-      const label = this.add
-        .text(room.labelAt.x * T + 3, room.labelAt.y * T - 2, name, {
-          fontFamily: 'ui-monospace, Menlo, monospace',
-          fontSize: '6px',
-          color: this.theme.palette.text,
-          resolution: 4,
-        })
-        .setOrigin(0, 1)
-        .setAlpha(0.6)
-        .setDepth(1);
-      label.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
-      this.worldLayer.push(label);
+    if (this.multiversePlan) {
+      // Room labels are hidden on the Multiverse (section 6.3) — the realm banners below replace them.
+      for (const realm of this.multiversePlan.realms) {
+        const label = this.add
+          .text(realm.bannerAt.x * T + T / 2, realm.bannerAt.y * T + T, realm.name, {
+            fontFamily: 'ui-monospace, Menlo, monospace',
+            fontSize: '7px',
+            color: '#ece6ff',
+            backgroundColor: '#100c22cc',
+            padding: { x: 3, y: 1.5 },
+            resolution: 4,
+          })
+          .setOrigin(0.5, 1)
+          .setDepth(50_000);
+        label.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+        this.worldLayer.push(label);
+      }
+    } else {
+      for (const room of this.map.rooms) {
+        if (room.type === 'hall') continue;
+        const name = (room.name ?? this.theme.roomNames[room.type]).toUpperCase();
+        const label = this.add
+          .text(room.labelAt.x * T + 3, room.labelAt.y * T - 2, name, {
+            fontFamily: 'ui-monospace, Menlo, monospace',
+            fontSize: '6px',
+            color: this.theme.palette.text,
+            resolution: 4,
+          })
+          .setOrigin(0, 1)
+          .setAlpha(0.6)
+          .setDepth(1);
+        label.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+        this.worldLayer.push(label);
+      }
     }
 
     this.refreshAmbient();
   }
 
-  /** (Re)runs `theme.animate()` alone — used on a full `renderVisuals()` pass and, live, whenever
-   *  `office.ambientEffects` changes (bug fix: it used to need a rebuild/reskin to take effect). */
+  /** (Re)runs `theme.animate()` — used on a full `renderVisuals()` pass and, live, whenever
+   *  `office.ambientEffects` changes (bug fix: it used to need a rebuild/reskin to take effect).
+   *  On the Multiverse (`this.regions` non-empty), each realm's own theme animates its own map slice
+   *  with no motes, and the base rift theme animates the whole map once with the global motes —
+   *  section 6.2, budget split per `MULTIVERSE_LIMITS.maxAmbientObjects`. */
   private refreshAmbient() {
     for (const o of this.ambientLayer) o.destroy();
     const ambient = this.state?.settings.office.ambientEffects ?? true;
-    this.ambientLayer = this.theme.animate(this, this.map, { ambient });
+    if (this.regions.length) {
+      const total = MULTIVERSE_LIMITS.maxAmbientObjects;
+      const riftBudget = Math.floor(total / 3);
+      const perRealm = Math.floor((total - riftBudget) / this.regions.length);
+      const layer: Phaser.GameObjects.GameObject[] = [];
+      for (const region of this.regions) {
+        const slice = sliceMapForRect(this.map, region.rect);
+        layer.push(...region.theme.animate(this, slice, { ambient, motes: false, budget: perRealm }));
+      }
+      layer.push(...this.theme.animate(this, this.map, { ambient, motes: true, budget: riftBudget }));
+      this.ambientLayer = layer;
+    } else {
+      this.ambientLayer = this.theme.animate(this, this.map, { ambient });
+    }
   }
 
   // ---------------------------------------------------------------- stairs
@@ -249,13 +468,54 @@ export class OfficeScene extends Phaser.Scene {
     this.tooltip.setVisible(false);
   }
 
-  /** Grey out a direction with no floor to reach; "All floors" mode leaves both lit (they open the picker). */
+  /** Grey out a direction with no floor to reach; a floor with no `OfficeFloorInfo` at all (only
+   *  the pre-M8 "All floors" view had this — the Multiverse always has one) leaves both lit. */
   private refreshStairsAvailability() {
     const floor = this.state?.floor ?? null;
     for (const { spot, ring } of this.stairsSprites) {
       const target = spot.dir === 'up' ? floor?.above : floor?.below;
       const enabled = floor === null || !!target;
       ring.setStrokeStyle(2, enabled ? (spot.dir === 'up' ? 0x4ff0d0 : 0xb07aff) : 0x666666, enabled ? 0.9 : 0.4);
+    }
+  }
+
+  // ---------------------------------------------------------------- M8 8h: realm hit zones
+
+  /** One static interactive zone per realm cell (section 6.3), rebuilt only on `buildWorld` — no
+   *  per-frame work. Depth sits well below any character or stairs zone, so characters always win
+   *  the hit test (Phaser's default `topOnly`) and a click on empty realm ground still travels. */
+  private buildRealmZones() {
+    for (const z of this.realmZoneSprites) {
+      z.zone.destroy();
+      z.outline.destroy();
+    }
+    this.realmZoneSprites = [];
+    const plan = this.multiversePlan;
+    if (!plan) return;
+    const T = this.map.tileSize;
+    for (const realm of plan.realms) {
+      const { x, y, w, h } = realm.cell;
+      const px = x * T;
+      const py = y * T;
+      const pw = w * T;
+      const ph = h * T;
+      const accent = !realm.overflow && realm.style ? getTheme(realm.style).palette.wallEdge : 0x9fd8ff;
+      const outline = this.add.graphics().setDepth(-2).setVisible(false);
+      const zone = this.add.zone(px + pw / 2, py + ph / 2, pw, ph).setDepth(-3).setInteractive({ cursor: 'pointer' });
+      zone.on('pointerover', () => {
+        outline.clear().lineStyle(2, accent, 0.85).strokeRect(px + 1, py + 1, pw - 2, ph - 2);
+        outline.setVisible(true);
+        this.tooltip.setText(realm.overflow ? `Open the floor picker · ${realm.name}` : `Travel to ${realm.name}`).setVisible(true);
+      });
+      zone.on('pointerout', () => {
+        outline.setVisible(false);
+        this.tooltip.setVisible(false);
+      });
+      zone.on('pointerup', () => {
+        if (this.inputLocked || this.drag?.moved) return;
+        this.events.emit('realmClick', realm.overflow ? null : (realm.projectIds[0] ?? null));
+      });
+      this.realmZoneSprites.push({ zone, outline });
     }
   }
 
@@ -342,8 +602,9 @@ export class OfficeScene extends Phaser.Scene {
       this.clampCamera();
     });
     this.input.on('pointerup', (_p: Phaser.Input.Pointer, hitObjects: Phaser.GameObjects.GameObject[]) => {
-      // A plain click (no drag) that hit nothing dismisses the panel; a click on a Character is
-      // handled by its own listener (see setOfficeState), which runs before this one.
+      // A plain click (no drag) that hit nothing dismisses the panel; a click on a Character or a
+      // realm zone is handled by its own listener (see attachCharacterHandlers/buildRealmZones),
+      // which runs before this one.
       const wasEmptyClick = !!this.drag && !this.drag.moved && hitObjects.length === 0;
       this.drag = null;
       if (wasEmptyClick) this.events.emit('emptyClick');
@@ -444,8 +705,13 @@ export class OfficeScene extends Phaser.Scene {
     this.events.emit('followChanged', null);
   }
 
+  private characterForAgent(agentId: string): Character | undefined {
+    const key = this.agentIndex.get(agentId);
+    return key ? this.characters.get(key) : undefined;
+  }
+
   private recenterFollow(instant: boolean) {
-    const c = this.followId ? this.characters.get(this.followId) : undefined;
+    const c = this.followId ? this.characterForAgent(this.followId) : undefined;
     if (!c) {
       this.cancelFollow();
       return;
@@ -477,14 +743,15 @@ export class OfficeScene extends Phaser.Scene {
     const prevAmbient = this.state?.settings.office.ambientEffects;
     this.state = state;
     const office = state.settings.office;
-    const effectiveStyle = state.layout.style ?? state.style;
+    const multiverse = state.multiverse;
+    const effectiveStyle: OfficeStyle | typeof MULTIVERSE_THEME_ID = multiverse ? MULTIVERSE_THEME_ID : (state.layout.style ?? state.style);
 
-    const layoutKey = `${state.layout.id}|${state.layout.updatedAt}`;
+    const layoutKey = `${state.layout.id}|${state.layout.updatedAt}|${multiverse?.key ?? ''}`;
     const rebuild = layoutKey !== this.layoutKey;
     const reskin = !rebuild && effectiveStyle !== this.appliedStyle;
     if (rebuild) {
       this.layoutKey = layoutKey;
-      this.buildWorld(state.layout, effectiveStyle);
+      this.buildWorld(state.layout, effectiveStyle, multiverse);
     } else if (reskin) {
       this.applySkin(effectiveStyle);
     } else if (prevAmbient !== undefined && prevAmbient !== office.ambientEffects) {
@@ -504,69 +771,251 @@ export class OfficeScene extends Phaser.Scene {
       this.floorKey = state.floorKey;
     }
 
-    const shown = visibleAgents(state.agents, office.maxCharacters);
-    const ids = new Set(shown.map((a) => a.id));
-    for (const [id, c] of this.characters) {
-      if (!ids.has(id) && !c.leaving) this.sendHome(c);
-    }
-
-    const ambientForCharacters = office.ambientEffects && !prefersReducedMotion();
-    for (const agent of shown) {
-      let c = this.characters.get(agent.id);
-      const role = state.roles.find((r) => r.name === agent.role);
-      const zone: Zone = agent.status === 'done' ? 'entrance' : agent.zone;
-      if (c?.leaving) {
-        // Came back (e.g. re-shown after a floor filter change): replace it.
-        c.destroyAll();
-        this.characters.delete(agent.id);
-        c = undefined;
-      }
-      if (!c) {
-        c = new Character(this, agent.id, 0, 0);
-        c.on('pointerup', () => {
-          if (!this.drag?.moved) this.events.emit('agentClick', agent.id);
-        });
-        // M8 8d: subtle hover highlight, and it also expands a collapsed ("…" badge) bubble.
-        c.on('pointerover', () => this.setHovered(agent.id));
-        c.on('pointerout', () => this.setHovered(null));
-        c.setSelected(agent.id === this.selectedId);
-        this.characters.set(agent.id, c);
-        const seat = this.seats.assign(agent.id, zone);
-        if (instant || rebuild) c.teleport(seat);
-        else {
-          c.teleport(this.map.spawn);
-          this.walk(c, seat, seat.seated);
-        }
-        c.setSeated(seat.seated);
-      } else if (rebuild) {
-        this.seats.release(agent.id);
-        const seat = this.seats.assign(agent.id, zone);
-        c.teleport(seat);
-        c.setSeated(seat.seated);
-      } else {
-        const current = this.seats.get(agent.id);
-        if (!current || current.zone !== zone) {
-          const seat = this.seats.assign(agent.id, zone);
-          this.walk(c, seat, seat.seated);
-        }
-      }
-      const color = parseColor(role?.color);
-      c.setLook(
-        {
-          color,
-          title: resolveTitle(this.theme, agent.role, role?.title ?? (agent.isMain ? 'PM' : agent.role)),
-          description: agent.isMain ? undefined : agent.description,
-          sprite: role?.sprite ?? 0,
-        },
-        true,
-      );
-      c.setCostume(resolveCostume(this.theme, agent.role), color);
-      c.setActivity(agent.activity, agent.status);
-      c.setBubble(themedBubble(this.theme, agent.activity, agent.bubble, agent.currentTool), office.bubbleSeconds, office.showBubbles);
-      c.setActivityFx(this.theme.activityFx?.[agent.activity], ambientForCharacters);
-    }
+    this.updateCast(state, rebuild || instant);
     this.applyFocusDim();
     this.refreshLabels();
+  }
+
+  /**
+   * The heart of M8 8b/8c/8h: resolves this frame's cast (once for a normal floor, once per
+   * Multiverse realm with its own fair-share cap — section 6.3), then drives every tracked actor's
+   * lifecycle (`game/actorLifecycle.ts`) and Phaser side effects (spawn/walk/rest/leave/rebind) from
+   * whether its `ActorKey` is present this frame — see docs/design/living-office.md section 4.2.
+   */
+  private updateCast(state: OfficeState, forceReseat: boolean) {
+    const office = state.settings.office;
+    const heroesEnabled = state.settings.heroes.enabled;
+    const now = Date.now();
+    const heroById = new Map(state.heroes.map((h) => [h.id, h] as const));
+
+    const { cast, realmIndexByKey, realmThemeByIndex } = this.buildCast(state, heroesEnabled, now);
+    this.prevPrimary = cast.primary;
+    const memberByKey = new Map(cast.members.map((m) => [m.key, m] as const));
+    this.agentIndex = new Map(cast.members.map((m) => [m.agent.id, m.key] as const));
+
+    const allKeys = new Set<ActorKey>([...this.characters.keys(), ...memberByKey.keys()]);
+    const ambientForCharacters = office.ambientEffects && !prefersReducedMotion();
+
+    for (const key of allKeys) {
+      const member = memberByKey.get(key);
+      const persistent = key.startsWith('hero:') || key.startsWith('gm:');
+      const existing = this.characters.get(key);
+      const prevFrame: LifecycleFrame | undefined = existing?.lifecycleFrame;
+      const desired = desiredLifecycle(persistent, member, existing?.leaving ?? false);
+      const next = nextLifecycle({ desired, prev: prevFrame, now, idleLeaveSec: office.idleLeaveSec });
+      const cameFromRestOrLeave = !!prevFrame && prevFrame.state !== 'quest' && next.state === 'quest';
+
+      let c = existing;
+      const realmIdx = member ? realmIndexByKey.get(key) : (c?.realmIndex ?? undefined);
+      const scope = realmIdx !== undefined ? this.realmScopes.get(realmIdx) : undefined;
+
+      if (member) {
+        if (!c) {
+          c = new Character(this, key, 0, 0);
+          this.attachCharacterHandlers(c);
+          this.characters.set(key, c);
+          c.teleport(this.map.spawn);
+        }
+        c.realmIndex = realmIdx ?? null;
+        c.kind = member.kind;
+        c.boundAgentId = member.agent.id;
+        c.heroId = member.hero?.id ?? null;
+
+        if (next.state === 'quest') {
+          if (cameFromRestOrLeave) c.cancelLeave();
+          c.setResting(false);
+          const zone: Zone = member.agent.zone;
+          const current = this.seats.get(key);
+          const zoneChanged = !current || current.zone !== zone;
+          if (forceReseat || cameFromRestOrLeave || zoneChanged) {
+            this.seats.release(key);
+            const seat = this.seats.assign(key, zone, scope);
+            if (forceReseat && !cameFromRestOrLeave) {
+              c.teleport(seat);
+              c.setSeated(seat.seated);
+            } else {
+              this.walk(c, seat, seat.seated);
+            }
+          }
+          const memberTheme = (realmIdx !== undefined ? realmThemeByIndex.get(realmIdx) : undefined) ?? this.theme;
+          this.applyMemberLook(c, member, state, memberTheme, ambientForCharacters);
+          if (member.kind === 'guild-master') {
+            const projectId = key.slice('gm:'.length);
+            c.setSessionsChip(member.sessionsChip ? { count: member.sessionsChip.count, attention: member.sessionsChip.attention } : null, () =>
+              this.events.emit('gmSessions', projectId),
+            );
+          } else {
+            c.setSessionsChip(null);
+          }
+        } else if (next.state === 'resting') {
+          // Present in the cast but its agent finished (`done`): a hero/GM actor heads to the lounge
+          // instead of vanishing (section 4.2's "done agent's hero actor goes to the lounge").
+          this.enterResting(c, key, scope, heroById);
+        }
+        // else: 'leaving' — already fading from before it reappeared in the cast (as `done`); let
+        // the fade finish rather than restart resting (`boundAgentId`/`heroId` above are already
+        // current for whenever it's next rebound).
+      } else if (c) {
+        if (next.state === 'resting') {
+          this.enterResting(c, key, scope, heroById);
+        } else if (next.state === 'leaving' && !c.leaving) {
+          this.seats.release(key);
+          const target = scope?.gate ?? this.map.spawn;
+          c.leave(this.finder.find(c.tile, target));
+        }
+        c.boundAgentId = null;
+      }
+      if (c) c.lifecycleFrame = next;
+    }
+
+    this.enforceCaps(office.maxCharacters, this.buildCapByRealm(state));
+
+    for (const [key, c] of this.characters) if (c.gone) this.characters.delete(key);
+    this.syncSelectedKey();
+  }
+
+  private buildCapByRealm(state: OfficeState): Map<number, number> | null {
+    if (!state.multiverse) return null;
+    return splitMultiverseCap(state.settings.office.multiverseMaxCharacters, state.multiverse.realms, state.agents);
+  }
+
+  /** Builds this frame's `Cast`: once for a normal floor, or merged across every Multiverse realm
+   *  (each realm resolved independently with its own agents/heroes/sessions and fair-share cap, per
+   *  section 6.3/7 — `resolveCast`'s own scope note). `pinnedPrimary` is seeded into the Guild
+   *  Master hysteresis every call (the same convention `Roster`'s own `resolveCast` call uses). */
+  private buildCast(
+    state: OfficeState,
+    heroesEnabled: boolean,
+    now: number,
+  ): { cast: Cast; realmIndexByKey: Map<ActorKey, number>; realmThemeByIndex: Map<number, ThemeDefinition> } {
+    const office = state.settings.office;
+    const castOffice = { pmMode: office.pmMode, pmSwitchCooldownSec: office.pmSwitchCooldownSec };
+    const seededPrimary = new Map(this.prevPrimary);
+    for (const [projectId, agentId] of Object.entries(state.pinnedPrimary)) seededPrimary.set(projectId, agentId);
+
+    const plan = state.multiverse;
+    if (!plan) {
+      const cast = resolveCast({
+        agents: state.agents,
+        heroes: state.heroes,
+        sessions: state.sessions,
+        office: castOffice,
+        heroesEnabled,
+        prevPrimary: seededPrimary,
+        now,
+        maxCharacters: office.maxCharacters,
+      });
+      return { cast, realmIndexByKey: new Map(), realmThemeByIndex: new Map() };
+    }
+
+    const capByRealm = this.buildCapByRealm(state)!;
+    const realmThemeByIndex = new Map<number, ThemeDefinition>();
+    for (const realm of plan.realms) if (!realm.overflow && realm.style) realmThemeByIndex.set(realm.index, getTheme(realm.style));
+
+    const members: CastMember[] = [];
+    const hidden: string[] = [];
+    const mergedPrimary = new Map(this.prevPrimary);
+    const realmIndexByKey = new Map<ActorKey, number>();
+    for (const realm of plan.realms) {
+      const projectIds = new Set(realm.projectIds);
+      const realmCast = resolveCast({
+        agents: state.agents.filter((a) => projectIds.has(a.projectId)),
+        heroes: state.heroes.filter((h) => projectIds.has(h.projectId)),
+        sessions: state.sessions.filter((s) => projectIds.has(s.projectId)),
+        office: castOffice,
+        heroesEnabled,
+        prevPrimary: seededPrimary,
+        now,
+        maxCharacters: capByRealm.get(realm.index) ?? 0,
+      });
+      for (const m of realmCast.members) {
+        members.push(m);
+        realmIndexByKey.set(m.key, realm.index);
+      }
+      hidden.push(...realmCast.hidden);
+      for (const [pid, aid] of realmCast.primary) mergedPrimary.set(pid, aid);
+    }
+    return { cast: { members, primary: mergedPrimary, hidden }, realmIndexByKey, realmThemeByIndex };
+  }
+
+  /** Wires the pointer handlers a Character needs exactly once, at creation — everything they read
+   *  (`boundAgentId`, `heroId`, `lifecycleFrame`) is mutable on the instance, so a rebind or a
+   *  resting/on-quest switch needs no re-registration. */
+  private attachCharacterHandlers(c: Character) {
+    c.on('pointerup', () => {
+      if (this.drag?.moved) return;
+      if (c.lifecycleFrame.state === 'quest' && c.boundAgentId) this.events.emit('agentClick', c.boundAgentId);
+      else if (c.heroId) this.events.emit('heroClick', c.heroId);
+    });
+    c.on('pointerover', () => this.setHovered(c.key));
+    c.on('pointerout', () => this.setHovered(null));
+  }
+
+  /** Section 4.2: a resting actor walks to (and idles at) a lounge seat in its own realm, drawn at
+   *  0.85 alpha with a dimmed "Resting · <name>" tag — entered either because its key left the cast,
+   *  or because its bound agent finished while it's a persistent (hero/GM) actor. */
+  private enterResting(c: Character, key: ActorKey, scope: SeatScope | undefined, heroById: ReadonlyMap<string, Hero>) {
+    if (c.leaving) c.cancelLeave();
+    const alreadyResting = c.lifecycleFrame.state === 'resting';
+    c.setResting(true);
+    if (!alreadyResting) {
+      this.seats.release(key);
+      const seat = this.seats.assign(key, 'lounge', scope);
+      this.walk(c, seat, seat.seated);
+      const name = (c.heroId && heroById.get(c.heroId)?.name) || (c.kind === 'guild-master' ? 'Guild Master' : 'Someone');
+      c.setLook({ color: 0x8e8e9e, title: 'Resting', description: name, sprite: 0 }, true);
+      c.setActivity('idle', 'active');
+    }
+  }
+
+  /** Caps drawn actors (quest + resting) at `office.maxCharacters` on a normal floor, or at each
+   *  realm's own fair share on the Multiverse (section 4.2's last bullet / section 6.3's cap): the
+   *  longest-resting actor(s) over the cap are pushed into `leaving`; an on-quest actor is never evicted. */
+  private enforceCaps(maxCharacters: number, capByRealm: Map<number, number> | null) {
+    const groups = new Map<number | null, Character[]>();
+    for (const c of this.characters.values()) {
+      if (c.gone || c.leaving) continue;
+      const g = capByRealm ? (c.realmIndex ?? null) : null;
+      const list = groups.get(g);
+      if (list) list.push(c);
+      else groups.set(g, [c]);
+    }
+    for (const [g, list] of groups) {
+      const cap = capByRealm ? (capByRealm.get(g ?? -1) ?? 0) : maxCharacters;
+      const resting = list.filter((c) => c.lifecycleFrame.state === 'resting').sort((a, b) => (a.lifecycleFrame.restingSince ?? 0) - (b.lifecycleFrame.restingSince ?? 0));
+      let over = list.length - cap;
+      for (const c of resting) {
+        if (over <= 0) break;
+        this.seats.release(c.key);
+        const scope = c.realmIndex !== null ? this.realmScopes.get(c.realmIndex) : undefined;
+        c.leave(this.finder.find(c.tile, scope?.gate ?? this.map.spawn));
+        c.lifecycleFrame = { state: 'leaving', restingSince: c.lifecycleFrame.restingSince };
+        over--;
+      }
+    }
+  }
+
+  private applyMemberLook(c: Character, member: CastMember, state: OfficeState, theme: ThemeDefinition, ambientForCharacters: boolean) {
+    const agent = member.agent;
+    const role = state.roles.find((r) => r.name === agent.role);
+    const color = parseColor(role?.color);
+    const themedTitle = resolveTitle(theme, agent.role, role?.title ?? (agent.isMain ? 'PM' : agent.role));
+    const hero = member.hero;
+    const title = hero ? `${hero.name} · ${hero.title ?? themedTitle}` : themedTitle;
+    c.setLook({ color, title, description: agent.isMain ? undefined : agent.description, sprite: role?.sprite ?? 0 }, true);
+
+    const themeCostume = resolveCostume(theme, agent.role);
+    if (hero) {
+      const resolved = resolveHeroCostume(themeCostume, hero.appearance, color);
+      c.setCostume(resolved.costume, color);
+      c.setAppearance({ skin: resolved.skin, hair: resolved.hair, hairStyle: resolved.hairStyle });
+    } else {
+      c.setCostume(themeCostume, color);
+      c.setAppearance(null);
+    }
+    c.setActivity(agent.activity, agent.status);
+    c.setBubble(themedBubble(theme, agent.activity, agent.bubble, agent.currentTool), state.settings.office.bubbleSeconds, state.settings.office.showBubbles);
+    c.setActivityFx(theme.activityFx?.[agent.activity], ambientForCharacters);
   }
 
   private walk(c: Character, to: Point, seated: boolean) {
@@ -578,37 +1027,40 @@ export class OfficeScene extends Phaser.Scene {
     }
   }
 
-  private sendHome(c: Character) {
-    this.seats.release(c.agentId);
-    c.leave(this.finder.find(c.tile, this.map.spawn));
-  }
-
   // ---------------------------------------------------------------- M8 8d/8e: selection, hover, labels
 
   /** The agent whose drawer is open in the host UI (ROADMAP.md M8 8d) — glows, and everyone else
-   *  dims by `office.focusDim`. `null` when the panel is closed. */
-  setSelected(id: string | null) {
-    if (this.selectedId === id) return;
-    if (this.selectedId) this.characters.get(this.selectedId)?.setSelected(false);
-    this.selectedId = id;
-    if (id) this.characters.get(id)?.setSelected(true);
+   *  dims by `office.focusDim`. `null` when the panel is closed. Looked up by agent id (the external
+   *  contract), resolved internally to whichever `ActorKey` currently draws that agent. */
+  setSelected(agentId: string | null) {
+    if (this.selectedAgentId === agentId) return;
+    this.selectedAgentId = agentId;
+    this.syncSelectedKey();
+  }
+
+  private syncSelectedKey() {
+    const key = this.selectedAgentId ? (this.agentIndex.get(this.selectedAgentId) ?? null) : null;
+    if (key === this.selectedKey) return;
+    if (this.selectedKey) this.characters.get(this.selectedKey)?.setSelected(false);
+    this.selectedKey = key;
+    if (key) this.characters.get(key)?.setSelected(true);
     this.applyFocusDim();
     this.refreshLabels();
   }
 
-  private setHovered(id: string | null) {
-    if (this.hoveredId === id) return;
-    if (this.hoveredId) this.characters.get(this.hoveredId)?.setHovered(false);
-    this.hoveredId = id;
-    if (id) this.characters.get(id)?.setHovered(true);
+  private setHovered(key: ActorKey | null) {
+    if (this.hoveredKey === key) return;
+    if (this.hoveredKey) this.characters.get(this.hoveredKey)?.setHovered(false);
+    this.hoveredKey = key;
+    if (key) this.characters.get(key)?.setHovered(true);
     this.refreshLabels();
   }
 
   /** `office.focusDim` (0 disables): every character but the selected one dims while a drawer is open. */
   private applyFocusDim() {
     const dim = this.state?.settings.office.focusDim ?? 0.35;
-    const alpha = this.selectedId ? 1 - dim : 1;
-    for (const [id, c] of this.characters) c.setDim(id === this.selectedId ? 1 : alpha);
+    const alpha = this.selectedKey ? 1 - dim : 1;
+    for (const [key, c] of this.characters) c.setDim(key === this.selectedKey ? 1 : alpha);
   }
 
   /**
@@ -624,34 +1076,33 @@ export class OfficeScene extends Phaser.Scene {
     if (!office) return;
     const zoom = this.cameras.main.zoom;
     const scale = counterScale(zoom);
-    const agentsById = new Map(this.state?.agents.map((a) => [a.id, a]) ?? []);
     const subjects: LabelSubject[] = [];
-    for (const [id, c] of this.characters) {
+    for (const [key, c] of this.characters) {
       if (c.leaving) continue;
       c.setLabelScale(scale);
       const waiting = c.isWaiting;
-      const important = id === this.selectedId || waiting || id === this.hoveredId;
+      const important = key === this.selectedKey || waiting || key === this.hoveredKey;
       const visible = labelVisible({ zoom, minZoom: office.labelMinZoom, important });
       c.setTagVisible(visible);
       c.setBubbleLod(visible);
       if (!visible || !c.hasBubble) continue;
       subjects.push({
-        id,
+        id: key,
         anchor: c.labelAnchor,
         box: c.bubbleSize,
-        selected: id === this.selectedId,
+        selected: key === this.selectedKey,
         waiting,
-        recency: agentsById.get(id)?.updatedAt ?? 0,
+        recency: c.boundAgentId ? (this.state?.agents.find((a) => a.id === c.boundAgentId)?.updatedAt ?? 0) : 0,
       });
     }
     for (const p of layoutLabels(subjects, { maxBubbles: office.maxBubbles })) {
-      this.characters.get(p.id)?.setLabelPlacement(p.dx, p.dy, p.leader, p.collapsed);
+      this.characters.get(p.id as ActorKey)?.setLabelPlacement(p.dx, p.dy, p.leader, p.collapsed);
     }
   }
 
-  /** Smoothly pan (or jump, under reduced motion) so `id` is centered in the unobscured safe rect. */
+  /** Smoothly pan (or jump, under reduced motion) so the agent's actor is centered in the safe rect. */
   focusAgent(id: string) {
-    const c = this.characters.get(id);
+    const c = this.characterForAgent(id);
     if (!c) return;
     this.panned = true;
     const cam = this.cameras.main;
@@ -673,11 +1124,11 @@ export class OfficeScene extends Phaser.Scene {
 
   update(time: number, delta: number) {
     const speed = this.state?.settings.office.walkSpeed ?? 120;
-    for (const [id, c] of this.characters) {
+    for (const [key, c] of this.characters) {
       c.update(time, delta, speed);
       if (c.gone) {
         c.destroyAll();
-        this.characters.delete(id);
+        this.characters.delete(key);
       }
     }
     if (this.followId) this.recenterFollow(false);

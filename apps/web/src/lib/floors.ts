@@ -3,10 +3,34 @@ import { MULTIVERSE_FLOOR_ID, type Project } from '@tagconn/shared';
 /** How the stairs order floors (`settings.office.floorOrder`). */
 export type FloorOrder = 'created' | 'name' | 'recent';
 
+/** Distinct icon for the Multiverse floor entry (docs/design/living-office.md section 6.3: "an '∞'
+ *  icon"), used by the floor picker and (once wired) the TopBar floor select. */
+export const MULTIVERSE_ICON = '∞';
+
 /**
- * Floors in stairs order (docs/design/guild-hall.md section 6). Archived projects are hidden,
- * except the one currently selected — so archiving the floor you're standing on never strands the
- * viewer mid-climb. Index 0 is the ground floor.
+ * The Multiverse (M8 8h) as a `Project`-shaped floor entry: it isn't a real project (nothing to
+ * archive, rename or edit — no `cwd`), but every floor-list helper below works on `Project[]`, so
+ * representing it this way lets `floorsInOrder`/stairs/hotkeys treat it like any other floor with
+ * zero special-casing beyond checking `id === MULTIVERSE_FLOOR_ID` (`isMultiverseFloor`).
+ */
+export const MULTIVERSE_FLOOR: Project = {
+  id: MULTIVERSE_FLOOR_ID,
+  name: 'The Multiverse',
+  cwd: '',
+  archived: false,
+  createdAt: 0,
+  lastActivityAt: 0,
+};
+
+export const isMultiverseFloor = (id: string): boolean => id === MULTIVERSE_FLOOR_ID;
+
+/**
+ * Floors in stairs order (docs/design/guild-hall.md section 6), with the Multiverse always appended
+ * last — "above the top floor" (docs/design/living-office.md section 6.3), regardless of
+ * `floorOrder`, so the stairs' *up* direction from the top real floor always reaches it and its own
+ * *down* stairs always return to that same top floor. Archived projects are hidden, except the one
+ * currently selected — so archiving the floor you're standing on never strands the viewer mid-climb.
+ * Index 0 is the ground floor.
  */
 export function floorsInOrder(projects: Project[], order: FloorOrder, selectedId?: string): Project[] {
   const visible = projects.filter((p) => !p.archived || p.id === selectedId);
@@ -23,6 +47,7 @@ export function floorsInOrder(projects: Project[], order: FloorOrder, selectedId
       sorted.sort((a, b) => a.createdAt - b.createdAt);
       break;
   }
+  sorted.push(MULTIVERSE_FLOOR);
   return sorted;
 }
 
@@ -55,6 +80,19 @@ export const firstFloor = (floors: Project[]): Project | undefined => floors[0];
 export const lastFloor = (floors: Project[]): Project | undefined => floors[floors.length - 1];
 
 /**
+ * The last *real* project floor, skipping the synthetic Multiverse entry `floorsInOrder` always
+ * appends at the end. Design section 6.3: "End goes to the top project floor" — deliberately not
+ * the Multiverse itself, unlike `lastFloor`. Undefined when there are no real floors yet.
+ */
+export function topProjectFloor(floors: Project[]): Project | undefined {
+  for (let i = floors.length - 1; i >= 0; i--) {
+    const f = floors[i];
+    if (f && !isMultiverseFloor(f.id)) return f;
+  }
+  return undefined;
+}
+
+/**
  * True when a global hotkey (PageUp/PageDown/Home/End/F, ...) should be ignored because the event
  * target is mid-typing: a text-ish input, a textarea, a select, or a contenteditable element.
  * docs/design/guild-hall.md section 6: "ignored when focus is in an input, textarea, select, or
@@ -78,6 +116,3 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 export function isModalOpen(doc: Document = document): boolean {
   return !!doc.querySelector('[aria-modal="true"], [data-modal]');
 }
-
-/** True for the virtual Multiverse floor id (M8 8h). */
-export const isMultiverseFloor = (id: string): boolean => id === MULTIVERSE_FLOOR_ID;

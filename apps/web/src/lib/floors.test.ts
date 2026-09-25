@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { Project } from '@tagconn/shared';
-import { firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isTypingTarget, lastFloor, neighborFloor } from './floors';
+import { MULTIVERSE_FLOOR_ID } from '@tagconn/shared';
+import {
+  firstFloor,
+  floorNeighbors,
+  floorsInOrder,
+  isMultiverseFloor,
+  isModalOpen,
+  isTypingTarget,
+  lastFloor,
+  neighborFloor,
+  topProjectFloor,
+} from './floors';
 
 function project(id: string, overrides: Partial<Project> = {}): Project {
   return { id, cwd: `/code/${id}`, name: id, archived: false, createdAt: 0, lastActivityAt: 0, ...overrides };
@@ -14,25 +25,52 @@ describe('floorsInOrder', () => {
   ];
 
   it('orders by creation time by default (oldest = ground floor)', () => {
-    expect(floorsInOrder(projects, 'created').map((p) => p.id)).toEqual(['a', 'b', 'c']);
+    expect(floorsInOrder(projects, 'created').map((p) => p.id)).toEqual(['a', 'b', 'c', MULTIVERSE_FLOOR_ID]);
   });
 
   it('orders by name', () => {
-    expect(floorsInOrder(projects, 'name').map((p) => p.id)).toEqual(['a', 'b', 'c']);
+    expect(floorsInOrder(projects, 'name').map((p) => p.id)).toEqual(['a', 'b', 'c', MULTIVERSE_FLOOR_ID]);
   });
 
   it('orders by most recently active first', () => {
-    expect(floorsInOrder(projects, 'recent').map((p) => p.id)).toEqual(['a', 'b', 'c']);
+    expect(floorsInOrder(projects, 'recent').map((p) => p.id)).toEqual(['a', 'b', 'c', MULTIVERSE_FLOOR_ID]);
   });
 
   it('hides archived floors', () => {
     const withArchived = [...projects, project('d', { name: 'delta', archived: true, createdAt: 40 })];
-    expect(floorsInOrder(withArchived, 'created').map((p) => p.id)).toEqual(['a', 'b', 'c']);
+    expect(floorsInOrder(withArchived, 'created').map((p) => p.id)).toEqual(['a', 'b', 'c', MULTIVERSE_FLOOR_ID]);
   });
 
   it('keeps the selected floor even if archived, so it is never stranded', () => {
     const withArchived = [...projects, project('d', { name: 'delta', archived: true, createdAt: 40 })];
-    expect(floorsInOrder(withArchived, 'created', 'd').map((p) => p.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(floorsInOrder(withArchived, 'created', 'd').map((p) => p.id)).toEqual(['a', 'b', 'c', 'd', MULTIVERSE_FLOOR_ID]);
+  });
+
+  it('always appends the Multiverse last, above the top floor, regardless of order', () => {
+    expect(floorsInOrder([], 'created').map((p) => p.id)).toEqual([MULTIVERSE_FLOOR_ID]);
+    expect(isMultiverseFloor(floorsInOrder(projects, 'created').at(-1)!.id)).toBe(true);
+  });
+});
+
+describe('Multiverse stairs (docs/design/living-office.md section 6.3)', () => {
+  const projects = [project('a', { createdAt: 10 }), project('b', { createdAt: 20 }), project('c', { createdAt: 30 })];
+
+  it('the top floor\'s up stairs lead to the Multiverse', () => {
+    const order = floorsInOrder(projects, 'created');
+    expect(neighborFloor(order, 'c', 'up')?.id).toBe(MULTIVERSE_FLOOR_ID);
+  });
+
+  it("the Multiverse's down stairs return to the top floor, and up is disabled", () => {
+    const order = floorsInOrder(projects, 'created');
+    expect(neighborFloor(order, MULTIVERSE_FLOOR_ID, 'down')?.id).toBe('c');
+    expect(neighborFloor(order, MULTIVERSE_FLOOR_ID, 'up')).toBeUndefined();
+  });
+
+  it('topProjectFloor skips the Multiverse (End goes to the top project floor, not the Multiverse)', () => {
+    const order = floorsInOrder(projects, 'created');
+    expect(topProjectFloor(order)?.id).toBe('c');
+    expect(lastFloor(order)?.id).toBe(MULTIVERSE_FLOOR_ID);
+    expect(topProjectFloor([])).toBeUndefined();
   });
 });
 

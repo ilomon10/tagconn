@@ -5,7 +5,7 @@ import { enterDemo, exitDemo, startLive } from '../lib/connection';
 import { notificationsSupported, requestNotificationPermission } from '../lib/notify';
 import { formatTokens } from '../lib/format';
 import { sumFloorUsage, totalTokens } from '../lib/tokens';
-import { floorNeighbors, floorsInOrder, isModalOpen, isTypingTarget } from '../lib/floors';
+import { floorNeighbors, floorsInOrder, isModalOpen, isTypingTarget, MULTIVERSE_FLOOR, MULTIVERSE_ICON } from '../lib/floors';
 import { officeNavBus } from '../game/OfficeGame';
 import { FloorManager } from '../features/office/FloorManager';
 import { HeroPanel } from '../features/heroes/HeroPanel';
@@ -41,7 +41,9 @@ function FloorSelect() {
   return (
     <div className="flex items-center gap-1.5">
       <Select aria-label="Floor" className="w-56" value={selected} onChange={(e) => select(e.target.value)}>
-        <option value={ALL_FLOORS}>All floors ({count(ALL_FLOORS)})</option>
+        <option value={ALL_FLOORS}>
+          {MULTIVERSE_ICON} {MULTIVERSE_FLOOR.name} ({count(ALL_FLOORS)})
+        </option>
         {list.map((p) => (
           <option key={p.id} value={p.id} title={p.cwd}>
             {p.name}
@@ -69,9 +71,6 @@ function FloorIndicator() {
   const projects = useOfficeStore((s) => s.projects);
   const selected = useOfficeStore((s) => s.selectedProjectId);
   const floorOrder = useSettingsStore((s) => s.settings.office.floorOrder);
-  if (selected === ALL_FLOORS) {
-    return <span className="rounded-full bg-ink-800 px-2.5 py-1 text-[11px] text-ink-400">All floors</span>;
-  }
   const order = floorsInOrder(Object.values(projects), floorOrder, selected);
   const n = floorNeighbors(order, selected);
   if (!n) return null;

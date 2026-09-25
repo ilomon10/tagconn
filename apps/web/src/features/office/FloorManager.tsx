@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Project } from '@tagconn/shared';
-import { useOfficeStore, visibleProjects } from '../../stores/officeStore';
+import { ALL_FLOORS, useOfficeStore, visibleProjects } from '../../stores/officeStore';
+import { MULTIVERSE_FLOOR, MULTIVERSE_ICON } from '../../lib/floors';
 import { patchProject } from '../../lib/commands';
-import { Badge, Button, Checkbox, Empty, Input, Panel } from '../../components/ui';
+import { Badge, Button, Checkbox, Empty, Input, Panel, cx } from '../../components/ui';
 import { OfficeEditor } from '../editor/OfficeEditor';
 
 function FloorRow({ project, onEdit }: { project: Project; onEdit: () => void }) {
@@ -88,9 +89,29 @@ function FloorRow({ project, onEdit }: { project: Project; onEdit: () => void })
   );
 }
 
+/**
+ * The Multiverse's row in the floor picker (docs/design/living-office.md section 6.3: "The floor
+ * picker lists 'The Multiverse' first, with an '∞' icon"). Unlike a real floor it can't be renamed,
+ * archived or edited — clicking it just travels there and closes the picker, same as a stairs click.
+ */
+function MultiverseRow({ selected, onSelect }: { selected: boolean; onSelect: () => void }) {
+  return (
+    <li className={cx('rounded-md px-2 py-1.5', selected ? 'bg-ink-700' : 'hover:bg-ink-800')}>
+      <button type="button" className="flex w-full items-center gap-2 text-left" onClick={onSelect}>
+        <span aria-hidden className="text-sm">
+          {MULTIVERSE_ICON}
+        </span>
+        <span className="flex-1 truncate text-xs font-semibold text-ink-100">{MULTIVERSE_FLOOR.name}</span>
+        {selected && <Badge>current</Badge>}
+      </button>
+    </li>
+  );
+}
+
 export function FloorManager({ onClose }: { onClose: () => void }) {
   const projects = useOfficeStore((s) => s.projects);
   const selected = useOfficeStore((s) => s.selectedProjectId);
+  const selectProject = useOfficeStore((s) => s.selectProject);
   const [showArchived, setShowArchived] = useState(false);
   // "Edit floor" opens the Hall Planner targeted at a specific row (7g). Self-contained here (rather
   // than plumbed through a callback prop) so it works regardless of which screen renders this panel.
@@ -99,7 +120,13 @@ export function FloorManager({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-20" onClick={onClose}>
+      <div
+        className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-20"
+        onClick={onClose}
+        data-modal="floor-manager"
+        aria-modal="true"
+        role="dialog"
+      >
         <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
           <Panel
             title="Manage floors"
@@ -115,15 +142,22 @@ export function FloorManager({ onClose }: { onClose: () => void }) {
                 {list.length} floor{list.length === 1 ? '' : 's'}
               </span>
             </div>
-            {list.length === 0 ? (
-              <Empty>No floors yet — start a Claude Code session to see one appear.</Empty>
-            ) : (
-              <ul className="max-h-[60vh] space-y-1 overflow-y-auto p-2">
-                {list.map((p) => (
-                  <FloorRow key={p.id} project={p} onEdit={() => setEditingProjectId(p.id)} />
-                ))}
-              </ul>
-            )}
+            <ul className="max-h-[60vh] space-y-1 overflow-y-auto p-2">
+              <MultiverseRow
+                selected={selected === ALL_FLOORS}
+                onSelect={() => {
+                  selectProject(ALL_FLOORS);
+                  onClose();
+                }}
+              />
+              {list.length === 0 ? (
+                <li>
+                  <Empty>No floors yet — start a Claude Code session to see one appear.</Empty>
+                </li>
+              ) : (
+                list.map((p) => <FloorRow key={p.id} project={p} onEdit={() => setEditingProjectId(p.id)} />)
+              )}
+            </ul>
           </Panel>
         </div>
       </div>

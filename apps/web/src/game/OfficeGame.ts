@@ -32,6 +32,16 @@ type Events = {
   followChanged: (agentId: string | null) => void;
   /** A stairs portal was clicked. The host decides whether/where to move (see `lib/floors.ts`). */
   stairs: (dir: 'up' | 'down') => void;
+  /** M8 8h: a Multiverse realm was clicked (docs/design/living-office.md section 6.3). The host
+   *  travels to that project's floor; `null` for the overflow realm ("Other realms"), which opens
+   *  the floor picker instead. */
+  realmClick: (projectId: string | null) => void;
+  /** M8 8b: the Guild Master's session-count chip was clicked (design section 5). The host opens
+   *  `GmSessionsPopover` for this project. */
+  gmSessions: (projectId: string) => void;
+  /** M8 8c: a resting actor (no live agent right now) was clicked. The host opens the hero editor
+   *  on this hero (design section 4.2's "clicking a resting actor opens the hero editor"). */
+  heroClick: (heroId: string) => void;
 };
 
 /** Framework-agnostic handle around a Phaser.Game hosting the office scene. */
@@ -49,6 +59,9 @@ export class OfficeGame {
     emptyClick: new Set(),
     followChanged: new Set(),
     stairs: new Set(),
+    realmClick: new Set(),
+    gmSessions: new Set(),
+    heroClick: new Set(),
   };
 
   constructor(parent: HTMLElement) {
@@ -59,6 +72,9 @@ export class OfficeGame {
       ready.events.on('emptyClick', () => this.listeners.emptyClick.forEach((cb) => cb()));
       ready.events.on('followChanged', (id: string | null) => this.listeners.followChanged.forEach((cb) => cb(id)));
       ready.events.on('stairs', (dir: 'up' | 'down') => this.listeners.stairs.forEach((cb) => cb(dir)));
+      ready.events.on('realmClick', (id: string | null) => this.listeners.realmClick.forEach((cb) => cb(id)));
+      ready.events.on('gmSessions', (id: string) => this.listeners.gmSessions.forEach((cb) => cb(id)));
+      ready.events.on('heroClick', (id: string) => this.listeners.heroClick.forEach((cb) => cb(id)));
       if (this.pending) ready.setOfficeState(this.pending);
       this.pending = null;
       if (this.pendingInsets) ready.setSafeInsets(this.pendingInsets);
@@ -158,6 +174,9 @@ export class OfficeGame {
     this.listeners.emptyClick.clear();
     this.listeners.followChanged.clear();
     this.listeners.stairs.clear();
+    this.listeners.realmClick.clear();
+    this.listeners.gmSessions.clear();
+    this.listeners.heroClick.clear();
     this.scene = null;
     this.game.destroy(true);
   }

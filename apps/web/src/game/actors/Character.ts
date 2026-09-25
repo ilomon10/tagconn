@@ -1,5 +1,7 @@
 import * as Phaser from 'phaser';
 import type { Activity, AgentStatus } from '@tagconn/shared';
+import type { ActorKey } from '../cast';
+import { INITIAL_LIFECYCLE, type LifecycleFrame } from '../actorLifecycle';
 import type { Point } from '../procgen/types';
 import type { Size } from '../labels';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '../textures';
@@ -12,11 +14,28 @@ export interface CharacterLook {
   sprite: number;
 }
 
+/** M8 8i: a hero's skin/hair on top of the agent-hash placeholder look; `null` keeps the hash look
+ *  (`setAppearance`'s only caller, `OfficeScene`, already re-runs `setLook` whenever a hero binds or
+ *  unbinds, which repaints the hash/role defaults this overlays). */
+export interface CharacterAppearance {
+  skin: number;
+  hair: number;
+  hairStyle: number;
+}
+
+/** M8 8b: the Guild Master's session-count chip ("+2"), red when one of the other sessions needs you. */
+export interface SessionsChip {
+  count: number;
+  attention: boolean;
+}
+
 const TEXT_RES = 4;
 const SIT_ACTIVITIES: ReadonlySet<Activity> = new Set(['typing', 'reading', 'idle', 'thinking', 'running', 'meeting', 'waiting', 'blocked']);
 /** M8 8d selection glow: base Pre/canvas glow strength; selected pulses wider than a plain hover. */
 const GLOW_SELECTED = 6;
 const GLOW_HOVER = 3;
+/** M8 8c: resting heroes read as visibly "away" without disappearing. */
+const RESTING_ALPHA = 0.85;
 
 function hash(s: string): number {
   let h = 2166136261;
@@ -34,7 +53,7 @@ function lighten(c: number, t: number): number {
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 
-function crisp(t: Phaser.GameObjects.Text) {
+function crisp<T extends Phaser.GameObjects.Text>(t: T): T {
   t.texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
   return t;
 }
@@ -42,9 +61,26 @@ function crisp(t: Phaser.GameObjects.Text) {
 /**
  * A procedurally drawn pixel person. Origin is at the feet. The body lives in `this` (a container
  * depth-sorted by y); name tag and speech bubble live in `overlay` so they draw above everyone.
+ *
+ * M8 8c: `key` is the actor's stable identity (`hero:<id>` / `agent:<id>` / `gm:<projectId>`, see
+ * `game/cast.ts`) and never changes for this instance's lifetime — it is what lets the scene "find"
+ * the same Character across a reuse/rebind instead of spawning a new sprite. `boundAgentId` is the
+ * live agent currently driving it, and is mutable: it changes on a rebind (a new subagent takes over
+ * a resting hero, or a new session becomes the Guild Master) with no new sprite created.
  */
 export class Character extends Phaser.GameObjects.Container {
-  readonly agentId: string;
+  readonly key: ActorKey;
+  /** The live agent this actor is currently drawing (null while resting/leaving with nobody bound). */
+  boundAgentId: string | null = null;
+  /** The hero this actor is bound to, if any (null for an anonymous `agent:` actor). */
+  heroId: string | null = null;
+  kind: 'guild-master' | 'member' = 'member';
+  /** M8 8h: which Multiverse realm this actor belongs to (`MultiverseRealm.index`), or `null` on a
+   *  normal floor. Kept even while resting/leaving (when there is no `CastMember` to read it from
+   *  this frame) so the scene knows which realm's lounge/gate to walk it to. */
+  realmIndex: number | null = null;
+  /** M8 8c actor lifecycle (`game/actorLifecycle.ts`); the scene reads/writes this every `setOfficeState`. */
+  lifecycleFrame: LifecycleFrame = INITIAL_LIFECYCLE;
   private shadow: Phaser.GameObjects.Image;
   private legs: Phaser.GameObjects.Image;
   private upper: Phaser.GameObjects.Container;
@@ -65,6 +101,11 @@ export class Character extends Phaser.GameObjects.Container {
   private canvasGlow: Phaser.GameObjects.Graphics;
   readonly overlay: Phaser.GameObjects.Container;
   private tag: Phaser.GameObjects.Text;
+  /** M8 8b: the Guild Master's session-count chip, next to the tag. Created lazily (only GMs get one). */
+  private chip?: Phaser.GameObjects.Text;
+  private chipOnClick?: () => void;
+  private chipAttention = false;
+  private chipTagVisible = true;
   /** A short line from the character to its bubble once the bubble/label engine (`game/labels`)
    *  has displaced it off the plain "above" slot to dodge a neighbor. */
   private leaderLine: Phaser.GameObjects.Graphics;
@@ -92,6 +133,7 @@ export class Character extends Phaser.GameObjects.Container {
   private costume: Costume = {};
   private costumeKey = '';
   private costumeProp: string | null = null;
+  private appearanceKey = '';
   private fxKey = '';
   private phase: number;
   /** The role color, remembered so selection/hover glow can use it without the scene passing it
@@ -99,7 +141,11 @@ export class Character extends Phaser.GameObjects.Container {
   private roleColor = 0x8e8e9e;
   private selected = false;
   private hovered = false;
-  private dimAlpha = 1;
+  /** `office.focusDim`-driven alpha (`setDim`) and the M8 8c resting alpha (`setResting`) combine
+   *  multiplicatively — both the body and the overlay (tag/bubble/chip) dim while resting, per the
+   *  design doc's "name tag dimmed". */
+  private focusAlpha = 1;
+  private restingAlpha = 1;
   private glow: Phaser.FX.Glow | null = null;
   private glowPulse?: Phaser.Tweens.Tween;
   /** M8 8e: name tag visibility is `office.showBubbles`-ish "look" flag AND the zoom-based LOD gate. */
@@ -113,13 +159,15 @@ export class Character extends Phaser.GameObjects.Container {
   private labelDy = 0;
   private labelLeader = false;
   private labelScale = 1;
+  /** M8 8c: fade-out tween from `leave()`, kept so a rebind (see `cancelLeave`) can stop it mid-flight. */
+  private fadeTween?: Phaser.Tweens.Tween;
   leaving = false;
   gone = false;
 
-  constructor(scene: Phaser.Scene, agentId: string, x: number, y: number) {
+  constructor(scene: Phaser.Scene, key: ActorKey, x: number, y: number) {
     super(scene, x, y);
-    this.agentId = agentId;
-    const h = hash(agentId);
+    this.key = key;
+    const h = hash(key);
     this.phase = (h % 1000) / 1000;
     const skin = SKIN_TONES[h % SKIN_TONES.length]!;
     const hairColor = HAIR_COLORS[(h >>> 3) % HAIR_COLORS.length]!;
@@ -196,7 +244,9 @@ export class Character extends Phaser.GameObjects.Container {
     this.tag.setColor(hex(lighten(look.color, 0.55)));
   }
 
-  /** Guild costume for this role (hat/cloak/staff/goggles); a no-op `{}` under the modern theme. */
+  /** Guild costume for this role (hat/cloak/staff/goggles); a no-op `{}` under the modern theme.
+   *  When a hero is bound, the scene passes `resolveHeroCostume`'s merged result instead of the
+   *  theme's plain role costume, so hero overrides (explicit hat/prop/accessory/colours) win. */
   setCostume(costume: Costume, roleColor: number) {
     const key = `${costume.robe ?? ''}|${costume.cloak ?? ''}|${costume.hat ?? ''}|${costume.hatColor ?? ''}|${costume.staff ?? ''}|${costume.goggles ?? ''}|${roleColor}`;
     if (key === this.costumeKey) return;
@@ -209,6 +259,21 @@ export class Character extends Phaser.GameObjects.Container {
     else this.hat.setVisible(false);
     this.goggles.setVisible(!!costume.goggles);
     this.costumeProp = costume.staff && costume.staff !== 'none' ? staffTextureKey(costume.staff) : null;
+  }
+
+  /** M8 8i: a bound hero's skin/hair on top of the agent-hash placeholder (`null` keeps the hash
+   *  look — `setLook` above already repaints it whenever a hero binds/unbinds, since the tag text
+   *  changes too, so there is nothing to actively "revert" here). */
+  setAppearance(look: CharacterAppearance | null) {
+    const key = look ? `${look.skin}|${look.hair}|${look.hairStyle}` : '';
+    if (key === this.appearanceKey) return;
+    this.appearanceKey = key;
+    if (!look) return;
+    this.head.setTint(look.skin);
+    this.handL.setTint(look.skin);
+    this.handR.setTint(look.skin);
+    const style = ((look.hairStyle % HAIR_STYLES) + HAIR_STYLES) % HAIR_STYLES;
+    this.hair.setTexture(`ch-hair-${style}`).setTint(look.hair);
   }
 
   /** Particle effect for the current activity (docs/design/guild-hall.md "Magic activity effects"). */
@@ -225,6 +290,40 @@ export class Character extends Phaser.GameObjects.Container {
     this.activity = activity;
     this.status = status;
     if (becameDone) this.waveUntil = this.scene.time.now + 1600;
+  }
+
+  // ---------------------------------------------------------------- M8 8b: Guild Master chip
+
+  /** The Guild Master's session-count chip ("+2", red when `attention`); `null` removes it (a
+   *  per-session floor, or a Guild Master with no other live sessions right now). `onClick` fires
+   *  `scene.events.emit('gmSessions', ...)` — set fresh every call since it closes over `projectId`. */
+  setSessionsChip(chip: SessionsChip | null, onClick?: () => void) {
+    this.chipOnClick = onClick;
+    if (!chip) {
+      this.chip?.setVisible(false);
+      this.chipAttention = false;
+      return;
+    }
+    this.chipAttention = chip.attention;
+    if (!this.chip) {
+      this.chip = crisp(
+        this.scene.add
+          .text(0, 3, '', {
+            fontFamily: 'ui-monospace, Menlo, monospace',
+            fontSize: '5px',
+            padding: { x: 2, y: 1 },
+            resolution: TEXT_RES,
+          })
+          .setOrigin(0, 0.5),
+      );
+      this.chip.setInteractive({ cursor: 'pointer' });
+      this.chip.on('pointerup', () => this.chipOnClick?.());
+      this.overlay.add(this.chip);
+    }
+    this.chip.setText(`+${chip.count}`);
+    this.chip.setColor(chip.attention ? '#fff2f2' : '#1c1430');
+    this.chip.setBackgroundColor(chip.attention ? '#e5484dee' : '#f3c94dcc');
+    this.chip.setVisible(this.chipTagVisible);
   }
 
   // ---------------------------------------------------------------- M8 8d: selection glow
@@ -250,10 +349,24 @@ export class Character extends Phaser.GameObjects.Container {
    *  a drawer is open; 1 = no dimming. Left alone (not tweened) — it changes rarely enough (only on
    *  select/deselect) that a snap read as intentional rather than as a stutter. */
   setDim(alpha: number) {
-    if (this.dimAlpha === alpha) return;
-    this.dimAlpha = alpha;
-    this.setAlpha(alpha);
-    this.overlay.setAlpha(alpha);
+    if (this.focusAlpha === alpha) return;
+    this.focusAlpha = alpha;
+    this.applyAlpha();
+  }
+
+  /** M8 8c: resting heroes read at 0.85 alpha (body + tag/bubble/chip) even with no focus-dim in
+   *  effect; combines multiplicatively with `setDim`'s focus-mode alpha. */
+  setResting(resting: boolean) {
+    const a = resting ? RESTING_ALPHA : 1;
+    if (a === this.restingAlpha) return;
+    this.restingAlpha = a;
+    this.applyAlpha();
+  }
+
+  private applyAlpha() {
+    const a = this.focusAlpha * this.restingAlpha;
+    this.setAlpha(a);
+    this.overlay.setAlpha(a);
   }
 
   private refreshSelectionFx() {
@@ -326,10 +439,12 @@ export class Character extends Phaser.GameObjects.Container {
     this.labelScale = scale;
     this.tag.setScale(scale);
     this.bubble.setScale(scale);
+    this.chip?.setScale(scale);
   }
 
   /** Zoom-based level of detail for the name tag (`office.labelMinZoom`); ANDed with the "look"
-   *  flag (`setLook`'s `showTag`) so either one hiding it is enough. */
+   *  flag (`setLook`'s `showTag`) so either one hiding it is enough. The Guild Master's chip follows
+   *  the tag too, except it stays visible regardless of LOD while `attention` is set (M8 8e/8b). */
   setTagVisible(visible: boolean) {
     if (this.tagAllowedByLod === visible) return;
     this.tagAllowedByLod = visible;
@@ -344,7 +459,10 @@ export class Character extends Phaser.GameObjects.Container {
   }
 
   private applyTagVisible() {
-    this.tag.setVisible(this.tagAllowedByLook && this.tagAllowedByLod);
+    const visible = this.tagAllowedByLook && this.tagAllowedByLod;
+    this.tag.setVisible(visible);
+    this.chipTagVisible = visible;
+    this.chip?.setVisible(visible || this.chipAttention);
   }
 
   private applyBubbleVisible() {
@@ -458,10 +576,11 @@ export class Character extends Phaser.GameObjects.Container {
     cb?.();
   }
 
+  /** Starts (or restarts) the leave fade: walk `path` (if any) then fade to alpha 0 over 700ms. */
   leave(path: Point[] | null) {
     this.leaving = true;
     const fade = () => {
-      this.scene.tweens.add({
+      this.fadeTween = this.scene.tweens.add({
         targets: [this, this.overlay],
         alpha: 0,
         duration: 700,
@@ -472,6 +591,18 @@ export class Character extends Phaser.GameObjects.Container {
     };
     if (path && path.length > 1) this.walk(path, false, fade);
     else fade();
+  }
+
+  /** M8 8c: a rebind cancels a pending leave — stop the fade tween mid-flight and restore full
+   *  alpha (subject to whatever `setDim`/resting alpha currently apply) so the walk to the new zone
+   *  reads as a continuous "turned around" motion rather than a fresh spawn. */
+  cancelLeave() {
+    if (!this.leaving) return;
+    this.leaving = false;
+    this.fadeTween?.remove();
+    this.fadeTween = undefined;
+    this.onArrive = undefined;
+    this.applyAlpha();
   }
 
   update(now: number, dt: number, speed: number) {
@@ -642,6 +773,7 @@ export class Character extends Phaser.GameObjects.Container {
       this.icon.setVisible(true).setPosition(0, iconY + bob).setAlpha(iconAlpha);
     } else this.icon.setVisible(false);
     this.tag.setY(sitting ? 2 : 3);
+    if (this.chip) this.chip.setPosition(this.tag.displayWidth / 2 + 2, this.tag.y);
     // Base "above the head" position (a bit higher when an icon badge is up there too), plus this
     // frame's `layoutLabels` offset (0,0 until the first label refresh has run) — see `labelAnchor`.
     const baseY = (icon ? -26 : -18) + bob;
@@ -660,6 +792,7 @@ export class Character extends Phaser.GameObjects.Container {
 
   destroyAll() {
     this.glowPulse?.remove();
+    this.fadeTween?.remove();
     this.overlay.destroy();
     this.destroy();
   }

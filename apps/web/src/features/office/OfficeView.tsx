@@ -1,52 +1,117 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Project, Settings, OfficeLayout } from '@tagconn/shared';
+import { MULTIVERSE_THEME_ID, type Agent, type MultiverseProjectInput, type Project, type Settings, type OfficeLayout } from '@tagconn/shared';
 import { OfficeGame, officeNavBus, type FloorNavDirection, type OfficeState } from '../../game/OfficeGame';
 import { getTheme } from '../../game/themes';
-import { ALL_FLOORS, onFloor, useOfficeStore } from '../../stores/officeStore';
+import { planMultiverse } from '../../game/multiverse/plan';
+import { onFloor, useOfficeStore } from '../../stores/officeStore';
+import { useHeroStore } from '../../stores/heroStore';
+import { useHeroPanelStore } from '../heroes/store';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useFloorAgents } from '../../lib/hooks';
-import { firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isTypingTarget, lastFloor, neighborFloor } from '../../lib/floors';
+import { firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isMultiverseFloor, isTypingTarget, neighborFloor, topProjectFloor } from '../../lib/floors';
 import { layoutForProject, useLayoutStore } from '../../stores/layoutStore';
 import { ZERO_INSETS, insetsFromOverlay } from '../../game/camera/insets';
 import { Roster } from './Roster';
 import { AgentDrawer } from './AgentDrawer';
 import { FloorManager } from './FloorManager';
+import { GmSessionsPopover } from './GmSessionsPopover';
 import { Button } from '../../components/ui';
 
-/** Pushes store changes into the Phaser scene (the "bridge"). */
+/**
+ * Per-project inputs `planMultiverse` needs (docs/design/living-office.md section 6.1), built from
+ * the stores W7b owns: `officeStore`'s `lastLiveAt` hysteresis (M8 8h) plus each project's resolved
+ * layout style. Archived projects never get a realm.
+ */
+function multiverseProjectInputs(
+  projects: Record<string, Project>,
+  agents: Record<string, Agent>,
+  lastLiveAt: Record<string, number>,
+  layouts: Record<string, OfficeLayout>,
+  settings: Settings,
+): MultiverseProjectInput[] {
+  const liveAgents = new Map<string, number>();
+  for (const a of Object.values(agents)) if (a.status !== 'done') liveAgents.set(a.projectId, (liveAgents.get(a.projectId) ?? 0) + 1);
+  return Object.values(projects)
+    .filter((p) => !p.archived)
+    .map((p) => {
+      const layout = layoutForProject(layouts, p, settings.office.defaultLayoutId);
+      return {
+        id: p.id,
+        name: p.name,
+        style: layout.style ?? settings.office.style,
+        createdAt: p.createdAt,
+        lastActivityAt: p.lastActivityAt,
+        liveAgents: liveAgents.get(p.id) ?? 0,
+        lastLiveAt: lastLiveAt[p.id] ?? 0,
+      };
+    });
+}
+
+/** Pushes store changes into the Phaser scene (the "bridge"). On the Multiverse floor this builds
+ *  the generated Nexus layout from `planMultiverse` (M8 8h) instead of a stored project layout. */
 function useGameBridge(game: OfficeGame | null) {
   useEffect(() => {
     if (!game) return;
     const push = () => {
-      const { agents, projects, selectedProjectId } = useOfficeStore.getState();
+      const { agents, projects, sessions, selectedProjectId, lastLiveAt, pinnedPrimary } = useOfficeStore.getState();
       const { settings, roles } = useSettingsStore.getState();
       const layouts = useLayoutStore.getState().layouts;
+      const heroes = Object.values(useHeroStore.getState().heroes);
       const floorAgents = Object.values(agents).filter((a) => onFloor(selectedProjectId, a.projectId));
 
-      const allFloors = selectedProjectId === ALL_FLOORS;
-      const layout = layoutForProject(layouts, allFloors ? undefined : projects[selectedProjectId], settings.office.defaultLayoutId);
-      const style = layout.style ?? settings.office.style;
-
-      let floor: OfficeState['floor'] = null;
-      if (!allFloors) {
-        const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, selectedProjectId);
-        const n = floorNeighbors(order, selectedProjectId);
-        if (n) {
-          const theme = getTheme(style);
-          floor = {
-            index: n.index,
-            count: n.count,
-            above: n.above && { id: n.above.id, label: theme.floorLabel(n.index + 1, n.above.name) },
-            below: n.below && { id: n.below.id, label: theme.floorLabel(n.index - 1, n.below.name) },
-          };
-        }
+      const atMultiverse = isMultiverseFloor(selectedProjectId);
+      let layout = layoutForProject(layouts, atMultiverse ? undefined : projects[selectedProjectId], settings.office.defaultLayoutId);
+      let style: OfficeState['style'] = layout.style ?? settings.office.style;
+      let multiverse: OfficeState['multiverse'] = null;
+      if (atMultiverse) {
+        const inputs = multiverseProjectInputs(projects, agents, lastLiveAt, layouts, settings);
+        multiverse = planMultiverse(inputs, {
+          maxRealms: settings.office.multiverseMaxRealms,
+          floorOrder: settings.office.floorOrder,
+          now: Date.now(),
+          idleLeaveSec: settings.office.idleLeaveSec,
+        });
+        layout = multiverse.layout;
+        style = MULTIVERSE_THEME_ID;
       }
 
-      game.setState({ agents: floorAgents, settings, roles, floorKey: selectedProjectId, layout, style, floor });
+      let floor: OfficeState['floor'] = null;
+      const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, selectedProjectId);
+      const n = floorNeighbors(order, selectedProjectId);
+      if (n) {
+        floor = {
+          index: n.index,
+          count: n.count,
+          above: n.above && { id: n.above.id, label: floorLabelForEntry(n.above, n.index + 1, layouts, settings) },
+          below: n.below && { id: n.below.id, label: floorLabelForEntry(n.below, n.index - 1, layouts, settings) },
+        };
+      }
+
+      game.setState({
+        agents: floorAgents,
+        settings,
+        roles,
+        floorKey: selectedProjectId,
+        layout,
+        style,
+        floor,
+        heroes,
+        sessions: Object.values(sessions).filter((s) => onFloor(selectedProjectId, s.projectId)),
+        multiverse,
+        pinnedPrimary,
+      });
     };
     push();
     const unsubOffice = useOfficeStore.subscribe((s, p) => {
-      if (s.agents !== p.agents || s.selectedProjectId !== p.selectedProjectId || s.projects !== p.projects) push();
+      if (
+        s.agents !== p.agents ||
+        s.sessions !== p.sessions ||
+        s.selectedProjectId !== p.selectedProjectId ||
+        s.projects !== p.projects ||
+        s.lastLiveAt !== p.lastLiveAt ||
+        s.pinnedPrimary !== p.pinnedPrimary
+      )
+        push();
     });
     const unsubSettings = useSettingsStore.subscribe((s, p) => {
       if (s.settings !== p.settings || s.roles !== p.roles) push();
@@ -54,10 +119,14 @@ function useGameBridge(game: OfficeGame | null) {
     const unsubLayouts = useLayoutStore.subscribe((s, p) => {
       if (s.layouts !== p.layouts) push();
     });
+    const unsubHeroes = useHeroStore.subscribe((s, p) => {
+      if (s.heroes !== p.heroes) push();
+    });
     return () => {
       unsubOffice();
       unsubSettings();
       unsubLayouts();
+      unsubHeroes();
     };
   }, [game]);
 }
@@ -66,6 +135,13 @@ function useGameBridge(game: OfficeGame | null) {
 function floorLabelFor(project: Project, index: number, layouts: Record<string, OfficeLayout>, settings: Settings): string {
   const layout = layoutForProject(layouts, project, settings.office.defaultLayoutId);
   return getTheme(layout.style ?? settings.office.style).floorLabel(index, project.name);
+}
+
+/** Like `floorLabelFor`, but handles the synthetic Multiverse entry (no real layout/style of its
+ *  own — it's always labelled with the rift theme's "The Multiverse", regardless of neighbor index). */
+function floorLabelForEntry(entry: Project, index: number, layouts: Record<string, OfficeLayout>, settings: Settings): string {
+  if (isMultiverseFloor(entry.id)) return getTheme(MULTIVERSE_THEME_ID).floorLabel(index, entry.name);
+  return floorLabelFor(entry, index, layouts, settings);
 }
 
 /**
@@ -81,7 +157,7 @@ function canNavigateFloors(game: OfficeGame | null): boolean {
 async function goToFloor(game: OfficeGame | null, target: Project, ms: number, layouts: Record<string, OfficeLayout>, settings: Settings, showToast: (s: string) => void, dir?: FloorNavDirection) {
   const order = floorsInOrder(Object.values(useOfficeStore.getState().projects), settings.office.floorOrder);
   const index = order.findIndex((p) => p.id === target.id);
-  const label = floorLabelFor(target, index, layouts, settings);
+  const label = floorLabelForEntry(target, index, layouts, settings);
   const select = () => useOfficeStore.getState().selectProject(target.id);
   if (game) await game.transitionFloor(ms, select, dir);
   else select();
@@ -96,6 +172,7 @@ export function OfficeView({ active }: { active: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [follow, setFollow] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [gmSessionsProjectId, setGmSessionsProjectId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const agents = useFloorAgents();
@@ -139,18 +216,16 @@ export function OfficeView({ active }: { active: boolean }) {
 
   useGameBridge(game);
 
-  // Stairs (docs/design/guild-hall.md section 6): "All floors" opens the picker instead of moving;
-  // otherwise take the neighboring floor in `office.floorOrder`, or do nothing at an end.
+  // Stairs (docs/design/guild-hall.md section 6; M8 8h living-office.md section 6.3): take the
+  // neighboring floor in `office.floorOrder`, or do nothing at an end. The Multiverse is just
+  // another floor in that order now (appended last by `floorsInOrder`) — its *up* has no neighbor
+  // (disabled) and its *down* always resolves to the top project floor, with zero special-casing.
   useEffect(() => {
     if (!game) return;
     return game.on('stairs', (dir) => {
       if (!canNavigateFloors(game)) return;
       const { projects, selectedProjectId } = useOfficeStore.getState();
       const { settings } = useSettingsStore.getState();
-      if (selectedProjectId === ALL_FLOORS) {
-        setPickerOpen(true);
-        return;
-      }
       const layouts = useLayoutStore.getState().layouts;
       const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, selectedProjectId);
       const target = neighborFloor(order, selectedProjectId, dir);
@@ -167,7 +242,6 @@ export function OfficeView({ active }: { active: boolean }) {
       if (!canNavigateFloors(game)) return;
       const { projects, selectedProjectId } = useOfficeStore.getState();
       const { settings } = useSettingsStore.getState();
-      if (selectedProjectId === ALL_FLOORS) return;
       const layouts = useLayoutStore.getState().layouts;
       const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, selectedProjectId);
       const target = neighborFloor(order, selectedProjectId, dir);
@@ -177,7 +251,10 @@ export function OfficeView({ active }: { active: boolean }) {
   }, [game]);
 
   // Global hotkeys (ignored while typing, with a modifier held so Ctrl+F/Cmd+F still finds text,
-  // mid-transition, or while a modal — the Hall Planner editor — covers the screen).
+  // mid-transition, or while a modal — the Hall Planner editor — covers the screen). PageUp from the
+  // top floor reaches the Multiverse (it's the last entry in `order`); PageDown from the Multiverse
+  // returns to the top floor. End always goes to the top *project* floor, never the Multiverse
+  // (design section 6.3) — that's what `topProjectFloor` is for, unlike `lastFloor`.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return;
@@ -186,8 +263,7 @@ export function OfficeView({ active }: { active: boolean }) {
       const { projects, selectedProjectId } = useOfficeStore.getState();
       const { settings } = useSettingsStore.getState();
       const layouts = useLayoutStore.getState().layouts;
-      const allFloors = selectedProjectId === ALL_FLOORS;
-      const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, allFloors ? undefined : selectedProjectId);
+      const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, selectedProjectId);
       const go = (target: Project | undefined, dir?: FloorNavDirection) => {
         if (!target) return;
         e.preventDefault();
@@ -195,16 +271,16 @@ export function OfficeView({ active }: { active: boolean }) {
       };
       switch (e.key) {
         case 'PageUp':
-          go(allFloors ? firstFloor(order) : neighborFloor(order, selectedProjectId, 'up'), 'up');
+          go(neighborFloor(order, selectedProjectId, 'up'), 'up');
           break;
         case 'PageDown':
-          go(allFloors ? firstFloor(order) : neighborFloor(order, selectedProjectId, 'down'), 'down');
+          go(neighborFloor(order, selectedProjectId, 'down'), 'down');
           break;
         case 'Home':
           go(firstFloor(order), 'down');
           break;
         case 'End':
-          go(lastFloor(order), 'up');
+          go(topProjectFloor(order), 'up');
           break;
         case 'f':
         case 'F':
@@ -215,6 +291,41 @@ export function OfficeView({ active }: { active: boolean }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, [game]);
+
+  // M8 8h: a Multiverse realm was clicked in the scene — travel there with the normal stairs
+  // transition. `null` (the overflow realm) opens the floor picker instead (design section 6.3).
+  useEffect(() => {
+    if (!game) return;
+    return game.on('realmClick', (projectId) => {
+      if (!canNavigateFloors(game)) return;
+      if (projectId === null) {
+        setPickerOpen(true);
+        return;
+      }
+      const { projects } = useOfficeStore.getState();
+      const { settings } = useSettingsStore.getState();
+      const target = projects[projectId];
+      if (!target) return;
+      const layouts = useLayoutStore.getState().layouts;
+      void goToFloor(game, target, settings.office.floorTransitionMs, layouts, settings, showToast);
+    });
+  }, [game]);
+
+  // M8 8b: the Guild Master's session-count chip was clicked — open its popover (`GmSessionsPopover`).
+  useEffect(() => {
+    if (!game) return;
+    return game.on('gmSessions', (projectId) => setGmSessionsProjectId(projectId));
+  }, [game]);
+
+  // M8 8c: a resting hero (no live agent) was clicked — open the hero editor on it.
+  useEffect(() => {
+    if (!game) return;
+    return game.on('heroClick', (heroId) => {
+      const heroes = useHeroStore.getState().heroes;
+      const hero = Object.hasOwn(heroes, heroId) ? heroes[heroId] : undefined;
+      if (hero) useHeroPanelStore.getState().openHeroEditor(hero);
+    });
   }, [game]);
 
   // Phaser measures its parent; re-fit when the tab becomes visible again.
@@ -326,6 +437,16 @@ export function OfficeView({ active }: { active: boolean }) {
       </div>
       <Roster agents={agents} selectedId={selected} onSelect={selectAgent} />
       {pickerOpen && <FloorManager onClose={() => setPickerOpen(false)} />}
+      {gmSessionsProjectId && (
+        <GmSessionsPopover
+          projectId={gmSessionsProjectId}
+          onClose={() => setGmSessionsProjectId(null)}
+          onSelectAgent={(id) => {
+            selectAgent(id);
+            setGmSessionsProjectId(null);
+          }}
+        />
+      )}
     </div>
   );
 }

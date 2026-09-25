@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Agent, OfficeEvent, OfficeSnapshot, Project, TokenUsage } from '@tagconn/shared';
-import { MIN_EVENT_LIMIT, initialOfficeData, reducers, useOfficeStore, visibleProjects, type OfficeData } from './officeStore';
+import type { Agent, OfficeEvent, OfficeSnapshot, Project, Session, TokenUsage } from '@tagconn/shared';
+import { MULTIVERSE_FLOOR_ID } from '@tagconn/shared';
+import { ALL_FLOORS, MIN_EVENT_LIMIT, foldLastLiveAt, initialOfficeData, prunePins, reducers, useOfficeStore, visibleProjects, type OfficeData } from './officeStore';
 
 const agent = (id: string, over: Partial<Agent> = {}): Agent => ({
   id,
@@ -112,6 +113,78 @@ describe('office reducers', () => {
   });
 });
 
+describe('ALL_FLOORS', () => {
+  it('is kept as an alias of MULTIVERSE_FLOOR_ID (M8 8h, L7)', () => {
+    expect(ALL_FLOORS).toBe(MULTIVERSE_FLOOR_ID);
+  });
+});
+
+describe('lastLiveAt tracking (M8 8h, feeds planMultiverse)', () => {
+  it('foldLastLiveAt bumps a project on a live agent, ignores done ones', () => {
+    let map = foldLastLiveAt({}, [agent('a1', { projectId: 'p1', updatedAt: 10, status: 'active' })]);
+    expect(map).toEqual({ p1: 10 });
+    map = foldLastLiveAt(map, [agent('a2', { projectId: 'p1', updatedAt: 5, status: 'active' })]);
+    expect(map.p1).toBe(10); // never rewinds
+    map = foldLastLiveAt(map, [agent('a3', { projectId: 'p1', updatedAt: 20, status: 'active' })]);
+    expect(map.p1).toBe(20);
+    map = foldLastLiveAt(map, [agent('a4', { projectId: 'p2', updatedAt: 99, status: 'done' })]);
+    expect(map.p2).toBeUndefined();
+  });
+
+  it('upsertAgent, removeAgent and applySnapshot all bump lastLiveAt for live agents', () => {
+    let s = initialOfficeData();
+    s = apply(s, reducers.upsertAgent(s, agent('a1', { projectId: 'p1', updatedAt: 10, status: 'active' })));
+    expect(s.lastLiveAt).toEqual({ p1: 10 });
+
+    // removeAgent still records the moment right before removal, so a project stays "recently live"
+    // for the hysteresis window even after its agent is purged from the map.
+    s = apply(s, reducers.removeAgent(s, 'a1'));
+    expect(s.agents).toEqual({});
+    expect(s.lastLiveAt).toEqual({ p1: 10 });
+
+    const snap: OfficeSnapshot = {
+      projects: [],
+      sessions: [],
+      agents: [agent('a2', { projectId: 'p2', updatedAt: 30, status: 'active' })],
+      tasks: [],
+      events: [],
+    };
+    s = apply(s, reducers.applySnapshot(s, snap));
+    expect(s.lastLiveAt).toEqual({ p1: 10, p2: 30 });
+  });
+});
+
+describe('pinnedPrimary (Guild Master pin, M8 8b)', () => {
+  const session = (id: string, over: Partial<Session> = {}): Session => ({ id, projectId: 'p1', status: 'active', startedAt: 0, ...over });
+
+  it('pinPrimary sets a pin and unpinPrimary clears it', () => {
+    let s = initialOfficeData();
+    s = apply(s, reducers.pinPrimary(s, 'p1', 'a1'));
+    expect(s.pinnedPrimary).toEqual({ p1: 'a1' });
+    expect(reducers.unpinPrimary(s, 'nope')).toEqual({}); // no-op for an unknown project
+    s = apply(s, reducers.unpinPrimary(s, 'p1'));
+    expect(s.pinnedPrimary).toEqual({});
+  });
+
+  it('prunePins drops a pin once its agent is gone, done, or its session has ended', () => {
+    const agents = { a1: agent('a1', { sessionId: 's1', status: 'active' }) };
+    const sessions = { s1: session('s1', { status: 'active' }) };
+    expect(prunePins({ p1: 'a1' }, agents, sessions)).toEqual({ p1: 'a1' });
+    expect(prunePins({ p1: 'a1', p2: 'gone' }, agents, sessions)).toEqual({ p1: 'a1' }); // p2's agent doesn't exist
+    expect(prunePins({ p1: 'a1' }, { a1: { ...agents.a1, status: 'done' } }, sessions)).toEqual({});
+    expect(prunePins({ p1: 'a1' }, agents, { s1: session('s1', { status: 'ended' }) })).toEqual({});
+  });
+
+  it('a session ending (upsertSession) auto-prunes any pin on it', () => {
+    let s = initialOfficeData();
+    s = apply(s, reducers.upsertAgent(s, agent('a1', { sessionId: 's1' })));
+    s = apply(s, reducers.pinPrimary(s, 'p1', 'a1'));
+    expect(s.pinnedPrimary).toEqual({ p1: 'a1' });
+    s = apply(s, reducers.upsertSession(s, session('s1', { status: 'ended' })));
+    expect(s.pinnedPrimary).toEqual({});
+  });
+});
+
 describe('visibleProjects', () => {
   const active: Project = { id: 'active', cwd: '/a', name: 'active', archived: false, createdAt: 0, lastActivityAt: 2 };
   const archived: Project = { id: 'archived', cwd: '/b', name: 'archived', archived: true, createdAt: 0, lastActivityAt: 1 };
@@ -140,15 +213,21 @@ describe('useOfficeStore', () => {
     st.addEvent(event(1));
     st.selectProject('p1');
     st.setConnection('connected');
+    st.pinPrimary('p1', 'a1');
     const s = useOfficeStore.getState();
     expect(s.agents.a1).toBeDefined();
     expect(s.tasks.t1?.status).toBe('doing');
     expect(s.events).toHaveLength(1);
     expect(s.selectedProjectId).toBe('p1');
+    expect(s.pinnedPrimary).toEqual({ p1: 'a1' });
+    expect(s.lastLiveAt).toEqual({ p1: 1 });
+    s.unpinPrimary('p1');
+    expect(useOfficeStore.getState().pinnedPrimary).toEqual({});
     s.reset();
     const r = useOfficeStore.getState();
     expect(r.agents).toEqual({});
     expect(r.selectedProjectId).toBe('p1');
     expect(r.connection).toBe('connected');
+    expect(r.lastLiveAt).toEqual({});
   });
 });
