@@ -1,6 +1,7 @@
 import { ALL_FLOORS, useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { registerLayoutEvents, useLayoutStore } from '../stores/layoutStore';
+import { registerHeroEvents, useHeroStore } from '../stores/heroStore';
 import { emitWithAck, getSocket } from './socket';
 import { startDemo } from './mock';
 import { DEFAULT_ROLES } from './defaultRoles';
@@ -38,6 +39,7 @@ function wireLive() {
   s.on('snapshot', (snap) => {
     office().applySnapshot(snap);
     if (snap.layouts) useLayoutStore.getState().setLayouts(snap.layouts);
+    if (snap.heroes) useHeroStore.getState().setHeroes(snap.heroes);
   });
   s.on('project:upsert', (p) => office().upsertProject(p));
   s.on('session:upsert', (x) => office().upsertSession(x));
@@ -48,6 +50,7 @@ function wireLive() {
   s.on('settings:changed', (x) => cfg().setSettings(x));
   s.on('roles:changed', (r) => cfg().setRoles(r));
   registerLayoutEvents(s);
+  registerHeroEvents(s);
 }
 
 /** Fetch everything after (re)connecting. We subscribe to all floors and filter client-side. */
@@ -64,6 +67,9 @@ async function resync() {
     // M7: layouts are global (not per project), so the snapshot carries all of them (7b). Pre-M7
     // servers and test fixtures omit the field; `layoutForProject` falls back to `DEFAULT_LAYOUT`.
     useLayoutStore.getState().setLayouts(snap.layouts ?? []);
+    // M8 8i: heroes are global too (bound heroes must look the same on every floor/tab). Pre-M8
+    // servers and fixtures omit the field.
+    useHeroStore.getState().setHeroes(snap.heroes ?? []);
   } catch (err) {
     console.warn('[tagconn] resync failed', err);
   }

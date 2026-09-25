@@ -1,6 +1,7 @@
-import type { Activity, Agent, AgentStatus, OfficeLayout, OfficeLayoutInput, Project, Session, Task, TaskStatus, TokenUsage, Zone } from '@tagconn/shared';
-import { DEFAULT_LAYOUT } from '@tagconn/shared';
+import type { Activity, Agent, AgentStatus, BoundAgentState, Hero, HeroNamePools, OfficeLayout, OfficeLayoutInput, Project, Session, Task, TaskStatus, TokenUsage, Zone } from '@tagconn/shared';
+import { DEFAULT_LAYOUT, HeroSchema, chooseHeroForAgent, generateHeroAppearance, heroRoleFor, heroSeed, namePoolFor, pickHeroName } from '@tagconn/shared';
 import { generateRandomLayout } from '../game/procgen';
+import { useHeroStore } from '../stores/heroStore';
 import { useLayoutStore } from '../stores/layoutStore';
 import { useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -13,6 +14,12 @@ import { sumUsage } from './tokens';
  * Three floors showcase the guild skin and the stairs (docs/design/guild-hall.md section 8): the
  * ground floor is the built-in `DEFAULT_LAYOUT` (a walled "hall"), the middle floor is a
  * `generateRandomLayout` hall, and the top floor is a `void` keep with carved corridors.
+ *
+ * M8 8i heroes: every agent upsert runs through the same `chooseHeroForAgent` rule the server uses
+ * (docs/design/living-office.md section 3.2), so the demo shows the same reuse/creation behaviour —
+ * a fresh loop's "analyst-2" picks up the released hero left by loop 1's "analyst-1" instead of
+ * spawning a new named character. Heroes persist in `localStorage` so a page reload doesn't reshuffle
+ * every name and look.
  */
 
 const PROJECT_ID = 'demo-tagconn';
@@ -37,6 +44,167 @@ function seedDemoLayouts() {
   const keep = toLayout(generateRandomLayout({ width: 48, height: 30, seed: 917, background: 'void', name: 'Sunken Keep' }), VOID_LAYOUT_ID);
   useLayoutStore.getState().setLayouts([DEFAULT_LAYOUT, hall, keep]);
 }
+
+// ------------------------------------------------------------------ M8 8i heroes (demo binding)
+
+/** `localStorage` key heroes are persisted under; versioned so a future shape change starts fresh
+ *  instead of failing `HeroSchema` forever. */
+const DEMO_HEROES_KEY = 'tagconn:demo-heroes:v1';
+
+function loadDemoHeroes(): Hero[] {
+  try {
+    const raw = window.localStorage.getItem(DEMO_HEROES_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const heroes: Hero[] = [];
+    for (const item of parsed) {
+      const result = HeroSchema.safeParse(item);
+      if (result.success) heroes.push(result.data);
+    }
+    return heroes;
+  } catch {
+    // Private browsing, disabled storage, or corrupt JSON: start with no persisted heroes.
+    return [];
+  }
+}
+
+function saveDemoHeroes() {
+  try {
+    window.localStorage.setItem(DEMO_HEROES_KEY, JSON.stringify(Object.values(useHeroStore.getState().heroes)));
+  } catch {
+    // Best-effort only (quota, private mode): heroes just won't survive a reload.
+  }
+}
+
+/** Server-generated id shape (`HERO_ID_RE`): `h-` + 8 lowercase hex chars, minted client-side here
+ *  because demo mode has no server to hand one out. */
+function nextHeroId(): string {
+  const bytes = new Uint8Array(4);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  const id = `h-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+  return Object.hasOwn(useHeroStore.getState().heroes, id) ? nextHeroId() : id;
+}
+
+/** A readable fallback base for `pickHeroName` once a role's whole pool is taken: the role's plain
+ *  (un-themed) title from the roles list, e.g. "Developer", falling back to the raw role key. */
+function roleTitleFallback(role: string): string {
+  return useSettingsStore.getState().roles.find((r) => r.name === role)?.title ?? role;
+}
+
+/** Every currently known agent, as the shape `chooseHeroForAgent` needs to judge liveness/idle-cutoff.
+ *  An agent id absent from this map (removed from the floor) counts as gone, matching the server rule. */
+function boundAgentStates(): ReadonlyMap<string, BoundAgentState> {
+  const map = new Map<string, BoundAgentState>();
+  for (const a of Object.values(office().agents)) map.set(a.id, { live: a.status !== 'done', activity: a.activity, lastEventAt: a.updatedAt });
+  return map;
+}
+
+/** Runs the shared assignment rule for one agent upsert and applies the result to `heroStore`, mirroring
+ *  `heroes.service.ts` on the server (docs/design/living-office.md section 3.2). Called after every
+ *  `office().upsertAgent(...)` in this file. */
+function bindHeroForAgent(agent: Agent) {
+  const cfg = useSettingsStore.getState().settings.heroes;
+  if (!cfg.enabled) return;
+  const now = agent.updatedAt;
+  const heroes = useHeroStore.getState();
+  const bound = Object.values(heroes.heroes).find((h) => h.boundAgentId === agent.id);
+
+  if (agent.status === 'done') {
+    if (bound && bound.releasedAt === null) {
+      heroes.upsertHero({ ...bound, releasedAt: now, updatedAt: now });
+      saveDemoHeroes();
+    }
+    return;
+  }
+
+  if (bound) {
+    if (bound.releasedAt !== null) {
+      heroes.upsertHero({ ...bound, releasedAt: null, updatedAt: now });
+      saveDemoHeroes();
+    }
+    return;
+  }
+  // A brand-new, still-idle agent (e.g. the side floors' napping PM) doesn't need a hero yet — the
+  // real agent bus would not have fired an assignable event for it either.
+  if (agent.activity === 'idle') return;
+
+  const assignment = chooseHeroForAgent({
+    agent: { id: agent.id, projectId: agent.projectId, isMain: agent.isMain, role: agent.role },
+    heroes: Object.values(heroes.heroes),
+    agents: boundAgentStates(),
+    maxPerRole: cfg.maxPerRole,
+    maxPerProject: cfg.maxPerProject,
+    reuseIdleAfterSec: cfg.reuseIdleAfterSec,
+    now,
+  });
+
+  if (assignment.kind === 'keep') {
+    // `own` in `chooseHeroForAgent` already matches `bound` above, so this branch is unreachable here,
+    // but handled for completeness/symmetry with the server.
+    const h = heroes.heroes[assignment.heroId];
+    if (h && h.releasedAt !== null) heroes.upsertHero({ ...h, releasedAt: null, updatedAt: now });
+  } else if (assignment.kind === 'reuse') {
+    const h = heroes.heroes[assignment.heroId];
+    if (h) heroes.upsertHero({ ...h, boundAgentId: agent.id, boundAt: now, releasedAt: null, updatedAt: now });
+  } else if (assignment.kind === 'create') {
+    const role = heroRoleFor(agent);
+    const seed = heroSeed(agent.projectId, role, assignment.slot);
+    const taken = Object.values(heroes.heroes)
+      .filter((h) => h.projectId === agent.projectId && h.role === role)
+      .map((h) => h.name);
+    const pools: HeroNamePools = useSettingsStore.getState().settings.heroes.namePools;
+    const hero: Hero = {
+      id: nextHeroId(),
+      projectId: agent.projectId,
+      role,
+      slot: assignment.slot,
+      name: pickHeroName(namePoolFor(pools, role), taken, seed, roleTitleFallback(role)),
+      title: null,
+      appearance: generateHeroAppearance(seed),
+      customized: false,
+      boundAgentId: agent.id,
+      boundAt: now,
+      releasedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    heroes.upsertHero(hero);
+  }
+  // 'none': caps reached — the agent stays anonymous, same as the real office.
+  saveDemoHeroes();
+}
+
+/** Releases a hero bound to an agent that is about to be removed from the floor outright (matches the
+ *  server's `agent.removed` handling); a no-op if it was already released at `finish()` time. */
+function releaseHeroForAgent(agentId: string) {
+  const heroes = useHeroStore.getState();
+  const h = Object.values(heroes.heroes).find((x) => x.boundAgentId === agentId && x.releasedAt === null);
+  if (h) {
+    heroes.upsertHero({ ...h, releasedAt: Date.now(), updatedAt: Date.now() });
+    saveDemoHeroes();
+  }
+}
+
+/** Called before a fresh loop wipes the floor (`office().reset()`): every still-bound hero's agent is
+ *  about to disappear at once, so release them all rather than leaving them bound forever. */
+function releaseAllHeroes() {
+  const heroes = useHeroStore.getState();
+  const now = Date.now();
+  let changed = false;
+  for (const h of Object.values(heroes.heroes)) {
+    if (h.boundAgentId !== null && h.releasedAt === null) {
+      heroes.upsertHero({ ...h, releasedAt: now, updatedAt: now });
+      changed = true;
+    }
+  }
+  if (changed) saveDemoHeroes();
+}
+
+/** Not part of the public demo API — exported so tests can drive the binding rule and the
+ *  `localStorage` persistence directly instead of running the full timer-based script. */
+export const demoHeroes = { DEMO_HEROES_KEY, loadDemoHeroes, saveDemoHeroes, bindHeroForAgent, releaseHeroForAgent, releaseAllHeroes };
 
 type Step = [seconds: number, run: () => void];
 
@@ -78,7 +246,10 @@ function makeHelpers(ctx: Ctx) {
 
   const patch = (id: string, p: Partial<Agent>) => {
     const a = get(id);
-    if (a) office().upsertAgent({ ...a, ...p, updatedAt: now() });
+    if (!a) return;
+    const next = { ...a, ...p, updatedAt: now() };
+    office().upsertAgent(next);
+    bindHeroForAgent(next);
   };
 
   const task = (id: string, title: string, status: TaskStatus, extra: Partial<Task> = {}) => {
@@ -120,7 +291,7 @@ function makeHelpers(ctx: Ctx) {
   };
 
   const spawn = (id: string, role: string, agentType: string, description: string, zone: Zone, activity: Activity, bubble: string, projectId = PROJECT_ID, sessionId = ctx.sessionId, isMain = false) => {
-    office().upsertAgent({
+    const agent: Agent = {
       id,
       sessionId,
       projectId,
@@ -135,7 +306,9 @@ function makeHelpers(ctx: Ctx) {
       toolCount: 0,
       startedAt: now(),
       updatedAt: now(),
-    });
+    };
+    office().upsertAgent(agent);
+    bindHeroForAgent(agent);
     event(id, isMain ? 'SessionStart' : 'SubagentStart', isMain ? 'Session started' : `${agentType} started: ${description}`, undefined, activity, projectId);
     bumpUsage(id, { big: true });
   };
@@ -165,7 +338,11 @@ function script(ctx: Ctx, schedule: (at: number, fn: () => void) => void) {
   const id = (name: string) => `${name}-${r}`;
   const linger = () => Math.min(useSettingsStore.getState().settings.agents.doneLingerSec, 25);
 
-  const remove = (agentId: string, at: number) => schedule(at, () => office().removeAgent(agentId));
+  const remove = (agentId: string, at: number) =>
+    schedule(at, () => {
+      releaseHeroForAgent(agentId);
+      office().removeAgent(agentId);
+    });
   const finishAt = (at: number, agentId: string, taskId: string, status: TaskStatus = 'done') => {
     schedule(at, () => h.finish(agentId, taskId, status));
     if (status === 'done') schedule(at + 3, () => h.setTask(taskId, 'done'));
@@ -338,6 +515,7 @@ const RUN_SECONDS = 125;
 
 export function startDemo(): () => void {
   seedDemoLayouts();
+  useHeroStore.getState().setHeroes(loadDemoHeroes());
   const timers: ReturnType<typeof setTimeout>[] = [];
   const ctx: Ctx = { run: 0, sessionId: '', eventId: 0 };
   let stopped = false;
@@ -354,8 +532,13 @@ export function startDemo(): () => void {
     if (stopped) return;
     ctx.run += 1;
     ctx.sessionId = `demo-session-${ctx.run}`;
-    // Fresh floor and board for every loop (layouts stay put — they're seeded once, above).
-    if (ctx.run > 1) office().reset();
+    // Fresh floor and board for every loop (layouts and heroes stay put — they're seeded/persisted
+    // once, above/below). Every agent about to vanish releases its hero first, same as a real
+    // `agent.removed` sweep, so the next loop's agents can reuse them instead of piling up new ones.
+    if (ctx.run > 1) {
+      releaseAllHeroes();
+      office().reset();
+    }
     office().upsertProject(project(PROJECT_ID, 'tagconn (demo)', '/home/you/code/tagconn', 0));
     office().upsertProject(project(SIDE_PROJECT_ID, 'pixel-garden (demo)', '/home/you/code/pixel-garden', 1, HALL_LAYOUT_ID));
     office().upsertProject(project(THIRD_PROJECT_ID, 'sunken-keep (demo)', '/home/you/code/sunken-keep', 2, VOID_LAYOUT_ID));

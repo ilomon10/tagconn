@@ -1,4 +1,4 @@
-import type { OfficeEvent, OfficeLayout, OfficeLayoutInput, OfficeSnapshot, Project, Role, Settings, SettingsPatch } from '@tagconn/shared';
+import type { Hero, HeroCreate, HeroPatch, OfficeEvent, OfficeLayout, OfficeLayoutInput, OfficeSnapshot, Project, Role, Settings, SettingsPatch } from '@tagconn/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -66,4 +66,10 @@ export const api = {
   /** `PATCH /api/projects/:id { layoutId }`: assign (or clear, with null) a floor's layout. */
   assignLayout: (projectId: string, layoutId: string | null) =>
     request<Project>(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'PATCH', body: json({ layoutId }) }),
+  // M8 8i heroes (docs/design/living-office.md section 3.3). Omitted projectId = every hero.
+  heroes: (projectId?: string) => request<Hero[]>(`/api/heroes${qs({ projectId })}`),
+  createHero: (input: HeroCreate) => request<Hero>('/api/heroes', { method: 'POST', body: json(input) }),
+  patchHero: (id: string, patch: HeroPatch) => request<Hero>(`/api/heroes/${encodeURIComponent(id)}`, { method: 'PATCH', body: json(patch) }),
+  resetHero: (id: string) => request<Hero>(`/api/heroes/${encodeURIComponent(id)}/reset`, { method: 'POST' }),
+  deleteHero: (id: string) => request<unknown>(`/api/heroes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };

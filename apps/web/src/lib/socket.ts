@@ -1,5 +1,14 @@
 import { io, type Socket } from 'socket.io-client';
-import { OFFICE_NAMESPACE, type ClientToServerEvents, type LayoutAssign, type OfficeLayoutInput, type ServerToClientEvents } from '@tagconn/shared';
+import {
+  OFFICE_NAMESPACE,
+  type ClientToServerEvents,
+  type HeroCreate,
+  type HeroListRequest,
+  type HeroPatch,
+  type LayoutAssign,
+  type OfficeLayoutInput,
+  type ServerToClientEvents,
+} from '@tagconn/shared';
 
 export type OfficeSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -58,4 +67,13 @@ export const layoutSocket = {
   save: (layout: OfficeLayoutInput) => emitWithAck('layouts:save', layout),
   delete: (id: string) => emitWithAck('layouts:delete', id),
   assign: (req: LayoutAssign) => emitWithAck('layouts:assign', req),
+};
+
+/** M8 8i heroes: typed wrappers around the `heroes:*` acked events (living-office.md section 2.2/3.3). */
+export const heroSocket = {
+  list: (req: HeroListRequest = {}) => emitWithAck('heroes:list', req),
+  create: (req: HeroCreate) => emitWithAck('heroes:create', req),
+  update: (id: string, patch: HeroPatch) => emitWithAck('heroes:update', { id, patch }),
+  reset: (id: string) => emitWithAck('heroes:reset', id),
+  delete: (id: string) => emitWithAck('heroes:delete', id),
 };
