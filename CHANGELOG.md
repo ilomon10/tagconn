@@ -7,6 +7,14 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- Selection glow: the character whose drawer is open pulses a glow in its role color (WebGL `preFX.addGlow` on the shadow, with a soft ring + outline fallback on the canvas renderer), plus a subtle hover highlight; the rest of the floor dims via `office.focusDim` (0 disables). Respects reduced motion (no pulse).
+- Bubble and name-tag declutter (`game/labels`): a pure, greedy layout engine places speech bubbles above/beside/stacked with short leader lines when displaced, so they never overlap; priority order is selected > waiting-for-you/blocked > most recent > others, capped at `office.maxBubbles` (extra bubbles collapse to a small "…" badge that expands on hover). Below `office.labelMinZoom`, name tags and bubbles hide except for the selected/waiting/hovered characters, and labels counter-scale so they stay readable when zoomed out.
+- New settings: `office.focusDim`, `office.maxBubbles`, `office.labelMinZoom`.
+
+### Fixed
+- A subagent whose `SubagentStop` was lost or killed no longer lingers on the floor forever: past `agents.staleAfterSec` (default 900s) with no events it's marked done and removed via the usual `doneLingerSec` linger; a later event for the same `agent_id` brings it back. A session's main agent (PM) that's gone idle with no other live agent in its session leaves the floor after `sessions.pmIdleLeaveSec` (default 600s) and reappears on the session's next event. A session ended by the inactivity sweep (crashed/killed CLI, no `SessionEnd` hook) now finishes its still-live agents too, so its PM doesn't linger past `sessions.endAfterSec` either. Both rules also run once immediately on server start, cleaning up rows left over from before a restart.
+
 ## [0.2.0] - 2026-09-25
 
 ### Added
@@ -50,7 +58,6 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[0.1.0]: https://github.com/ilomon10/tagconn/releases/tag/v0.1.0
-
 [Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/ilomon10/tagconn/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/ilomon10/tagconn/releases/tag/v0.1.0

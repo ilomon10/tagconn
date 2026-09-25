@@ -1,8 +1,9 @@
 import * as Phaser from 'phaser';
 import type { Activity, AgentStatus } from '@tagconn/shared';
 import type { Point } from '../procgen/types';
+import type { Size } from '../labels';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '../textures';
-import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, staffTextureKey, type Costume } from '../themes';
+import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, prefersReducedMotion, staffTextureKey, type Costume } from '../themes';
 
 export interface CharacterLook {
   color: number;
@@ -13,6 +14,9 @@ export interface CharacterLook {
 
 const TEXT_RES = 4;
 const SIT_ACTIVITIES: ReadonlySet<Activity> = new Set(['typing', 'reading', 'idle', 'thinking', 'running', 'meeting', 'waiting', 'blocked']);
+/** M8 8d selection glow: base Pre/canvas glow strength; selected pulses wider than a plain hover. */
+const GLOW_SELECTED = 6;
+const GLOW_HOVER = 3;
 
 function hash(s: string): number {
   let h = 2166136261;
@@ -56,8 +60,14 @@ export class Character extends Phaser.GameObjects.Container {
   private hat: Phaser.GameObjects.Image;
   private goggles: Phaser.GameObjects.Image;
   private fx: Phaser.GameObjects.Container;
+  /** Canvas-renderer fallback for the selection/hover glow (Pre FX is WebGL-only) — a soft ring
+   *  plus outline drawn under the feet, in the same place `preFX.addGlow` highlights on WebGL. */
+  private canvasGlow: Phaser.GameObjects.Graphics;
   readonly overlay: Phaser.GameObjects.Container;
   private tag: Phaser.GameObjects.Text;
+  /** A short line from the character to its bubble once the bubble/label engine (`game/labels`)
+   *  has displaced it off the plain "above" slot to dodge a neighbor. */
+  private leaderLine: Phaser.GameObjects.Graphics;
   private bubble: Phaser.GameObjects.Container;
   private bubbleText: Phaser.GameObjects.Text;
   private bubbleBg: Phaser.GameObjects.Graphics;
@@ -70,12 +80,39 @@ export class Character extends Phaser.GameObjects.Container {
   private waveUntil = 0;
   private bubbleUntil = 0;
   private lastBubble = '';
+  /** Whichever of `setBubble`'s own timer logic currently wants the bubble on screen, independent
+   *  of the M8 8e LOD gate below — the two are ANDed together in `applyBubbleVisible`. */
+  private bubbleWantsShow = false;
+  private bubbleAllowedByLod = true;
+  /** Measured content box of the current bubble (or the collapsed badge's, when collapsed) — read
+   *  by `OfficeScene` to build this frame's `LabelSubject` for `layoutLabels`. */
+  private bubbleW = 0;
+  private bubbleH = 0;
   private lookKey = '';
   private costume: Costume = {};
   private costumeKey = '';
   private costumeProp: string | null = null;
   private fxKey = '';
   private phase: number;
+  /** The role color, remembered so selection/hover glow can use it without the scene passing it
+   *  again on every hover/select toggle. */
+  private roleColor = 0x8e8e9e;
+  private selected = false;
+  private hovered = false;
+  private dimAlpha = 1;
+  private glow: Phaser.FX.Glow | null = null;
+  private glowPulse?: Phaser.Tweens.Tween;
+  /** M8 8e: name tag visibility is `office.showBubbles`-ish "look" flag AND the zoom-based LOD gate. */
+  private tagAllowedByLook = true;
+  private tagAllowedByLod = true;
+  /** What `layoutLabels` decided this frame — `collapsed` (the effective, hover-overridden value
+   *  actually drawn) can differ while hovered, which expands a collapsed bubble back to full size. */
+  private wantCollapsed = false;
+  private collapsed = false;
+  private labelDx = 0;
+  private labelDy = 0;
+  private labelLeader = false;
+  private labelScale = 1;
   leaving = false;
   gone = false;
 
@@ -87,6 +124,7 @@ export class Character extends Phaser.GameObjects.Container {
     const skin = SKIN_TONES[h % SKIN_TONES.length]!;
     const hairColor = HAIR_COLORS[(h >>> 3) % HAIR_COLORS.length]!;
 
+    this.canvasGlow = scene.add.graphics().setVisible(false);
     this.shadow = scene.add.image(0, 1, 'ch-shadow').setOrigin(0.5, 1);
     this.legs = scene.add.image(0, 0, 'ch-legs-0').setOrigin(0.5, 1);
     this.body_ = scene.add.image(0, -3, 'ch-body').setOrigin(0.5, 1);
@@ -116,13 +154,14 @@ export class Character extends Phaser.GameObjects.Container {
     ]);
     this.icon = scene.add.image(0, -19, 'icon-dots-3').setOrigin(0.5, 1).setVisible(false);
     this.fx = scene.add.container(0, -8);
-    this.add([this.shadow, this.legs, this.upper, this.icon, this.fx]);
+    this.add([this.canvasGlow, this.shadow, this.legs, this.upper, this.icon, this.fx]);
 
     this.tag = crisp(
       scene.add
         .text(0, 3, '', { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '5px', color: '#ffffff', backgroundColor: '#15121ecc', padding: { x: 1.5, y: 0.5 }, resolution: TEXT_RES })
         .setOrigin(0.5, 0),
     );
+    this.leaderLine = scene.add.graphics();
     this.bubbleBg = scene.add.graphics();
     this.bubbleText = crisp(
       scene.add
@@ -130,7 +169,7 @@ export class Character extends Phaser.GameObjects.Container {
         .setOrigin(0.5, 1),
     );
     this.bubble = scene.add.container(0, -22, [this.bubbleBg, this.bubbleText]).setVisible(false);
-    this.overlay = scene.add.container(x, y, [this.tag, this.bubble]);
+    this.overlay = scene.add.container(x, y, [this.tag, this.leaderLine, this.bubble]);
 
     this.setInteractive(new Phaser.Geom.Rectangle(-7, -18, 14, 20), Phaser.Geom.Rectangle.Contains);
     if (this.input) this.input.cursor = 'pointer';
@@ -138,7 +177,15 @@ export class Character extends Phaser.GameObjects.Container {
   }
 
   setLook(look: CharacterLook, showTag: boolean) {
-    const k = `${look.color}|${look.title}|${look.description ?? ''}|${look.sprite}|${showTag}`;
+    if (look.color !== this.roleColor) {
+      this.roleColor = look.color;
+      if (this.selected || this.hovered) this.refreshSelectionFx();
+    }
+    if (showTag !== this.tagAllowedByLook) {
+      this.tagAllowedByLook = showTag;
+      this.applyTagVisible();
+    }
+    const k = `${look.color}|${look.title}|${look.description ?? ''}|${look.sprite}`;
     if (k === this.lookKey) return;
     this.lookKey = k;
     this.body_.setTint(look.color);
@@ -147,7 +194,6 @@ export class Character extends Phaser.GameObjects.Container {
     const desc = look.description ? ` · ${look.description.length > 22 ? `${look.description.slice(0, 21)}…` : look.description}` : '';
     this.tag.setText(`${look.title}${desc}`);
     this.tag.setColor(hex(lighten(look.color, 0.55)));
-    this.tag.setVisible(showTag);
   }
 
   /** Guild costume for this role (hat/cloak/staff/goggles); a no-op `{}` under the modern theme. */
@@ -181,29 +227,204 @@ export class Character extends Phaser.GameObjects.Container {
     if (becameDone) this.waveUntil = this.scene.time.now + 1600;
   }
 
+  // ---------------------------------------------------------------- M8 8d: selection glow
+
+  /** Drawer open on this agent (ROADMAP.md M8 8d): a pulsing glow in the role color, plus focus
+   *  mode dims everyone else via `setDim`. Idempotent — safe to call every `setOfficeState` pass. */
+  setSelected(selected: boolean) {
+    if (this.selected === selected) return;
+    this.selected = selected;
+    this.refreshSelectionFx();
+  }
+
+  /** Subtle hover highlight for discoverability — a fainter, non-pulsing version of the same glow,
+   *  and it also expands any collapsed ("…" badge) bubble back to full size (see `applyCollapse`). */
+  setHovered(hovered: boolean) {
+    if (this.hovered === hovered) return;
+    this.hovered = hovered;
+    this.refreshSelectionFx();
+    this.applyCollapse();
+  }
+
+  /** Focus mode (`office.focusDim`): everyone but the selected character dims by this much while
+   *  a drawer is open; 1 = no dimming. Left alone (not tweened) — it changes rarely enough (only on
+   *  select/deselect) that a snap read as intentional rather than as a stutter. */
+  setDim(alpha: number) {
+    if (this.dimAlpha === alpha) return;
+    this.dimAlpha = alpha;
+    this.setAlpha(alpha);
+    this.overlay.setAlpha(alpha);
+  }
+
+  private refreshSelectionFx() {
+    this.glowPulse?.remove();
+    this.glowPulse = undefined;
+    if (this.glow) {
+      this.shadow.preFX?.remove(this.glow);
+      this.glow = null;
+    }
+    const active = this.selected || this.hovered;
+    if (!active) {
+      this.canvasGlow.clear().setVisible(false);
+      return;
+    }
+    const strength = this.selected ? GLOW_SELECTED : GLOW_HOVER;
+    // Pre FX only works on Image/Sprite/Text/etc — never a Container — and only under WebGL
+    // (docs: "preFX.addGlow on WebGL, with a canvas-renderer fallback"). `shadow` is the character's
+    // own Image, so glowing it reads as a soft ring at the feet rather than distorting the sprite.
+    const webgl = this.scene.game.renderer.type === Phaser.WEBGL;
+    if (webgl && this.shadow.preFX) {
+      this.glow = this.shadow.preFX.addGlow(this.roleColor, strength, 0, false, 0.15, 12);
+      this.canvasGlow.setVisible(false);
+      if (this.selected && !prefersReducedMotion()) {
+        this.glowPulse = this.scene.tweens.add({
+          targets: this.glow,
+          outerStrength: strength * 1.7,
+          duration: 700,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
+    } else {
+      this.paintCanvasGlow(strength);
+    }
+  }
+
+  /** Canvas-renderer fallback: a soft filled ellipse plus a stroked outline ring under the feet,
+   *  tinted to the role color — Pre FX has no Canvas counterpart at all. */
+  private paintCanvasGlow(strength: number) {
+    const g = this.canvasGlow;
+    const r = 8 + strength;
+    g.clear();
+    g.fillStyle(this.roleColor, this.selected ? 0.22 : 0.12);
+    g.fillEllipse(0, 1, r * 2, r * 1.15);
+    g.lineStyle(1.5, this.roleColor, this.selected ? 0.85 : 0.45);
+    g.strokeEllipse(0, 1, r * 1.6, r * 0.9);
+    g.setAlpha(1).setVisible(true);
+    if (this.selected && !prefersReducedMotion()) {
+      this.glowPulse = this.scene.tweens.add({ targets: g, alpha: { from: 0.55, to: 1 }, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    }
+  }
+
+  // ---------------------------------------------------------------- M8 8e: bubble/label declutter
+
+  /** This frame's placement from `layoutLabels` (world px at zoom 1, relative to `labelAnchor`) —
+   *  `OfficeScene` calls this on its throttled label-refresh pass, not every frame. */
+  setLabelPlacement(dx: number, dy: number, leader: boolean, collapsed: boolean) {
+    this.labelDx = dx;
+    this.labelDy = dy;
+    this.labelLeader = leader;
+    this.wantCollapsed = collapsed;
+    this.applyCollapse();
+  }
+
+  /** Screen-space readability (M8 8e): a local scale that counteracts the camera's zoom so the tag
+   *  and bubble never read smaller than they do at zoom 1. See `game/labels/lod.ts#counterScale`. */
+  setLabelScale(scale: number) {
+    if (scale === this.labelScale) return;
+    this.labelScale = scale;
+    this.tag.setScale(scale);
+    this.bubble.setScale(scale);
+  }
+
+  /** Zoom-based level of detail for the name tag (`office.labelMinZoom`); ANDed with the "look"
+   *  flag (`setLook`'s `showTag`) so either one hiding it is enough. */
+  setTagVisible(visible: boolean) {
+    if (this.tagAllowedByLod === visible) return;
+    this.tagAllowedByLod = visible;
+    this.applyTagVisible();
+  }
+
+  /** Same LOD gate for the speech bubble — ANDed with whatever `setBubble`'s own show/fade timer wants. */
+  setBubbleLod(visible: boolean) {
+    if (this.bubbleAllowedByLod === visible) return;
+    this.bubbleAllowedByLod = visible;
+    this.applyBubbleVisible();
+  }
+
+  private applyTagVisible() {
+    this.tag.setVisible(this.tagAllowedByLook && this.tagAllowedByLod);
+  }
+
+  private applyBubbleVisible() {
+    this.bubble.setVisible(this.bubbleWantsShow && this.bubbleAllowedByLod);
+  }
+
+  /** Hovering expands a collapsed ("…" badge) bubble back to its full content (docs: "collapse to
+   *  a small '…' dot badge that expands on hover"). */
+  private applyCollapse() {
+    const effective = this.wantCollapsed && !this.hovered;
+    if (effective === this.collapsed) return;
+    this.collapsed = effective;
+    if (this.bubbleWantsShow) this.renderBubbleContent();
+  }
+
+  /** Whether this character currently has a bubble worth including in this frame's `LabelSubject`
+   *  set (`OfficeScene` builds these for `layoutLabels`). */
+  get hasBubble(): boolean {
+    return this.bubbleWantsShow;
+  }
+
+  /** The measured content box of the current bubble (or the small badge box, if collapsed). */
+  get bubbleSize(): Size {
+    return { w: this.bubbleW, h: this.bubbleH };
+  }
+
+  /** World-space point `layoutLabels` treats as this character's anchor — roughly head height. */
+  get labelAnchor(): Point {
+    return { x: this.x, y: this.y - 18 };
+  }
+
+  get isWaiting(): boolean {
+    return this.status === 'waiting' || this.status === 'blocked';
+  }
+
   /** Show `text` for `seconds` when it changes. */
   setBubble(text: string | undefined, seconds: number, enabled: boolean) {
     if (!enabled) {
-      this.bubble.setVisible(false);
+      this.bubbleWantsShow = false;
+      this.applyBubbleVisible();
       this.bubbleUntil = 0;
       return;
     }
     const t = (text ?? '').trim();
     if (!t || t === this.lastBubble) return;
     this.lastBubble = t;
-    this.bubbleText.setText(t.length > 60 ? `${t.slice(0, 59)}…` : t);
-    const w = Math.ceil(this.bubbleText.width) + 6;
-    const h = Math.ceil(this.bubbleText.height) + 3;
+    this.renderBubbleContent();
+    this.bubble.setAlpha(1);
+    this.bubbleWantsShow = true;
+    this.applyBubbleVisible();
+    this.bubbleUntil = this.scene.time.now + seconds * 1000;
+  }
+
+  /** Draws the bubble's current content: the real text box, or — while a lower-priority bubble has
+   *  collapsed under `office.maxBubbles` and isn't hovered — a small "…" dot badge instead. Also
+   *  records the measured box in `bubbleW`/`bubbleH` for the next `layoutLabels` pass. */
+  private renderBubbleContent() {
     const g = this.bubbleBg;
     g.clear();
+    if (this.collapsed) {
+      g.fillStyle(0x1c1826, 0.35);
+      g.fillCircle(0, -3, 4.5);
+      g.fillStyle(0xfdf6e3, 1);
+      g.fillCircle(0, -3, 3.6);
+      this.bubbleText.setOrigin(0.5, 0.5).setPosition(0, -3).setText('…');
+      this.bubbleW = 9;
+      this.bubbleH = 9;
+      return;
+    }
+    const t = this.lastBubble.length > 60 ? `${this.lastBubble.slice(0, 59)}…` : this.lastBubble;
+    this.bubbleText.setOrigin(0.5, 1).setPosition(0, -1.5).setText(t);
+    const w = Math.ceil(this.bubbleText.width) + 6;
+    const h = Math.ceil(this.bubbleText.height) + 3;
     g.fillStyle(0x1c1826, 0.35);
     g.fillRoundedRect(-w / 2 + 1, -h + 1, w, h, 3);
     g.fillStyle(0xfdf6e3, 1);
     g.fillRoundedRect(-w / 2, -h, w, h, 3);
     g.fillTriangle(-2, -0.5, 2, -0.5, 0, 3);
-    this.bubbleText.setPosition(0, -1.5);
-    this.bubble.setVisible(true).setAlpha(1);
-    this.bubbleUntil = this.scene.time.now + seconds * 1000;
+    this.bubbleW = w;
+    this.bubbleH = h;
   }
 
   get tile(): Point {
@@ -279,7 +500,8 @@ export class Character extends Phaser.GameObjects.Container {
     this.overlay.setDepth(100_000 + this.y);
     if (this.bubbleUntil && now > this.bubbleUntil) {
       this.bubbleUntil = 0;
-      this.scene.tweens.add({ targets: this.bubble, alpha: 0, duration: 400, onComplete: () => this.bubble.setVisible(false) });
+      this.bubbleWantsShow = false;
+      this.scene.tweens.add({ targets: this.bubble, alpha: 0, duration: 400, onComplete: () => this.applyBubbleVisible() });
     }
   }
 
@@ -420,10 +642,24 @@ export class Character extends Phaser.GameObjects.Container {
       this.icon.setVisible(true).setPosition(0, iconY + bob).setAlpha(iconAlpha);
     } else this.icon.setVisible(false);
     this.tag.setY(sitting ? 2 : 3);
-    this.bubble.setY((icon ? -26 : -18) + bob);
+    // Base "above the head" position (a bit higher when an icon badge is up there too), plus this
+    // frame's `layoutLabels` offset (0,0 until the first label refresh has run) — see `labelAnchor`.
+    const baseY = (icon ? -26 : -18) + bob;
+    const bx = this.labelDx;
+    const by = baseY + this.labelDy;
+    this.bubble.setPosition(bx, by);
+    this.leaderLine.clear();
+    if (this.labelLeader && this.bubbleWantsShow && this.bubbleAllowedByLod) {
+      this.leaderLine.lineStyle(1, 0xfdf6e3, 0.5);
+      this.leaderLine.beginPath();
+      this.leaderLine.moveTo(0, baseY + 2);
+      this.leaderLine.lineTo(bx, by);
+      this.leaderLine.strokePath();
+    }
   }
 
   destroyAll() {
+    this.glowPulse?.remove();
     this.overlay.destroy();
     this.destroy();
   }

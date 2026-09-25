@@ -103,6 +103,12 @@ export class OfficeGame {
     this.scene?.setFollow(agentId);
   }
 
+  /** The agent whose drawer is open in the host UI (M8 8d): it glows, and focus mode dims the
+   *  rest (`office.focusDim`). Pass `null` when the panel is closed. */
+  setSelected(agentId: string | null) {
+    this.scene?.setSelected(agentId);
+  }
+
   zoomBy(factor: number) {
     this.scene?.zoomBy(factor);
   }

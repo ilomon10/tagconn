@@ -269,6 +269,11 @@ export function OfficeView({ active }: { active: boolean }) {
     game?.setFollow(follow ? selected : null);
   }, [game, follow, selected]);
 
+  // M8 8d: the selected character glows (and, with `office.focusDim`, everyone else dims).
+  useEffect(() => {
+    game?.setSelected(selected);
+  }, [game, selected]);
+
   const selectAgent = (id: string) => {
     setSelected(id);
     setFollow(false);

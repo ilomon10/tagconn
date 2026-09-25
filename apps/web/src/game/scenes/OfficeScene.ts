@@ -11,6 +11,11 @@ import { getTheme, paintCostumeTextures, prefersReducedMotion, renderGeneratedMa
 import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets } from '../camera/insets';
 import { zoomCameraAboutPoint } from '../camera/zoom';
 import { isDragMove } from '../camera/drag';
+import { counterScale, labelVisible, layoutLabels, type LabelSubject } from '../labels';
+
+/** M8 8e: how often the bubble/label layout (`game/labels`) is recomputed — a throttle, not every
+ *  frame, since it's a many-subject greedy placement and labels don't need to react per-pixel. */
+const LABEL_REFRESH_MS = 120;
 
 /** A neighboring floor reachable by the stairs, with its display label pre-formatted by the theme. */
 export interface OfficeFloorNeighbor {
@@ -94,6 +99,12 @@ export class OfficeScene extends Phaser.Scene {
    *  transition is in flight. */
   private preTransitionZoom: number | null = null;
   private preTransitionScrollY: number | null = null;
+  /** M8 8d: the agent whose drawer is open (glow + focus dim) and the one currently hovered
+   *  (subtle highlight + expands a collapsed bubble badge). */
+  private selectedId: string | null = null;
+  private hoveredId: string | null = null;
+  /** Countdown to the next throttled `refreshLabels()` pass (M8 8e); `<= 0` due next `update()`. */
+  private labelTimer = 0;
   private endDragOnBlur = () => {
     this.drag = null;
   };
@@ -515,6 +526,10 @@ export class OfficeScene extends Phaser.Scene {
         c.on('pointerup', () => {
           if (!this.drag?.moved) this.events.emit('agentClick', agent.id);
         });
+        // M8 8d: subtle hover highlight, and it also expands a collapsed ("…" badge) bubble.
+        c.on('pointerover', () => this.setHovered(agent.id));
+        c.on('pointerout', () => this.setHovered(null));
+        c.setSelected(agent.id === this.selectedId);
         this.characters.set(agent.id, c);
         const seat = this.seats.assign(agent.id, zone);
         if (instant || rebuild) c.teleport(seat);
@@ -550,6 +565,8 @@ export class OfficeScene extends Phaser.Scene {
       c.setBubble(themedBubble(this.theme, agent.activity, agent.bubble, agent.currentTool), office.bubbleSeconds, office.showBubbles);
       c.setActivityFx(this.theme.activityFx?.[agent.activity], ambientForCharacters);
     }
+    this.applyFocusDim();
+    this.refreshLabels();
   }
 
   private walk(c: Character, to: Point, seated: boolean) {
@@ -564,6 +581,72 @@ export class OfficeScene extends Phaser.Scene {
   private sendHome(c: Character) {
     this.seats.release(c.agentId);
     c.leave(this.finder.find(c.tile, this.map.spawn));
+  }
+
+  // ---------------------------------------------------------------- M8 8d/8e: selection, hover, labels
+
+  /** The agent whose drawer is open in the host UI (ROADMAP.md M8 8d) — glows, and everyone else
+   *  dims by `office.focusDim`. `null` when the panel is closed. */
+  setSelected(id: string | null) {
+    if (this.selectedId === id) return;
+    if (this.selectedId) this.characters.get(this.selectedId)?.setSelected(false);
+    this.selectedId = id;
+    if (id) this.characters.get(id)?.setSelected(true);
+    this.applyFocusDim();
+    this.refreshLabels();
+  }
+
+  private setHovered(id: string | null) {
+    if (this.hoveredId === id) return;
+    if (this.hoveredId) this.characters.get(this.hoveredId)?.setHovered(false);
+    this.hoveredId = id;
+    if (id) this.characters.get(id)?.setHovered(true);
+    this.refreshLabels();
+  }
+
+  /** `office.focusDim` (0 disables): every character but the selected one dims while a drawer is open. */
+  private applyFocusDim() {
+    const dim = this.state?.settings.office.focusDim ?? 0.35;
+    const alpha = this.selectedId ? 1 - dim : 1;
+    for (const [id, c] of this.characters) c.setDim(id === this.selectedId ? 1 : alpha);
+  }
+
+  /**
+   * Bubble/name-tag declutter (ROADMAP.md M8 8e): zoom-based level of detail
+   * (`office.labelMinZoom`) hides everyone's tag/bubble but the selected/waiting/hovered
+   * characters', then `layoutLabels` places the remaining bubbles with greedy collision avoidance,
+   * capped at `office.maxBubbles` (extras collapse to a small "…" badge). Throttled via
+   * `LABEL_REFRESH_MS` from `update()`, and also run immediately on anything that changes who's
+   * important (selection, hover, a fresh `setOfficeState`).
+   */
+  private refreshLabels() {
+    const office = this.state?.settings.office;
+    if (!office) return;
+    const zoom = this.cameras.main.zoom;
+    const scale = counterScale(zoom);
+    const agentsById = new Map(this.state?.agents.map((a) => [a.id, a]) ?? []);
+    const subjects: LabelSubject[] = [];
+    for (const [id, c] of this.characters) {
+      if (c.leaving) continue;
+      c.setLabelScale(scale);
+      const waiting = c.isWaiting;
+      const important = id === this.selectedId || waiting || id === this.hoveredId;
+      const visible = labelVisible({ zoom, minZoom: office.labelMinZoom, important });
+      c.setTagVisible(visible);
+      c.setBubbleLod(visible);
+      if (!visible || !c.hasBubble) continue;
+      subjects.push({
+        id,
+        anchor: c.labelAnchor,
+        box: c.bubbleSize,
+        selected: id === this.selectedId,
+        waiting,
+        recency: agentsById.get(id)?.updatedAt ?? 0,
+      });
+    }
+    for (const p of layoutLabels(subjects, { maxBubbles: office.maxBubbles })) {
+      this.characters.get(p.id)?.setLabelPlacement(p.dx, p.dy, p.leader, p.collapsed);
+    }
   }
 
   /** Smoothly pan (or jump, under reduced motion) so `id` is centered in the unobscured safe rect. */
@@ -598,5 +681,10 @@ export class OfficeScene extends Phaser.Scene {
       }
     }
     if (this.followId) this.recenterFollow(false);
+    this.labelTimer -= delta;
+    if (this.labelTimer <= 0) {
+      this.labelTimer = LABEL_REFRESH_MS;
+      this.refreshLabels();
+    }
   }
 }

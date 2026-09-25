@@ -52,6 +52,9 @@ export const KEY_HINTS: Record<string, string> = {
   'office.floorTransitionMs': 'How long the stairs fade takes when moving between floors (0 = instant; also instant under reduced motion).',
   'office.ambientEffects': 'Torch flicker, sparkles and drifting motes. Off = static art (also off automatically under reduced motion).',
   'office.zones': 'Deprecated since M7 — draw floors in the office editor instead. Kept only as a fallback and ignored by the layout renderer.',
+  'office.focusDim': 'How much non-selected characters dim while one is selected (0 disables focus mode).',
+  'office.maxBubbles': 'Cap on simultaneous speech bubbles; extra ones collapse to a small "…" badge (expands on hover).',
+  'office.labelMinZoom': 'Camera zoom below which name tags and bubbles hide except for the selected or waiting/blocked characters (shown again on hover).',
   'runner.allowedProjectDirs': 'One directory per line.',
 };
 
@@ -61,6 +64,8 @@ export const DEPRECATED_SETTINGS = ['office.zones'] as const;
 
 export const NUMBER_STEP: Record<string, number> = {
   'office.zoom': 0.05,
+  'office.labelMinZoom': 0.05,
+  'office.focusDim': 0.05,
 };
 
 export const humanize = (k: string) =>
