@@ -1,396 +1,441 @@
 # M8 design: runner, quest board, Receptionist, admin auth, attribution (8j, 8k, 8l, 8m)
 
-Status: proposed (architect, 2026-09-25). Next step: security-engineer design review, then the PM applies the
-[Contract patch](#8-contract-patch). Heroes and the Multiverse floor are designed separately in
-`docs/design/living-office.md`. This doc only refers to them through `heroId` and a server bus event.
+Status: **rev 2** (architect, 2026-09-25). This revision includes the SC1 security review ("approve with required changes",
+items 1-10 plus the LOW items). Spots marked **TBD by SC3** wait for the empirical CLI checks (V1-V16) and will be finalized
+when the PM sends the results. Heroes and the Multiverse floor are in `docs/design/living-office.md`; this doc refers to them
+only through `heroId` and one bus event.
 
-Contract files (new, self-contained, not yet exported):
-`packages/shared/src/runner.ts`, `receptionist.ts`, `auth.ts`, `attribution.ts`.
+Contract files (new, not yet exported): `packages/shared/src/runner.ts`, `receptionist.ts`, `auth.ts`, `attribution.ts`.
 
-## 0. Constraints and principles
-- **No API key.** Everything that runs Claude spawns the logged-in `claude` CLI on the host
-  (`claude -p ... --output-format stream-json`). The runner strips `ANTHROPIC_*` env vars so a stray key can never
-  switch billing (`RUN_ENV_STRIP_PREFIXES`).
-- **Server in Docker, runner and hooks on the host.** The container cannot touch project dirs or the CLI login, so every
-  host-side effect (spawning, writing `.tagconn/office.json`) happens in the runner. Automatic README writes happen in the hook.
-- **The host is the authority.** `~/.config/tagconn/runner.json` (0600) says what the runner may do. Server settings can
-  only narrow that, never widen it. So a compromised server or container cannot make the runner leave the dirs, modes or
-  tool policy that the host allows.
-- **Default deny for new privileged surface.** New REST writes and socket events need an admin session unless they are
-  explicitly marked public, hook, or runner.
+## 0. Principles
+- **No API key.** Everything spawns the logged-in `claude` CLI on the host. `ANTHROPIC_*` and similar variables are always
+  stripped (`RUN_ENV_STRIP_PREFIXES`).
+- **Server in Docker; runner and hooks on the host.** Host-side effects (spawning, writing `.tagconn/office.json`) happen
+  only in the runner. The automatic README write happens only in the hook, and only when the user opted in.
+- **The host is the authority.** `<configDir>/runner.json` (0600) bounds dirs, trust, modes, tools and env. Server settings
+  can only narrow it.
+- **Honest scope.** *An admin session means code execution as the host user*, within the allowed and trusted dirs, the local
+  mode cap and the local tool policy. The UI, the docs and the installer say so in those words.
+- **Fail closed.** Every REST route declares its access level, or the server refuses to boot. Every socket event that is not
+  explicitly public (or a cosmetic write) needs an admin session.
 
 ## 1. Components
-
 ```
 HOST                                                           DOCKER (127.0.0.1)
-claude (user) ──hooks──▶ office-hook.sh ──POST /api/hooks (+x-tagconn-run-id)──▶ server :4317
-                               └─(SessionStart) write .tagconn/README.md if absent;       │ modules: auth, runs,
-                                  POST .tagconn/office.json → /api/attribution/import     │ receptionist, attribution
-apps/runner (pnpm office:runner) ──socket.io /runner (runner token, outbound)───────────▶ │
-   └─ spawns claude -p (stream-json) in allowed project dirs; bwrap for the Receptionist  │
-browser ◀── nginx :4318 ── /office namespace (admin token in handshake auth) ◀────────────┘
-pnpm office:pair ──POST /api/auth/pairing-codes (runner token)──▶ prints http://localhost:4318/#pair=ABCD-EFGH
+claude ──hooks──▶ office-hook.sh ──POST /api/hooks (+x-tagconn-run-id)──────────────────▶ server :4317
+                     └─ background: README (opt-in) / POST office.json → /api/attribution/import   │ auth, runs,
+apps/runner ──socket.io /runner, mutual HMAC (token never on the wire)────────────────────────────▶ │ receptionist,
+   └─ [systemd-run --user --scope] [bwrap] claude -p --output-format=stream-json ...                │ attribution
+pnpm office:pair ──HMAC challenge → /api/auth/pairing-codes ──▶ http://localhost:4318/#pair=XXXX-XXXX-XXXX
+browser ◀── nginx :4318 (CSP) ── /office namespace (admin token in handshake auth) ◀────────────────┘
 ```
-
-New server modules follow the usual layout (`index.ts`, `*.routes.ts`, `*.service.ts`, `*.repository.ts`, `*.schema.ts`,
-`*.socket.ts`, `__tests__/`):
-
-| Module | Owns |
+| Server module | Owns |
 |---|---|
-| `auth` | admin sessions and pairing codes, `/api/auth/*`, `auth:*` socket events. It registers the `adminVerifier` in DI |
-| `runs` | the `/runner` namespace, run queue and dispatch, `runs` and `run_events` tables, `/api/runs*`, `runs:*`. It registers the `runDispatcher` (`RunDispatcher` from shared) and `runLinker` |
-| `receptionist` | conversations and messages, `/api/receptionist/*`, `receptionist:*`. It starts turns through `runDispatcher` |
-| `attribution` | `/api/attribution/*`, pending imports, profile export. It applies imports via the layouts and heroes services / bus |
+| `auth` | admin sessions, pairing challenges and codes, `/api/auth/*`, `auth:*`. Registers `adminVerifier` in DI |
+| `runs` | `/runner` namespace (HMAC), queue and dispatch, `runs`/`run_events`, `/api/runs*`, `runs:*`. Registers `runDispatcher` and `runLinker` |
+| `receptionist` | conversations and messages, `/api/receptionist/*`, `receptionist:*`. Starts turns only through `runDispatcher` |
+| `attribution` | `/api/attribution/*`, pending imports, export. Applies imports through the layouts and heroes services |
 
-New core files: `core/http/admin.ts` (route-level `config.access` plus a global `onRequest` guard),
-`core/realtime/admin-guard.ts` (handshake auth plus the per-packet `socket.use` guard), `core/redact/` (the ingest redactor,
-moved or exposed here so runs can reuse it).
+New core files: `core/http/admin.ts` (access levels, the onRoute boot check, the guard), `core/realtime/admin-guard.ts`
+(handshake, per-packet guard, the 60 s ADMIN_ROOM sweep), and `core/redact/` (the ingest redactor, shared).
 
 ## 2. Runner (8k)
 
-### 2.1 Process and configuration
-`apps/runner`: Node 24, dependencies `socket.io-client` and `@tagconn/shared` (zod). It is built and run like `apps/server`
-(tsx in dev, and the same build approach for dist). It starts with `pnpm office:runner`. An optional user systemd unit example
-is `apps/runner/contrib/tagconn-runner.service` (`ExecStart=/usr/bin/env pnpm --dir <repo> office:runner`, `Restart=on-failure`,
-`NoNewPrivileges=yes`). The runner never runs as root and refuses to start if `uid === 0`.
+### 2.1 Process, config, probe
+- `apps/runner` runs on Node 24, with `socket.io-client` and `@tagconn/shared` as dependencies. It is built like `apps/server`.
+  It starts with `pnpm office:runner`. The example unit is `apps/runner/contrib/tagconn-runner.service` (user unit,
+  `Restart=on-failure`, `NoNewPrivileges=yes`). The runner refuses to run as root.
+- `runner.json` (`RunnerLocalConfigSchema`) is written by the installer. The runner refuses to load it unless it is mode 0600
+  and owned by the runner's user. Its fields:
+  - `url`, `token`
+  - `allowedProjectDirs` (from `--runner-allow <dir>`)
+  - `trustOverrideDirs`, `questToolPolicy`
+  - `maxConcurrent`, `maxPermissionMode` (default `acceptEdits`), `allowBypassPermissions` (false)
+  - `passEnv`, `processIsolation`, `memoryMax`, `tasksMax`, `receptionistSandbox`
+  - buffer caps
+- The installer and `office:doctor` **warn when an allowed dir is a broad parent** (`$HOME`, `~/Projects`, or any dir with
+  more than 3 git repos below it): "every repo below this can be modified by quests started from the browser".
+- **Capability probe** at startup:
+  - `claude --version` and `claude --help` (flag presence) fill `RunnerCapabilities`: `tools`, `permissionPrompts`,
+    `disableSlashCommands`, `restricted`, `safeMode`, `settingSources`, `strictMcpConfig`, `includePartialMessages`.
+  - The accepted `--permission-mode` values fill `permissionModes`. Whether `--help` lists them is **TBD by SC3**; otherwise
+    they come from a probe run.
+  - `stdinPrompt`, `bwrap` (a sandboxed one-turn probe) and `systemdScope` come from short probe runs.
+  - The results are cached in `stateDir` per `claudeVersion`.
+  - **No run starts without `permissionPrompts`. Receptionist runs also need `tools`.** Otherwise the run is rejected with
+    `capability_missing`.
 
-The config file is `<configDir>/runner.json` (`RunnerLocalConfigSchema`), mode 0600. The runner refuses the file if it is
-group- or world-readable. The installer writes it: `url`, `token` (generated like the hook token), `allowedProjectDirs`
-(from repeated `--runner-allow <dir>` flags, default empty), and `maxPermissionMode` (default `acceptEdits`). The same token
-goes into the repo `.env` as `OFFICE_RUNNER__TOKEN`, and `OFFICE_RUNNER__ENABLED=true` is set when at least one dir is allowed.
+### 2.2 Mutual HMAC handshake (`RUNNER_NAMESPACE`), required change 1
+The raw token is never sent. HMAC-SHA256 is keyed with the token's UTF-8 bytes, over `proofMessage(...)` from `auth.ts`,
+output base64url, and compared with `timingSafeEqual`.
+1. The runner connects with `auth: {runnerId, protocol, nonce: Nr}` and no `Origin`. The server rejects the connection if
+   `settings.runner.token` is empty, if an `Origin` header is present, or if the protocol differs.
+2. The server emits `runner:challenge {nonce: Ns, proof: HMAC(token, "tagconn-runner-v1|server|Nr|Ns")}`.
+3. The runner verifies the proof. **If it is bad, the runner disconnects and logs "server proof invalid: wrong URL or
+   impersonator"** (for example, a squatter on :4317 while Docker is down). It acts on nothing from an unverified socket;
+   before verification it only handles `runner:challenge`.
+4. The runner sends `runner:prove {proof: HMAC(token, "tagconn-runner-v1|runner|Ns|Nr")}`. The server disconnects if the
+   proof is bad, if it arrives after `RUNNER_PROOF_TIMEOUT_MS`, or if any other event comes first. Ns is fresh for each
+   connection, so replays fail.
+5. Then comes `runner:hello`. The server reconciles runs: runs it has but the runner does not report become `lost`; runs the
+   runner reports but the server does not know go into `killRunIds`. After a server restart it waits `lostGraceSec`.
+   A newer verified connection replaces an older one.
 
-At startup the runner runs a **capability probe**: `claude --version` and `claude --help`. It checks for the flags
-`--output-format`, `--include-partial-messages`, `--setting-sources`, `--strict-mcp-config`, `--append-system-prompt`,
-`--add-dir`, and `--max-turns`, and checks for `bwrap` on PATH. It also does a one-shot probe of stdin prompt support
-(`printf ping | claude -p --max-turns 1 --output-format stream-json --verbose`, run only with `--probe`, and cached in
-`stateDir`). The results go into `RunnerHello.capabilities`. Receptionist runs are **rejected** (`capability_missing`)
-unless `settingSources` and `strictMcpConfig` are both true.
+### 2.3 Validation on the runner (independent of the server)
+For each `run:start`, in this order:
+1. **Schema.** `RunStartCommandSchema`. Failure: `invalid_command`.
+2. **Dir.** `realpath(projectDir)` must equal an allowed root, or start with `root + sep`. It must not be `/` or `$HOME`.
+   **The realpath result is what is used** as the cwd and for `--add-dir`. `null` is allowed only for `readOnly` (the neutral
+   dir). Failure: `dir_not_allowed`.
+3. **Trust (required change 4).** Quests need `~/.claude.json`
+   `projects[<realpath>].hasTrustDialogAccepted === true`, or the dir must be under a `trustOverrideDirs` entry. Parent-dir
+   and worktree semantics are **TBD by SC3**. Failure: `dir_not_trusted`. The UI says "open this project once in the CLI and
+   accept the trust dialog".
+4. **Mode.** `permissionModeWithin(mode, maxPermissionMode)`. Bypass also needs `allowBypassPermissions`. The mode is mapped
+   to a CLI value through `CLI_PERMISSION_MODE_CANDIDATES` ∩ `capabilities.permissionModes` (CLI 2.1.282 has no `default`;
+   it maps to `manual`). Failure: `mode_not_allowed`.
+5. **Tools.** Every server `allowedTools` rule must be in `questToolPolicy.maxAllowedTools`. `Bash*` rules are allowed only if
+   listed there **locally** (the default list has no Bash). `alwaysDeny` (the defaults deny Edit and Write on `.claude/**`,
+   `.git/**` and `.mcp.json`) is always appended. Failure: `tool_not_allowed`.
+6. **Resume.** `resumeSessionId` must be in the runner's session ledger (ids from `init` events of runs this runner
+   spawned; bounded by `sessionLedgerSize`). Failure: `resume_not_allowed`.
+7. **Concurrency** below the local `maxConcurrent`. Failure: `concurrency` (the server re-queues once).
 
-### 2.2 Connection protocol (`RUNNER_NAMESPACE = '/runner'`)
-- The runner connects to `url` (default `http://127.0.0.1:4317`, the host-published port) with
-  `auth: RunnerHandshakeAuth {token, runnerId, protocol}`. It sends no `Origin` header. The engine-level `allowRequest`
-  already checks `Host`.
-- Server namespace middleware: it rejects the connection if `settings.runner.token` is empty, if the token does not match
-  (`timingSafeEqual`), if an `Origin` header is present (browsers can never be runners), or if the protocol version differs.
-  A new valid connection replaces an older one (zombie sockets), with a warning in the log.
-- The runner then sends `runner:hello(RunnerHello)` and gets the ack `{serverVersion, killRunIds}`. The server reconciles runs:
-  if the server thinks a run is `dispatched`/`running` but it is not in `activeRunIds`, the run becomes `lost`. If the runner
-  reports a run the server does not know, it goes into `killRunIds`. After a server restart, non-terminal runs wait
-  `runner.lostGraceSec` (30 s) for a hello before they become `lost`.
-- Server to runner: `run:start(RunStartCommand)` (the ack carries `{pid}` or an error), `run:stop`, `attribution:write`.
-- Runner to server: `run:event(RunEventEnvelope)` with `seq` numbers (the server dedupes on `(runId, seq)`) and
-  `run:end(RunEnd)`. While disconnected, the runner buffers up to `offlineBufferEvents` per run and replays them on reconnect.
-  It keeps processes alive during short outages.
+Server-side checks run first: `projectId` resolves to a registered `Project.cwd` (the browser never sends paths), a lexical
+prefix check against `settings.runner.allowedProjectDirs`, the mode against `allowedPermissionModes`, the prompt against
+`maxPromptChars`, and resume only from a run in the same thread or conversation.
 
-### 2.3 Validation on the runner (defense in depth; independent of the server)
-For each `run:start`:
-1. `RunStartCommandSchema.parse`. If it fails: `rejected / invalid_command`.
-2. `projectDir`: `fs.realpath`, then it must equal an allowed root or start with `root + path.sep`. The roots are
-   `allowedProjectDirs`, realpath'd at startup. For `readOnly` runs, `readOnlyProjectDirs` also count. It must be a directory
-   and must not be `/` or `$HOME` itself. `null` is only allowed for `readOnly` (the neutral dir). If it fails: `dir_not_allowed`.
-3. `permissionModeWithin(mode, maxPermissionMode)`. `bypassPermissions` also needs `allowBypassPermissions: true`.
-   `readOnly` forces `plan`. If it fails: `mode_not_allowed`.
-4. Local concurrency is below `maxConcurrent`. If not: `concurrency` (the server re-queues once).
+### 2.4 Spawn
+- Value flags always use the **`--flag=value`** form, and the prompt goes on **stdin**. So no variadic flag can swallow
+  anything, and a prompt can never become a flag. Prompts containing NUL are rejected. If the probe says stdin is
+  unsupported, the fallback is `claude -p [flags] -- <prompt>`.
+- With `processIsolation` set to `auto` (when `systemdScope` is available), the command is wrapped as
+  `systemd-run --user --scope --quiet -p KillMode=control-group -p MemoryMax=<memoryMax> -p TasksMax=<tasksMax> -- ...`.
+  Otherwise the process is spawned `detached` (its own process group), with no shell.
+- Env is `RUN_ENV_BASE_ALLOWLIST`, plus `LC_*` and `XDG_*`, plus `runner.json passEnv`, minus the strip prefixes, plus
+  `TAGCONN_RUN_ID` and `TAGCONN_RUN_KIND` (and `TAGCONN_ATTRIBUTION=off` for the Receptionist). The server never supplies env.
 
-The server does its own checks first. It resolves `projectId` to the `Project.cwd` host path (the browser never sends paths)
-and does a lexical prefix check against `settings.runner.allowedProjectDirs`. The server cannot realpath host paths from
-inside the container, which is why the runner's realpath check is the one that counts.
-
-### 2.4 Spawn (exact argv)
-`spawn(claudePath, args, { cwd, env, detached: true, stdio: ['pipe','pipe','pipe'] })`, with no shell.
-**The prompt goes on stdin** (it is written, then stdin is closed). This keeps prompts out of `ps` (other local users) and
-removes the variadic `--allowedTools` swallowing problem completely. It also means a prompt like `--dangerously-skip-permissions`
-can never be parsed as a flag.
-
-Quest run:
+Quest argv:
 ```
-claude -p --output-format stream-json --verbose [--include-partial-messages]
-       --permission-mode <mode> --model <model> [--max-turns <n>] [--resume <sessionId>]
-       [--allowedTools <csv>] [--disallowedTools <csv>]
+claude -p --output-format=stream-json --verbose [--include-partial-messages]
+  --permission-mode=<cli mode> --permission-prompts=none --model=<m> [--max-turns=<n>] [--resume=<ledger sid>]
+  [--allowedTools=<csv ⊆ maxAllowedTools>] --disallowedTools=<csv: server denies + alwaysDeny>
 ```
-Each list is **one** comma-joined argv element. `TOOL_RULE_RE` forbids commas inside a rule. Fallback when the probe found
-that stdin prompts do not work: `claude -p <prompt> --output-format ...`, with the prompt right after `-p` as CLAUDE.md
-prescribes, and the runner rejects prompts that start with `-`.
-
-Env: an allowlist (`HOME PATH USER LOGNAME LANG LC_* TERM TZ XDG_* SHELL TMPDIR`), minus `RUN_ENV_STRIP_PREFIXES`, plus
-`TAGCONN_RUN_ID`, `TAGCONN_RUN_KIND`, and for the Receptionist `TAGCONN_ATTRIBUTION=off`. `TAGCONN_CURL_CONF` and
-`OFFICE_DISABLED` are passed through if set.
+Should quests default to `dontAsk`? It combines well with `--permission-prompts=none`: only pre-allowed tools run. The final
+default is **TBD by SC3**. The current settings default stays `acceptEdits`.
 
 ### 2.5 Stream parsing, caps, lifecycle
-- stdout is split into lines. A line longer than `maxLineBytes` is dropped with a `notice`. Each line is parsed as JSON and
-  mapped like this: `system/init` becomes `init` (session_id, model, cwd, tools, permissionMode). `stream_event`
-  `content_block_delta.text_delta` becomes `text{partial:true}`. `assistant` content blocks become `text{partial:false}` and
-  `tool_use{inputPreview}`, where the preview is `file_path`, `pattern`, `command`, `url` or `description`, truncated.
-  `user` tool_result becomes `tool_result{preview}`. `result` becomes `result` (subtype, is_error, result text,
-  total_cost_usd, duration_ms, num_turns, usage). stderr lines become `notice{warn}`, rate-limited to 20 per run.
-- Caps come from `RunStartCommand.limits` (from settings: `maxEventsPerRun`, `maxEventBytesPerRun`, `previewChars`). When a cap
-  is hit: one `notice`, then a stop with `output_cap`.
-- The runner applies the server's `ingest.redactPatterns`? **No.** Redaction happens once, on the server
-  (`core/redact`), over every string of every event, the prompt preview and the result, before anything is stored or broadcast.
-  The runner only truncates.
-- Timeout (`timeoutSec`), Stop, or runner shutdown: `process.kill(-pid, 'SIGTERM')` (the whole process group, including
-  MCP/Bash children), then `SIGKILL` after `killGraceMs`. `run:end` maps exit 0 plus a `result.isError=false` to `succeeded`,
-  and everything else to `failed`, `stopped` or `timeout`.
+- **Line handling.** stdout is read line by line. The partial-line buffer is bounded by `maxLineBytes`; a longer line is
+  dropped with a `notice`.
+- **Mapping to events.**
+  - `system/init` becomes `init`.
+  - `stream_event` text deltas become `text{partial}`.
+  - `assistant` blocks become `text` and `tool_use{inputPreview}`.
+  - `user` tool_result becomes `tool_result{preview}`.
+  - `result` becomes `result`.
+  - stderr becomes `notice{warn}`, at most `maxStderrLines` per run.
+- **Caps.** `limits` cap events and bytes per run (a `notice`, then a stop with `output_cap`). The offline buffer is bounded
+  by both `offlineBufferEvents` and `offlineBufferBytes`; when it overflows, the oldest events are dropped and one notice is
+  sent.
+- **Server side.** The server re-applies its own caps (it never trusts runner sizes), dedupes `(runId, seq)`, **ignores
+  events and ends for runs not dispatched to the verified connected runner** (the `run.runnerId` ownership check), and
+  redacts every string (`core/redact`, `ingest.redactPatterns`) before storing or broadcasting.
+- **Stop, timeout or shutdown.** The process group gets SIGTERM (or the systemd scope is stopped), then SIGKILL after
+  `killGraceMs`.
 
-### 2.6 Correlation: run to Claude session to characters
-Hooks still fire for runner-spawned sessions, because `claude` loads the user's settings. So quest characters animate exactly
-like manual sessions do.
-1. **Authoritative:** the `init` event's `session_id`. `runs` sets `run.sessionId` and emits bus `run.linked {runId, sessionId}`.
-   The sessions module (task S5) sets `Session.runId` and `origin: 'quest'`.
-2. **Early hint:** `SessionStart` usually reaches `/api/hooks` before the runner has parsed `init`. The hook adds
-   `x-tagconn-run-id: $TAGCONN_RUN_ID` (only if the value matches a UUID). Ingest calls `runLinker.hint(runId, sessionId)`,
-   which links only if that run exists, is not terminal, and has no session yet. The header is a presentation hint, never
-   authority. A forged header can at most mislabel a session badge. The `init` value wins if it differs.
-3. Follow-ups use `--resume <run.sessionId>`. The new run's `init` gives the session id (it may be the same one). A thread is
-   `threadId` (the root run), and each turn is its own `Run`.
-4. **Receptionist sessions are not shown as floors.** When `TAGCONN_RUN_KIND=receptionist`, the hook exits without posting.
-   The Receptionist NPC is animated from `run:event` (`tool_use` names are mapped through the existing activity rules
-   client-side).
-5. **Assigning to a hero:** `RunStartRequest.heroId` makes the server prefix the prompt with
-   `Delegate this task to the "<role>" subagent.\n\n`. The UI shows the final prompt. The server also emits bus
-   `run.heroRequested {runId, sessionId?, role, heroId}`, so the heroes module (8i) prefers that hero for the next
-   `SubagentStart` of that role in the linked session.
+### 2.6 Correlation: run, session, characters
+Hooks fire for quest sessions, so quest characters animate like manual ones.
+1. **Authoritative:** the `init.session_id`. The `runs` module sets `run.sessionId`, emits `run.linked`, and sessions set
+   `Session.runId` and `origin: 'quest'` (task S5).
+2. **Hint:** the hook adds `x-tagconn-run-id` (only for a UUID-shaped `TAGCONN_RUN_ID`). `runLinker.hint` links only an
+   existing, non-terminal, unlinked quest run. A forged header can at most mislabel a badge. `init` wins.
+3. **Follow-ups** use `--resume=<run.sessionId>`, one `Run` per turn, grouped by `threadId`.
+4. **Receptionist sessions post no hooks**: `TAGCONN_RUN_KIND=receptionist` exits the hook, and with `--restricted` or
+   `--safe-mode` hooks are not loaded at all. The NPC is animated from `run:event`.
+5. **Hero:** `heroId` prefixes the prompt with `Delegate this task to the "<role>" subagent.` (shown in the UI), and the
+   server emits `run.heroRequested` for the heroes module (8i).
 
-### 2.7 Server queue
-FIFO, capped at `runner.maxQueued`. Dispatch happens while `active < min(settings.runner.maxConcurrent, hello.maxConcurrent)`.
-`runner.enabled=false` or no runner connected: `POST /api/runs` gives 409 `runner offline`. The run stays `queued` only if
-the runner disconnected after it was accepted. Retention: `runner.runRetentionDays`.
+### 2.7 Queue and ownership
+- The queue is FIFO, capped at `runner.maxQueued`. The effective concurrency is
+  `min(settings.runner.maxConcurrent, hello.maxConcurrent)`.
+- If no verified runner is connected, `POST /api/runs` returns 409.
+- `runs:followUp` and `runs:stop` accept **quest** runs only. `receptionist:stop` is scoped to its own conversation's
+  active run.
+- Every run records `createdBy` (the admin session) for the audit log.
+- Retention is `runner.runRetentionDays`.
 
 ## 3. Browser UX: Quest board (8k)
-- A TopBar button, "Quest board" (scroll icon), with a badge showing active runs. It opens a right drawer, scoped to the
-  current floor and switchable to "all floors".
-- **Post a quest** form: the floor (the current one, fixed); the assignee: "Guild Master" (main session) or one of the
-  floor's heroes; a prompt textarea with a character counter (`maxPromptChars`); a mode select limited to
-  `allowedPermissionModes ∩ runner cap`, where each mode has a one-line explanation (plan = read-only proposal, acceptEdits =
-  edits files without asking); and a model select. The Post button is disabled while the runner is offline, with a tooltip.
-- **Quota note** (always visible under the Post button): "Quests run the Claude Code CLI on this machine with your
-  subscription login. They count against the same usage limits as your terminal sessions, and parallel quests use them up
-  faster. The cost shown is the CLI's estimate." When a result comes back with a rate-limit error, a banner shows it.
-- **Quest card**: status chip, the elapsed time, and the live transcript, which streams text, shows tool chips
-  (`Read src/a.ts`), and shows collapsed tool results. At the end there is a result card: turns, duration, tokens, the
-  estimated cost, and the final answer as markdown (sanitized: no raw HTML). Buttons: **Stop** (confirm while running),
-  **Follow up** (textarea, which resumes the session), and **Focus** (the camera follows the linked session's Guild Master).
-  Clicking a tool chip focuses the character that emitted it.
-- The character link comes through `Session.runId`. The Guild Master and subagents show a small scroll badge
-  ("on a quest"). The hover card shows the quest title.
-- When locked (no admin session), the drawer shows "Pair this browser" (see 5.4). The office itself stays viewable.
+- **TopBar "Quest board"** (with an active-run badge) opens a right drawer, per floor or across all floors.
+- **Post quest** form:
+  - the floor
+  - the assignee: the Guild Master or a hero on this floor
+  - the prompt, with a counter
+  - the mode: only `allowedPermissionModes ∩ runner cap`, with a one-line explanation each
+  - the model
+- **Standing warning:** "Quests run Claude Code on this machine as your user, in this project's directory. An admin session
+  can make code run on your computer. They use your Claude subscription and count against the same limits as your terminal
+  sessions. The cost shown is the CLI's estimate." Rate-limit results show a banner.
+- **Quest card:**
+  - status, elapsed time, and the live transcript: text, tool chips, collapsed results
+  - a result card: turns, duration, tokens, the estimated cost
+  - **Stop** (with confirm), **Follow up**, and **Focus**, which follows the linked Guild Master
+  - clicking a tool chip focuses its character
+  - rejections explain what to do (for example `dir_not_trusted`: "open the project once in the CLI and accept the trust
+    dialog")
+- **Markdown** (quests and the Receptionist): no raw HTML, **remote images dropped**, and links only for `http(s):`, with
+  `rel="noopener noreferrer"` and `target=_blank`. All other schemes are rendered as text.
+- **Locked:** without an admin session the drawer shows "Pair this browser". The office stays viewable.
 
 ## 4. Receptionist help desk (8l)
 
 ### 4.1 UX
-The Receptionist is a fixed NPC at the Guild Gate (the `entrance` zone of every floor and of the Multiverse Nexus). It is not
-an `Agent` and belongs to no session. Clicking it (or the "Help desk" TopBar button) opens a chat panel. The panel has a
-conversation list, "New conversation" with a scope toggle (**General**: tagconn itself and general questions, or
-**This floor's project**: read-only questions about the repo), streaming answers, tool chips, Stop, and a "read-only"
-shield label that shows the sandbox state (`bwrap` or `none`). History is kept on the server: `maxConversations` (50) and
-`maxMessagesPerConversation` (200). The oldest conversation is evicted first. A conversation runs one turn at a time. Each turn
-after the first uses `--resume <conversation.sessionId>`. While a turn runs, the NPC shows reading, searching or browsing.
+- A fixed NPC stands at the Guild Gate (the `entrance` of every floor and the Nexus). It is not an Agent.
+- The chat panel has a conversation list and a scope choice:
+  - **General:** tagconn and general questions. The cwd is the neutral empty dir, plus the docs copy.
+  - **This project:** allowed only for a **registered project whose cwd is inside `allowedProjectDirs`**. There is no
+    separate read-only dir list in M8.
+- The panel streams answers, shows tool chips and has a Stop button.
+- A shield label shows the sandbox (`bwrap`/`none`) and the flags (`restricted`, `safe-mode`).
+- History is on the server, bounded by `maxConversations` and `maxMessagesPerConversation`. There is one turn at a time per
+  conversation. Turns after the first use `--resume=<conversation.sessionId>`, which must be in the runner's session ledger.
 
-### 4.2 Receptionist argv (built by the runner for `readOnly` runs; server tool lists are ignored except extra denies)
+### 4.2 Argv (built by the runner from constants; the server's allowlist, mode and system prompt are ignored)
 ```
-[bwrap ...] claude -p --output-format stream-json --verbose --include-partial-messages
-  --permission-mode plan --model <receptionist.model> --max-turns <receptionist.maxTurns>
-  --allowedTools Read,Grep,Glob[,WebSearch][,WebFetch]
-  --disallowedTools Bash,BashOutput,KillShell,Edit,MultiEdit,Write,NotebookEdit,Agent,Task,Skill,SlashCommand,
-                    Read(~/.ssh/**),...(RECEPTIONIST_DENY_READ_GLOBS + extraDenyReadGlobs),WebFetch(domain:localhost),...
-  --strict-mcp-config --mcp-config {"mcpServers":{}}
-  --setting-sources user
-  --append-system-prompt <RECEPTIONIST_SYSTEM_PROMPT>
-  [--add-dir <tagconn repo root>]    # general scope when receptionist.allowTagconnDocs
-  [--resume <sessionId>]
+[systemd-run ...] [bwrap ... --] claude -p --output-format=stream-json --verbose --include-partial-messages
+  --permission-mode=plan --permission-prompts=none                 # plan vs dontAsk: TBD by SC3
+  --tools=Read,Grep,Glob[,WebSearch][,WebFetch]                    # exact set = receptionistToolSet(...)
+  [--allowedTools=WebFetch(domain:a.org),WebFetch(domain:b.dev)]   # only in webFetch=allowlist mode
+  --disallowedTools=<RECEPTIONIST_DISALLOWED_TOOLS, Read(<deny globs>), WebFetch loopback denies, server extra denies>
+  --disable-slash-commands --strict-mcp-config --mcp-config={"mcpServers":{}}
+  [--restricted]                    # when probed; else --setting-sources=user
+  [--safe-mode]                     # project scope, if SC3 confirms it composes with --resume/--tools (TBD by SC3)
+  --append-system-prompt=<RECEPTIONIST_SYSTEM_PROMPT> --model=<m> --max-turns=<n>
+  [--add-dir=<realpath of stateDir/receptionist-docs>] [--resume=<ledger sid>]
 ```
-cwd: in the general scope, `<stateDir>/receptionist` (an empty dir, 0700, created by the runner). In the project scope, the
-project dir, which must pass the runner's realpath check against `allowedProjectDirs ∪ readOnlyProjectDirs`.
-WebFetch is dropped when `webFetch = never`, or when it is `general-only` and the scope is project. WebSearch is dropped when
-`webSearch = false`.
+- `--restricted` confines file tools to the cwd plus `--add-dir`, removes exec tools, ignores user, project and local
+  settings, and protects settings and git files. Exactly what it covers is **TBD by SC3**.
+- **Docs copy (required change 6).** At startup, and when the tagconn version changes, the runner copies
+  `RECEPTIONIST_DOCS_COPY` (README.md, CLAUDE.md, ROADMAP.md, docs/**, with no symlinks followed) from its own checkout into
+  `<stateDir>/receptionist-docs` (0700). It never adds the repo root, so `.env`, `data/` and `config/` stay out of reach.
+- **WebFetch (required change 8).** With `webFetch: never` (the default), WebFetch is not in `--tools`. With `allowlist`,
+  WebFetch is in `--tools` and only `WebFetch(domain:x)` allow rules for `webFetchAllowDomains` (GUI-immutable) are passed.
+  With `--permission-prompts=none`, other domains are denied (**TBD by SC3**). The loopback and metadata denies stay as a
+  backstop.
+- **WebSearch** is allowed (a PM decision) unless `receptionist.webSearch=false`.
 
-### 4.3 Layered read-only guarantees
+### 4.3 bwrap sandbox (required change 3; `receptionistSandbox: auto|bwrap`)
+```
+bwrap --die-with-parent --new-session --unshare-pid --unshare-ipc --unshare-uts --cap-drop ALL
+  --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 --ro-bind /etc /etc
+  --ro-bind <realpath of claude install dir> <same>          # plus the node runtime if the CLI needs it
+  --proc /proc --dev /dev --tmpfs /tmp
+  --tmpfs $HOME                                               # home is empty by default
+  --ro-bind <project realpath> <same>        (project scope)  |  --bind <neutral dir> <same>  (general scope)
+  --ro-bind <stateDir>/receptionist-docs <same>
+  --bind  ~/.claude/projects/<cwd key>  <same>                # session transcript (needed for --resume)
+  --bind  ~/.claude/<todos|state dirs>  <same>                # exact set TBD by SC3
+  --bind  ~/.claude/.credentials.json   <same>                # OAuth refresh; TBD by SC3 whether rw is required
+  --ro-bind-try ~/.claude/{settings.json,settings.local.json,agents,skills,commands,plugins,hooks,CLAUDE.md} <same>
+  --bind <disposable copy of ~/.claude.json> ~/.claude.json   # unless SC3 proves the CLI tolerates EROFS on it
+  --chdir <cwd> -- <claude argv>
+```
+- **Network stays shared.** The CLI needs the API, and WebSearch needs it too.
+- **Probe.** At startup the runner does one probe turn under exactly this sandbox. If it fails, it falls back to `none`,
+  reports it in the UI, and keeps L1-L5.
+- The rw set above is the **minimum to be confirmed empirically** (TBD by SC3). Nothing else under `$HOME` exists inside the
+  sandbox, so `~/.ssh` and friends are unreadable there. That is a confidentiality gain on top of the deny globs.
+
+### 4.4 Layers and residual risk
 | Layer | What it stops |
 |---|---|
-| L1 `--disallowedTools` write, exec, and delegation tools (deny beats allow, including allows from user settings) | Edit/Write/Bash/NotebookEdit, subagents with broader tools, skills |
-| L2 `--allowedTools` minimal set, `--permission-mode plan` | Anything else would need a permission prompt, which `-p` cannot answer, so it is denied. Plan mode itself refuses non-read-only tools |
-| L3 `--strict-mcp-config` with an empty config | The user's MCP servers (which may have write tools) are not loaded at all |
-| L4 `--setting-sources user` | Project `.claude/settings.json` hooks and allow rules in the questioned repo do not load (a cloned repo cannot run code) |
-| L5 Runner watchdog | If `init.tools` contains anything outside `RECEPTIONIST_ALLOWED_TOOLS`, or any `tool_use.name` is outside it, the process group is killed at once with `policy_violation` |
-| L6 bwrap sandbox (Linux, `receptionistSandbox: auto`) | `--ro-bind / /`, rw only `~/.claude`, `~/.claude.json`, the neutral dir and a tmpfs `/tmp`, `--unshare-pid --die-with-parent`. The kernel refuses project writes even if L1 to L5 fail. The runner does a probe turn under bwrap at startup and falls back to `none` (and reports it in the UI) if the CLI cannot run under it |
-| L7 Hook | Receptionist sessions post nothing and write no `.tagconn` (`TAGCONN_RUN_KIND`, `TAGCONN_ATTRIBUTION=off`) |
+| L1 exact `--tools` set | Only Read/Grep/Glob (plus the web tools when enabled) exist for the model |
+| L2 `--permission-prompts=none`, `plan` mode, `--disable-slash-commands` | Anything needing approval is denied; no slash commands or skills |
+| L3 `--strict-mcp-config`, empty config | No MCP servers, so no MCP write tools |
+| L4 `--restricted` (else `--setting-sources=user`), `--safe-mode` in project scope when confirmed | Repo hooks, repo allow rules, CLAUDE.md, plugins, file access outside cwd and `--add-dir` |
+| L5 watchdog | The set of `init.tools` must **exactly equal** the `--tools` set. Any `mcp__*` tool, or any `tool_use` outside the set, kills the process group at once (`policy_violation`) |
+| L6 bwrap (Linux) | The kernel refuses writes to projects and home; secrets outside the binds are unreadable |
+| L7 backstop `--disallowedTools` | Write, exec, delegation and worktree tools, ExitPlanMode, secret read globs, loopback WebFetch |
+| L8 hook | No hook posts and no `.tagconn` writes for the Receptionist |
 
-**Residual risks (stated honestly):**
-- *Confidentiality, not integrity.* `Read`/`Grep` can read any file the user can read, except the deny globs, and those are
-  applied best-effort to Grep/Glob. Prompt injection from a repo file or a web page could try to exfiltrate data through
-  WebFetch URLs or WebSearch queries. Mitigations: WebFetch is off in the project scope by default, loopback and metadata
-  hosts are denied, and secret globs are denied. The UI tells the user not to ask about secrets.
-- *SSRF.* WebFetch runs on the host. The domain rules cannot block LAN IP ranges, so GET requests to LAN or router pages
-  remain possible in the general scope. tagconn's own GET API is read-only.
-- The CLI itself writes to `~/.claude` (transcripts, todos). This is inherent to `--resume` and is not a project write.
-  Without bwrap (on macOS, or if the probe failed), L1 to L5 are policy, not kernel enforcement. A future CLI change to plan
-  mode semantics is caught by L5 only after the fact, when the tool_use appears. That is why L6 exists.
-- The user's own user-level hooks from other tools still run (`--setting-sources user`).
+Residual risks:
+- Without bwrap (macOS, or a failed probe), L1-L5 are CLI policy, not kernel enforcement.
+- Read can still reach files inside the cwd and the docs copy, which is by design, and anything the deny globs miss when
+  neither `--restricted` nor bwrap is active.
+- WebSearch queries are a low-bandwidth exfiltration channel for injected content.
+- WebFetch in allowlist mode can reach whatever the allowed domains serve.
+- The CLI writes its own session state under `~/.claude`.
 
 ## 5. Admin auth (8m, revisits decision 12)
 
-### 5.1 Threat model (the browser can now cause code execution on the host)
-| # | Attacker | Before M8 | With 8m |
-|---|---|---|---|
-| T1 | Malicious website (CSRF / CSWSH) | Origin/Host checks, JSON-only | Same checks, plus a bearer token that browsers never attach automatically (not a cookie), so it is CSRF-immune by construction |
-| T2 | DNS rebinding | Host allowlist | Same; even if bypassed, there is no token |
-| T3 | Another OS user on a shared host (127.0.0.1 is reachable by all users) | **Could rewrite ~/.claude/agents via roles sync** | Pairing needs the 0600 runner token or `docker logs` access; `protect: all-writes` covers role and settings writes |
-| T4 | Another container on the compose network (`Host: server` is allowed) | Full access | Same as T3 |
-| T5 | Same-user malware | Out of scope (it can run `claude` itself) | Out of scope |
-| T6 | Compromised server or container | n/a | The runner's local allowlist, mode cap, bypass refusal and Receptionist policy still hold |
-| T7 | XSS in the web app | Settings writes | Token theft from localStorage. Mitigations: strict CSP in nginx, React escaping, markdown without raw HTML |
-| T8 | Leaked token (logs, Referer) | n/a | Tokens are never logged; the pairing code goes in the URL *fragment*; `Referrer-Policy: no-referrer`; server sessions are revocable |
+### 5.1 Threat model
+| # | Attacker | With 8m |
+|---|---|---|
+| T1 | Malicious website (CSRF/CSWSH) | Origin/Host checks, JSON-only, and a bearer token that is never ambient (not a cookie) |
+| T2 | DNS rebinding | Host allowlist; even if bypassed, there is no token |
+| T3 | Another OS user (127.0.0.1 is shared) | Pairing needs the 0600 runner token (via HMAC) or `docker logs`. `all-writes` and the always-gated roles close the old role-sync hole |
+| T4 | Another container on the compose network (`Host: server`) | Same as T3 |
+| T5 | Same-user malware | Out of scope (it can run `claude` itself) |
+| T6 | **Compromised server or container** | **It can make the runner do anything a quest may do**: in the allowed and trusted dirs, up to `maxPermissionMode`, with the local tool policy. With acceptEdits that includes edits which later run as code (for example package scripts). The runner still enforces the dirs, trust, mode cap, bypass refusal, the Bash-only-if-local rule, `alwaysDeny`, the resume ledger and the Receptionist policy |
+| T7 | XSS | Token theft from localStorage. Mitigations: CSP, React escaping, the sanitized markdown rules in section 3 |
+| T8 | Token leak | Tokens are never logged; the code is in the URL fragment; `Referrer-Policy: no-referrer`; `Cache-Control: no-store` on `/api/auth/*`; sessions are revocable |
+| T9 | Squatter on :4318 or :4317 | The runner detects a fake :4317 through the server proof. A squatter on :4318 can read the `#pair=` fragment when the user opens the URL (the residual risk below) |
 
-### 5.2 Decision: pairing by default, same-origin bootstrap as an opt-in
-A same-origin bootstrap alone (the UI calls an endpoint and gets a token because Host and Origin match) adds **nothing**
-against T3 and T4: a non-browser client can forge `Origin` and `Host`. It only helps if the Origin checks are misconfigured
-(for example `corsOrigins: ['*']`). So the **default is `auth.mode: pairing`**, and a one-time code proves that the user
-controls the host account:
-- **Minting a code:** (a) at boot, when no admin session exists, if `auth.logPairingCodeOnBoot` is set, the log line is
-  `Pair a browser: http://localhost:4318/#pair=ABCD-EFGH (expires in 10 min)`. Reading it needs `docker logs` (docker group)
-  or the `pnpm dev` terminal. (b) `pnpm office:pair`, which calls `POST /api/auth/pairing-codes` with
-  `x-tagconn-runner-token` read from `runner.json` (0600, owner only), prints the URL, and opens it if `--open` is given.
-  `pnpm office:doctor` shows the pairing state and suggests `office:pair`.
-- **A code** is 8 Crockford base32 characters (40 bits). It is single-use, lasts `pairingCodeTtlSec` (600 s), dies after 5
-  wrong attempts, and pairing attempts are globally limited to 10 per minute. At most 3 unexpired codes exist at a time.
-- `auth.mode: same-origin` (file or env only) turns on `POST /api/auth/bootstrap`. It needs an allowed `Origin` to be
-  **present**, and `Sec-Fetch-Site: same-origin` when that header is sent. It keeps decision 12's "local processes are
-  trusted" posture and is documented as such.
-- **There is no signing secret.** Tokens are opaque (`tca_` plus 32 random bytes). The DB stores only `sha256(token)`
-  (`admin_sessions`: id, token_hash, label, user_agent, created_at, last_used_at, expires_at), so a DB leak does not yield
-  usable tokens and there is no key to rotate. Expiry is sliding, `sessionIdleHours` (72 h), capped at `sessionMaxAgeDays`
-  (30). At most `maxSessions` (10) exist; the oldest is evicted. `auth:revoke "*"` logs out everywhere.
+### 5.2 Pairing (default `auth.mode: pairing`)
+- **Why pairing and not a plain same-origin bootstrap:** a same-origin bootstrap adds nothing against T3 and T4, because
+  non-browser clients can forge Origin and Host.
+- **Codes** are 12 Crockford base32 characters (60 bits), single use, valid for `pairingCodeTtlSec`. There are **no per-code
+  lockouts**; that would let anyone burn the user's code, a cheap DoS. Attempts are globally limited to 10 per minute, and at
+  most 3 codes are live at once.
+- **Minting a code:**
+  - (a) At boot, when no admin session exists and `logPairingCodeOnBoot` is on, the code goes into the log.
+  - (b) `pnpm office:pair` (`scripts/pair.ts`, which reads `runner.json`) calls `POST /api/auth/pairing-challenge {nonce: Nc}`
+    and gets back `{challengeId, nonce: Ns, instanceId, proof: HMAC(token, "tagconn-pair-v1|server|Nc|Ns|instanceId")}`.
+    It verifies the proof (aborting on a mismatch: "not talking to your tagconn server"), then sends
+    `POST /api/auth/pairing-codes {challengeId, proof: HMAC(token, "tagconn-pair-v1|client|Ns|Nc")}`.
+  - Both endpoints **refuse any request that carries an `Origin` header** (browsers never use them). Challenges are single
+    use and expire after 30 s.
+- **Squatter check (T9).** Before printing the URL, `office:pair` fetches `GET <web origin>/api/health` through the nginx
+  proxy and requires its `instanceId` (and version) to equal the HMAC-bound `instanceId`. `office:doctor` runs the same
+  check.
+- **Residual risk:** a process that owns :4318 and *proxies* `/api/health` to the real server passes this check, and could
+  read the fragment from the page it serves. It needs another local user to grab the port before compose does. That is
+  documented, and doctor also reports which process owns :4318 when it can tell.
+- **`auth.mode: same-origin`** (file or env only) enables `POST /api/auth/bootstrap`. It needs a *present* allowed Origin and
+  `Sec-Fetch-Site: same-origin` if that header is sent. It is **refused when `corsOrigins` contains `'*'`**. This keeps
+  decision 12's "local processes are trusted" posture.
+- **Tokens** are opaque (`tca_...`). Only their sha256 is stored, in `admin_sessions`, so there is no signing secret. Expiry
+  slides with `sessionIdleHours` (72 h), capped by `sessionMaxAgeDays` (30). At most `maxSessions` exist. Revoke-all is
+  available.
 
-### 5.3 Enforcement
-- **REST:** route option `config.access: 'public' | 'hook' | 'runner' | 'admin'`. A global `onRequest` hook in
-  `core/http/admin.ts` treats every non-GET `/api/*` route without an explicit access value as `admin` when
-  `protect=all-writes`, and every route marked `admin` (including the run, receptionist and runner GETs) as needing
-  `Authorization: Bearer <token>`. Failures return 401 `{error, statusCode}` with `WWW-Authenticate: Bearer`. Public:
-  `GET` reads, `POST /api/auth/pair`, `POST /api/auth/bootstrap` (same-origin mode only; otherwise 404). Hook token:
-  `/api/hooks`, `/api/attribution/import`. Runner token: `/api/auth/pairing-codes`.
-- **Socket `/office`:** `auth: {adminToken}` goes in the CONNECT packet (not the URL, so nginx does not log it). Middleware
-  sets `socket.data.admin` and joins `ADMIN_ROOM`. `socket.use` checks each packet: an event in `ADMIN_SOCKET_EVENTS_EXECUTION`
-  needs a live session, re-checked every time (expiry and revocation); when `protect=all-writes`, anything not on the server's
-  public read list (`office:subscribe`, `settings:get`, `roles:list`, `layouts:list|get`, `auth:status`, and hero/Multiverse
-  reads from living-office) also needs it. Denied packets get the ack `{ok:false, error:'admin session required'}`. On
-  revocation or expiry the server emits `auth:changed` and removes the socket from `ADMIN_ROOM`. Runs, runner status,
-  receptionist and pending-import broadcasts go **only** to `ADMIN_ROOM`.
-- The web client keeps the token in localStorage (`ADMIN_TOKEN_STORAGE_KEY`), reconnects the socket after pairing, and
-  sends the header on REST. A 401 or `auth:changed{admin:false}` clears it and shows the pair dialog.
-- nginx: `Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'`,
-  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`. Vite dev is left as is.
+### 5.3 Enforcement (fail closed, required change 5)
+- **REST.**
+  - Every `/api/*` route sets `config.access` to one of `REST_ACCESS_LEVELS`. An `onRoute` hook **throws at boot** if one is
+    missing.
+  - `admin-write` routes are gated when `protect=all-writes` (the confirmed default): settings and layouts writes.
+  - `admin` routes are always gated:
+    - `/api/runs*`, `/api/receptionist*`, `/api/runner/*`
+    - `/api/attribution/save|pending*`
+    - `/api/auth/sessions*` and `/api/auth/logout`
+    - **`PUT`/`DELETE /api/roles*` and `POST /api/roles/sync`** (these write into `~/.claude/agents`)
+  - `hook` routes: `/api/hooks`, `/api/attribution/import`.
+  - `runner` routes (Origin refused): `/api/auth/pairing-challenge|pairing-codes`.
+  - `public` routes: GET reads, `/api/auth/status|pair|bootstrap`.
+  - A failure returns 401 `{error, statusCode}` with `WWW-Authenticate: Bearer`.
+- **Socket `/office`.**
+  - The `adminToken` travels in the CONNECT `auth` payload.
+  - `socket.use` checks every packet: `PUBLIC_SOCKET_EVENTS` pass; `ADMIN_SOCKET_EVENTS_WRITES` need an admin session when
+    `all-writes`; **every other event needs an admin session**.
+  - For every gated packet, the session is **re-checked against the store** (expiry and revocation).
+  - Denied packets get the ack `{ok:false, error:'admin session required'}`.
+  - A **sweep every `ADMIN_ROOM_SWEEP_MS` (60 s)** evicts expired or revoked sockets from `ADMIN_ROOM` and emits
+    `auth:changed`. Revocation also evicts immediately.
+  - Admin-only broadcasts (runs, runner status, receptionist, pending imports) go only to `ADMIN_ROOM`.
+- **Web.** The token is kept in localStorage. A 401 or `auth:changed{admin:false}` clears it and opens the pair dialog.
+- **Headers (required change 7).**
+  - nginx and **Vite dev (`server.headers`)** both send
+    `Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`.
+    There is no `ws:`/`wss:` wildcard; same-origin websockets are covered by `'self'`, which must be verified in Chrome and
+    Firefox. Vite HMR in dev may need its own origin added only in dev.
+  - Also sent: `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
+  - `/api/auth/*` responses get `Cache-Control: no-store`.
 
-### 5.4 Regression test plan (extends `core/http/__tests__/security.test.ts`, plus new `modules/auth/__tests__`)
-1. Missing, invalid, expired, or revoked token: 401 on every `/api/runs*`, `/api/receptionist*` and `/api/attribution/save`
-   route, and on each REST write when `all-writes`. Every event in both `ADMIN_SOCKET_EVENTS_*` lists (the tests iterate the
-   shared constants) gets an `{ok:false}` ack without a token, or after revoking.
-2. Cross-origin: `POST /api/auth/pair` and `/api/runs` with `Origin: http://evil.example` give 403. A socket handshake with a
-   foreign Origin plus a valid token is still refused.
-3. CSRF simple requests: `text/plain`, `application/x-www-form-urlencoded` and `multipart` POSTs to `/api/runs` and
-   `/api/auth/pair` give 415. A token in a query string or cookie is ignored (401).
-4. DNS rebinding: `Host: evil.example` with a valid token gives 403 on REST and at the engine handshake.
-5. Replay: a used pairing code gives 401. A code after its TTL gives 401. After 5 wrong attempts the right code also fails.
-   Rate limit: the 11th attempt in a minute gives 429. A revoked session token used on REST and on an open socket fails.
-6. Bootstrap: 404 in pairing mode. In same-origin mode it needs a present allowed Origin (no Origin gives 403) and gives 403
-   on `Sec-Fetch-Site: cross-site`.
-7. The runner namespace refuses: an empty `runner.token` setting, a wrong token, a correct token *with* an `Origin` header,
-   and the admin token used as the runner token (and the reverse). `pairing-codes` refuses the hook token.
-8. Secrets: `runner.token` is masked in `GET /api/settings` and `settings:changed`. The `auth.*` and `runner.*` patches are
-   rejected by the API (GUI-immutable). The DB holds no plaintext token.
+### 5.4 Regression tests
+1. No token, a bad, expired or revoked token: 401 on every `admin` route, and on every `admin-write` route under `all-writes`.
+   A boot-time test asserts that every registered `/api/*` route has an access level. On the socket, every event in
+   `ADMIN_SOCKET_EVENTS_EXECUTION`, `ADMIN_SOCKET_EVENTS_WRITES` and one **unlisted made-up event** is denied. Roles events
+   stay denied even under `protect=execution`.
+2. Cross-origin: 403 on `/api/auth/pair` and `/api/runs`. A foreign-Origin socket handshake with a valid token is refused.
+   `pairing-challenge` and `pairing-codes` with *any* Origin give 403.
+3. CSRF: `text/plain`, form and multipart bodies give 415. A token in a query string or cookie is ignored.
+4. Rebinding: a foreign Host gives 403 on REST and at the engine level.
+5. Replay: a used code, an expired code, a reused `challengeId`, and a proof computed for another challenge all fail. The
+   rate limit gives 429. A revoked token fails on an open socket within one packet, and the sweep evicts it from
+   `ADMIN_ROOM`.
+6. Bootstrap: 404 in pairing mode. In same-origin mode: 403 without an Origin, 403 on `cross-site`, and 403 when
+   `corsOrigins` includes `'*'`.
+7. Runner namespace: an empty token setting, an Origin header, a wrong proof, a late proof, or an event before the proof all
+   disconnect. A reflected server proof used as the runner proof fails. A runner-side test confirms a fake server with a bad
+   proof gets disconnected and never receives `run:start`. The admin token does not work as runner proof.
+8. Secrets: `runner.token` is masked. `auth.*`, `runner.*`, the receptionist web keys and `extraDenyReadGlobs` are rejected
+   by the API. No plaintext tokens are in the DB. `/api/auth/*` sends `no-store`.
 
 ## 6. Attribution (8j)
 
-### 6.1 Files in a project repo
-- `.tagconn/README.md`: what tagconn is, the repo link, the tagconn version that wrote it, that it contains no secrets and
-  is safe to commit, how to restore on another host (install tagconn, run `pnpm office:install`, start the office, open the
-  project: the profile is offered for import), how to save (`/tagconn-save` or the "Save profile to project" button), and
-  how to opt out (replace the `.tagconn` dir with an empty *file* named `.tagconn`, or run `office:install --no-attribution`).
-- `.tagconn/office.json` (optional): `AttributionProfileSchema`. It holds the kind and version, the tagconn version,
-  `savedAt`, the floor name and style, the layout (without an id), and heroes (role, name, title, look). It holds **no
-  secrets, no absolute host paths** (the schema rejects `/home/...`, `~/...` and `C:\...`, and the server additionally
-  rejects on any redaction-pattern hit), and nothing about sessions, prompts or usage.
-- **Git: commit both.** Portability across hosts is the whole point, and both files are small and host-independent.
-  tagconn never edits `.gitignore`.
+### 6.1 Files
+- `.tagconn/README.md` explains:
+  - what tagconn is, the repo link, and the version
+  - that it holds no secrets and is safe to commit
+  - how to restore on another host: install, then open the project; the profile is offered for import
+  - how to save (`/tagconn-save` or the GUI button)
+  - how to opt out: replace the dir with an empty *file* named `.tagconn`
+- `.tagconn/office.json` follows `AttributionProfileSchema`: the floor name and style, the layout (without an id), and heroes
+  as **references to roles**. It holds no secrets and no absolute host paths (the schema rejects them, and redaction-pattern
+  hits are rejected). **Commit both files.** tagconn never touches `.gitignore`.
 
-### 6.2 README writes: the hook, on SessionStart
-Settings delivery: hooks cannot read server settings cheaply, so the **installer controls it with files** next to
-`curl.conf`, which the hook only tests for existence (no parsing in sh):
-- `<configDir>/attribution-README.md`: the rendered template (with the version filled in). If it exists, README writes are on.
-- `<configDir>/attribution.conf` (0600): a curl config with the token header and `url = ".../api/attribution/import"`.
-  If it exists, import is on.
-- `office:install --no-attribution` removes both. Default: on (as the ROADMAP says: opt-in at install time, on by default).
-
-The hook logic, in a `( ... ) >/dev/null 2>&1` subshell, only for `SessionStart` (the payload matched by a `case` glob on
-`"hook_event_name":"SessionStart"`, with or without spaces). It is skipped if `TAGCONN_ATTRIBUTION=off` or
-`TAGCONN_RUN_KIND=receptionist`:
+### 6.2 Opt-in and hook behavior
+- **Installer.** The installer **asks** "Write a small .tagconn/README.md into git repos you open with Claude Code? [y/N]".
+  Only `y` or `--attribution` installs `<configDir>/attribution-README.md` (the rendered template), whose presence turns
+  README writes on. Non-interactive runs default to **off**.
+- **Import config.** `<configDir>/attribution.conf` (0600, a curl config with the token header and the import URL) is
+  installed by default, because import writes nothing to repos and the server asks before applying anything.
+  `--no-attribution` removes both files.
+- **Hook: when it acts.** It runs only on `SessionStart`, and not when `TAGCONN_ATTRIBUTION=off` or
+  `TAGCONN_RUN_KIND=receptionist`. **All attribution work runs in a background subshell** (`( ... ) </dev/null >/dev/null 2>&1 &`)
+  after the foreground hook POST, so it adds no latency.
+- **Hook: README write.**
 ```
-dir=$CLAUDE_PROJECT_DIR (set by Claude Code for hooks); skip if empty
-skip unless: [ -d "$dir" ] && [ -O "$dir" ] && [ -e "$dir/.git" ] && [ "$dir" != "$HOME" ] && [ "$dir" != / ]
-skip if [ -e "$dir/.tagconn" ] || [ -L "$dir/.tagconn" ]          # never overwrite, never follow symlinks
-mkdir "$dir/.tagconn" (no -p) && (set -C; cat "$tpl" > "$dir/.tagconn/README.md")   # noclobber
+dir=$CLAUDE_PROJECT_DIR; require: -d, -O (owned by user), -e "$dir/.git", != $HOME, != /
+skip if -e or -L "$dir/.tagconn"                               # never overwrite, never follow symlinks
+[tpl exists] mkdir "$dir/.tagconn" && (set -C; cat "$tpl" > "$dir/.tagconn/README.md")
 ```
-Writes happen only in git repos owned by the user, so there are no stray files in `~/Downloads`, `/tmp` or `$HOME`.
-The work is a few syscalls, well inside the 1 s budget.
+- **Hook: import.** It requires `attribution.conf` to exist, `.tagconn` and `office.json` to be non-symlinks, and
+  `office.json` to be a regular file. It then checks the size with `n=$(head -c 65537 "$f" | wc -c)` and skips the import
+  if `n` > 65536. Otherwise it runs
+  `head -c 65536 "$f" | curl -K attribution.conf -H "x-tagconn-session-id: $sid" -H 'content-type: application/json' --data-binary @-`.
+  `$sid` comes from `sed`, restricted to `[A-Za-z0-9_-]`.
 
-### 6.3 Import: the hook posts, the server decides
-After the normal POST (foreground, so the session exists on the server), and only if all of these hold:
-`attribution.conf` exists, `$dir/.tagconn/office.json` is a regular non-symlink file, `.tagconn` is not a symlink, and
-`wc -c` is at most 65536. Then the hook, **in the background** (`&`, all fds redirected, so it adds no latency), runs
-`curl -K attribution.conf -H "x-tagconn-session-id: $sid" -H 'content-type: application/json' --data-binary @office.json`.
-`$sid` is extracted with `sed` limited to `[A-Za-z0-9_-]`, so no header injection is possible.
+### 6.3 Server import rules
+The request must pass hook-token auth, with a body limit of `maxProfileBytes`. The server then checks, in order:
+1. **Refusals.** It refuses when `server.hookToken` is **empty** (`ignored/no-hook-token`), when attribution is disabled, for
+   an unknown session, or for a SessionStart older than `importWindowSec`. The project is derived **from the session** only.
+2. **Validation.** Schema, redaction check and `validateLayout`. Any failure gives `rejected/invalid`.
+3. **Already configured.** The project has a layout, a hero or a profile, or the user dismissed an import before:
+   `ignored/already-configured` or `ignored/dismissed-before`.
+4. **Consent.** Under `autoImport: 'ask'` (the default), the import becomes pending and `attribution:pending` goes to
+   `ADMIN_ROOM`. **The toast shows the repo path** (`projectCwd`), the floor name, what will be imported, and which hero roles
+   are unknown and would be dropped.
+5. **Applying it:** create and assign the layout `imported-<slug>`, set the name and style, create heroes **only for roles
+   that already exist**, and set `Project.profile`. **It never creates or changes roles, `~/.claude/agents`, skills or
+   settings (required change 10).**
 
-The server (`POST /api/attribution/import`, hook-token auth, body limit `attribution.maxProfileBytes`) does this:
-- If `attribution.enabled` is false: `ignored/disabled`. If the session is unknown or its SessionStart is older than
-  `importWindowSec`: `ignored/unknown-session|stale-session`. The project is derived from the **session** (never from the
-  body).
-- It parses `AttributionProfileSchema` and runs the redaction check, then `validateLayout`. Any error gives `rejected/invalid`
-  (logged at debug level, never echoed).
-- If the project is already configured (it has `layoutId`, any hero, `profile`, or a dismissed import): `ignored/already-configured`.
-- `autoImport: 'ask'` (**default**, because repo content is untrusted, for example a cloned stranger's repo): the profile is
-  stored in `pending_profile_imports` and `attribution:pending` is sent to `ADMIN_ROOM`. The UI shows a toast: "This project
-  has an office profile (floor 'X', layout, 4 heroes) from tagconn 0.3.0. Import?" Accept or dismiss uses
-  `attribution:resolve`. `'auto'` applies at once, and `'off'` ignores the profile.
-- Applying it: create a layout `imported-<slug>` (with a suffix on collision, respecting `maxStoredLayouts`) and assign it,
-  set the project name and style, create heroes through the heroes service (8i; entries it cannot map are dropped), and set
-  `Project.profile = {importedAt, tagconnVersion, source}`. The result is broadcast as `project:upsert`.
+### 6.4 Save (explicit only)
+- **GUI.** "Save office profile to project" (admin) sends `attribution:write` to the runner. The runner accepts it **only
+  inside `allowedProjectDirs`**, checked by realpath, with `.git` present and not `$HOME` or `/`. It refuses a symlinked
+  `.tagconn` or `office.json`, re-validates the content, and writes tmp + rename (0644). It overwrites only on a confirmed
+  `overwrite: true`.
+- **Skill `/tagconn-save`.** It fetches the public `GET /api/attribution/export?cwd=` (which contains nothing beyond
+  snapshot data), shows the diff, and writes the file with the Write tool, so the normal CLI permission prompt applies.
 
-### 6.4 Save: explicit only
-- GUI: the floor menu gets "Save office profile to project" (admin). The server builds the profile with
-  `GET /api/attribution/export?projectId=` logic and sends `attribution:write` to the runner. The runner checks the dir by
-  realpath (`allowed ∪ readOnly`, `.git` present, not `$HOME` or `/`), refuses a symlinked `.tagconn` or `office.json`,
-  re-validates the content, creates `.tagconn` if missing (and the README too if the template exists), and writes
-  tmp + rename, mode 0644. It overwrites only when the user confirmed `overwrite: true`. With no runner, the UI offers the
-  skill instead.
-- Skill `/tagconn-save` (a managed skill dir): it tells Claude to fetch `GET http://127.0.0.1:4317/api/attribution/export?cwd=<abs cwd>`
-  (a public read: the profile contains nothing that is not already public in the snapshot), show the user a diff, and write
-  `.tagconn/office.json` with the Write tool, so the normal CLI permission prompt applies.
+## 7. Settings summary
+- **`runner.*`**: new keys `token`, `allowedPermissionModes`, `allowedTools`, `disallowedTools`, `maxQueued`,
+  `maxPromptChars`, `runTimeoutSec`, `maxTurns`, `maxEventsPerRun`, `maxEventBytesPerRun`, `previewChars`,
+  `partialMessages`, `runRetentionDays`, `lostGraceSec`, and a widened `permissionMode` enum. The **whole section is
+  GUI-immutable**.
+- **`receptionist.*`**: `webFetch` is `never | allowlist`, with `webFetchAllowDomains`. The web keys, the deny globs and
+  `allowTagconnDocs` are GUI-immutable.
+- **`auth.*`**: GUI-immutable, with the default `protect: all-writes`.
+- **`attribution.*`**: the server-side import settings.
 
-## 7. Settings (all new keys have defaults; see the patch)
-`runner.*`: `token`, `allowedPermissionModes`, `allowedTools`, `disallowedTools`, `maxQueued`, `maxPromptChars`,
-`runTimeoutSec`, `maxTurns`, `maxEventsPerRun`, `maxEventBytesPerRun`, `previewChars`, `partialMessages`,
-`runRetentionDays`, `lostGraceSec`. The **whole `runner` section is GUI-immutable.** New sections: `auth` (GUI-immutable),
-`receptionist` (the web options and deny globs are GUI-immutable; model and limits are editable), and `attribution`.
-Env examples: `OFFICE_RUNNER__TOKEN`, `OFFICE_AUTH__MODE=same-origin`, `OFFICE_RECEPTIONIST__WEB_FETCH=never`.
+## 8. Contract patch (PM applies after review; additive except the tightening of `GUI_IMMUTABLE_SETTINGS`)
+**`index.ts`** append: `export * from './runner.js'; export * from './receptionist.js'; export * from './auth.js'; export * from './attribution.js';`
 
-## 8. Contract patch
-The PM applies this after the review. Everything is additive except the `GUI_IMMUTABLE_SETTINGS` broadening, which only
-tightens.
-
-**`index.ts`**: append
+**`settings.ts`** imports: `AUTH_MODES, AUTH_PROTECT_LEVELS` (auth), `DOMAIN_RE, RUN_MODELS, RUN_PERMISSION_MODES, TOOL_RULE_RE`
+(runner), `ATTRIBUTION_MAX_PROFILE_BYTES` (attribution). Changes to `runner`: `permissionMode` becomes
+`z.enum(RUN_PERMISSION_MODES).default('acceptEdits')`, a widening that keeps existing values valid. Add after
+`allowedProjectDirs`:
 ```ts
-export * from './runner.js';
-export * from './receptionist.js';
-export * from './auth.js';
-export * from './attribution.js';
-```
-
-**`settings.ts`**: add these imports: `AUTH_MODES, AUTH_PROTECT_LEVELS` from `./auth.js`,
-`RUN_MODELS, RUN_PERMISSION_MODES, TOOL_RULE_RE` from `./runner.js`, and `ATTRIBUTION_MAX_PROFILE_BYTES` from
-`./attribution.js`. In `runner`, after `allowedProjectDirs`:
-```ts
-      /** Secret the host runner presents on namespace /runner. Empty = runner connections refused. Masked in the API. */
+      /** Runner shared secret, used only as an HMAC key (never sent). Empty = runner connections refused. Masked. */
       token: z.string().default(''),
-      /** Modes a quest may request (each still capped by the runner's local maxPermissionMode). */
       allowedPermissionModes: z.array(z.enum(RUN_PERMISSION_MODES)).default(['plan', 'default', 'acceptEdits']),
       allowedTools: z.array(z.string().regex(TOOL_RULE_RE)).default([]),
       disallowedTools: z.array(z.string().regex(TOOL_RULE_RE)).default([]),
@@ -405,16 +450,15 @@ export * from './attribution.js';
       runRetentionDays: z.number().int().min(1).default(30),
       lostGraceSec: z.number().int().min(5).max(600).default(30),
 ```
-New sections, after `runner`:
+New sections after `runner`:
 ```ts
   receptionist: z.object({
       enabled: z.boolean().default(true),
       model: z.enum(RUN_MODELS).default('sonnet'),
       webSearch: z.boolean().default(true),
-      webFetch: z.enum(['never', 'general-only', 'always']).default('general-only'),
-      /** Extra Read(...) deny globs on top of RECEPTIONIST_DENY_READ_GLOBS. */
-      extraDenyReadGlobs: z.array(z.string().regex(/^[^\n\r(),]{1,180}$/)).default([]),
-      /** General scope adds the tagconn repo (read-only) via --add-dir so it can answer tagconn questions. */
+      webFetch: z.enum(['never', 'allowlist']).default('never'),
+      webFetchAllowDomains: z.array(z.string().regex(DOMAIN_RE)).max(50).default([]),
+      extraDenyReadGlobs: z.array(z.string().regex(/^[^\n\r\0(),]{1,180}$/)).default([]),
       allowTagconnDocs: z.boolean().default(true),
       timeoutSec: z.number().int().min(10).max(3_600).default(300),
       maxTurns: z.number().int().min(1).max(100).default(30),
@@ -431,7 +475,6 @@ New sections, after `runner`:
       logPairingCodeOnBoot: z.boolean().default(true),
     }).prefault({}),
   attribution: z.object({
-      /** Server accepts profile imports. README writing is a host-side installer choice (--no-attribution). */
       enabled: z.boolean().default(true),
       autoImport: z.enum(['ask', 'auto', 'off']).default('ask'),
       maxProfileBytes: z.number().int().min(1_024).max(ATTRIBUTION_MAX_PROFILE_BYTES).default(ATTRIBUTION_MAX_PROFILE_BYTES),
@@ -439,61 +482,59 @@ New sections, after `runner`:
     }).prefault({}),
 ```
 `GUI_IMMUTABLE_SETTINGS`: replace `'runner.permissionMode', 'runner.allowedProjectDirs'` with `'runner'`, and add
-`'auth', 'receptionist.webSearch', 'receptionist.webFetch', 'receptionist.extraDenyReadGlobs', 'receptionist.allowTagconnDocs'`.
-No new `RESTART_REQUIRED_SETTINGS` (tokens are read live on every handshake).
+`'auth', 'receptionist.webSearch', 'receptionist.webFetch', 'receptionist.webFetchAllowDomains', 'receptionist.extraDenyReadGlobs', 'receptionist.allowTagconnDocs'`.
+No new restart-required keys.
 
-**`domain.ts`**: `import type { ProjectProfileMeta } from './attribution.js';`, then:
-```ts
-export type SessionOrigin = 'cli' | 'quest';
-// Project:  /** Set when an office profile was imported from .tagconn/office.json (8j). */  profile?: ProjectProfileMeta;
-// Session:  /** Runner run that started this session (8k); absent for manual CLI sessions. */ runId?: string;
-//           origin?: SessionOrigin;
-```
+**`domain.ts`**: `import type { ProjectProfileMeta } from './attribution.js';` and `export type SessionOrigin = 'cli' | 'quest';`.
+Add `Project.profile?: ProjectProfileMeta` and `Session.runId?: string; Session.origin?: SessionOrigin`.
 
-**`socket.ts`**: add type imports from the four files, then:
-```ts
-export interface ServerToClientEvents
-  extends RunsServerToClientEvents, ReceptionistServerToClientEvents, AuthServerToClientEvents, AttributionServerToClientEvents {
-  /* existing members unchanged */
-}
-export interface ClientToServerEvents
-  extends RunsClientToServerEvents, ReceptionistClientToServerEvents, AuthClientToServerEvents, AttributionClientToServerEvents {
-  /* existing members unchanged */
-}
-export type { OfficeHandshakeAuth } from './auth.js';
-// rooms: add  admin: ADMIN_ROOM,   (value import from ./auth.js)
-```
-The server event bus (apps/server, task S2) adds `run.upserted`, `run.event`, `run.linked {runId, sessionId}`,
-`run.heroRequested {runId, sessionId?, role, heroId}`, and `runner.status`.
+**`socket.ts`**: `ServerToClientEvents extends RunsServerToClientEvents, ReceptionistServerToClientEvents, AuthServerToClientEvents, AttributionServerToClientEvents`.
+`ClientToServerEvents extends` the four `*ClientToServerEvents` interfaces. Existing members stay unchanged. Add
+`rooms.admin = ADMIN_ROOM` and re-export `OfficeHandshakeAuth`.
+
+**Server-internal (task owners):**
+- The event bus adds `run.upserted`, `run.event`, `run.linked`, `run.heroRequested` and `runner.status` (S2).
+- `GET /api/health` adds `instanceId` (S1).
 
 ## 9. Work breakdown
-The parallel tasks own disjoint files. The PM pre-assigns the DB migration numbers (S1=N, S2=N+1, S3=N+2, S4=N+3) and does
-the one `app.ts` registration commit (all four plugins, initially stubbed), so no two tasks share a file.
+The PM pre-assigns migration numbers (S1=N ... S4=N+3) and makes the single `app.ts` registration commit.
 
 | id | role | owns | deps | acceptance |
 |---|---|---|---|---|
-| C0 | PM | `packages/shared/src/{index,settings,domain,socket}.ts` | review | Patch applied; `pnpm typecheck` green; defaults parse; `runner.token` in the masking list (see S1) |
-| S1 | developer (server) | `modules/auth/**`, `core/http/admin.ts`, `core/realtime/admin-guard.ts`, small registration edits in `core/http/index.ts` + `core/realtime/index.ts`, `modules/settings/settings.public.ts` (mask `runner.token`), migration N | C0 | 5.2/5.3 implemented; boot logs a pairing URL when there are no sessions; tests 5.4 #1-#6 and #8 pass; existing security tests pass using a `adminHeaders()` test helper in `test/helpers.ts` (S1 owns that edit) |
-| S2 | developer (server) | `modules/runs/**`, `core/redact/**`, migration N+1 | C0, S1 (`admin.ts` API only; stub on day 1) | Namespace auth (test 5.4 #7); queue/concurrency; reconcile and `lost`; `(runId,seq)` dedupe; every event string redacted; caps; REST+socket per contract; the `RunDispatcher` and `runLinker` are in DI; tests use a fake runner socket |
-| S3 | developer (server) | `modules/receptionist/**`, migration N+2 | C0, S2 (DI port only) | One turn per conversation; resume via stored sessionId; bounded history and eviction; `readOnly:true`, `plan`, tool lists from constants + settings; webFetch scope rule tested |
-| S4 | developer (server) | `modules/attribution/**`, migration N+3 (`projects.profile`, `pending_profile_imports`) | C0, S1 | Import rules in 6.3 (unknown/stale session, already configured, ask/auto/off, oversized to 413, host path to rejected); export has no absolute paths; save goes through `attribution:write` |
-| S5 | developer (server) | `modules/ingest/**` (read `RUN_ID_HEADER`), `modules/sessions/**` (`runId`, `origin` from `run.linked`) | S2, **8a merged** | Hint links only a matching non-terminal unlinked run; `init` overrides; a forged header on an unknown run is ignored |
-| R1 | developer (runner) | `apps/runner/**` (incl. `contrib/tagconn-runner.service`) | C0 | 2.1-2.5 and 4.2; unit tests: argv builder (stdin prompt, csv lists, receptionist lists ignore server allowlist), realpath allowlist (symlink escape, `..`, prefix `/a/b` vs `/a/bc`), mode cap, env strip, stream parser against captured stream-json fixtures, caps, SIGTERM then SIGKILL of the process group, watchdog `policy_violation`, bwrap argv, offline buffer and replay |
-| I1 | developer (infra) | `packages/hook/office-hook.sh`, `scripts/install.ts`, `scripts/doctor.ts`, `scripts/pair.ts` (new), `packages/agent-templates/attribution/README.md.tmpl`, `packages/agent-templates/skills/tagconn-save/SKILL.md`, root `package.json` (`office:runner`, `office:pair`), `.env.example` | C0 | The hook still always exits 0 with no stdout (existing tests plus new ones: README only in owned git repos, never in `$HOME` or `/`, never over an existing file or symlink, receptionist env skips everything, import runs in the background with a size cap, run-id header only for UUIDs); installer writes `runner.json`/`attribution*` (0600) and `--runner-allow`/`--no-attribution` in a sandboxed `--claude-dir`/`--config-dir`; uninstall removes them; doctor reports runner and pairing |
-| W1 | developer (web) | `apps/web/src/lib/auth.ts` (new), `lib/socket.ts`, the REST client in `lib/`, `stores/authStore.ts`, `features/auth/**` | C0, S1 | Reads and clears `#pair=`, pair dialog, token in the handshake and header, 401 / `auth:changed` clears it, session list and revoke |
-| W2 | developer (web) | `features/quests/**`, `stores/runsStore.ts` | W1 | Section 3 UX; transcript virtualized; markdown sanitized; quota note; offline and locked states; the demo mode (`?demo=1`) has a scripted fake quest |
-| W3 | developer (web) | `features/receptionist/**`, `stores/receptionistStore.ts`, `game/npc/receptionist.ts` (new file only) | W1 | Section 4.1; sandbox label; NPC activity from `run:event`. **W3b** (scene wiring in `game/**`) comes after the living-office game work merges |
-| W4 | developer (web) | `features/settings/**` (`SECTION_LABELS` for receptionist/auth/attribution, read-only rendering of GUI-immutable keys), `features/attribution/**` (pending toast, "Save profile" menu entry) | C0, S4 | New sections render; immutable keys are shown disabled with "set in office.yaml / env" |
-| D1 | developer (infra) | `docker/nginx.conf`, `docker-compose.yml` (only if needed) | none | CSP and security headers from 5.3; the app works under CSP (Phaser, blob textures, websocket) |
-| Q1 | qa-engineer | `apps/server/test/security/m8-*.test.ts`, `apps/runner/test/e2e/**` | S1-S4, R1 | All of 5.4 plus an end-to-end run with a **fake `claude` binary** (a shell script emitting the fixture stream-json) through runner, server and socket; a manual smoke test with the real CLI in a sandboxed project dir |
-| DOC | PM | `docs/architecture.md`, `docs/decisions.md` (16: runner stdin + host-authority; 17: pairing admin auth, superseding 12; 18: receptionist layers; 19: attribution files), `ROADMAP.md`, `CLAUDE.md` security section | all | Docs match the code |
+| C0 | PM | `packages/shared/src/{index,settings,domain,socket}.ts` | SC1 done | Patch applied, `pnpm typecheck` green |
+| S1 | dev server | `modules/auth/**`, `core/http/admin.ts`, `core/realtime/admin-guard.ts`, registration lines in `core/http/index.ts` and `core/realtime/index.ts`, `modules/settings/settings.public.ts` (mask `runner.token`), `modules/health/**` (`instanceId`), `test/helpers.ts` (`adminHeaders()`), migration N; **plus adding `config.access` to every existing route** (settings, roles, layouts, hooks, health...) | C0 | Section 5 complete; boot fails on a route without an access level; tests 5.4 #1-6 and #8; existing tests green |
+| S2 | dev server | `modules/runs/**`, `core/redact/**`, migration N+1 | C0, S1 (`admin.ts` API, stub on day 1) | HMAC namespace (test #7); queue; reconcile; runnerId ownership; dedupe; server caps; redaction; resume only within a thread; `RunDispatcher`/`runLinker` in DI |
+| S3 | dev server | `modules/receptionist/**`, migration N+2 | S2 port | One turn per conversation; resume from the stored runner session; project scope only for registered projects inside allowed dirs; webFetch domains from settings; eviction bounds |
+| S4 | dev server | `modules/attribution/**`, migration N+3 | C0, S1 | Section 6.3, including `no-hook-token`, roles only referenced (never created), `projectCwd` and `unknownRoles` in pending; save only through the runner |
+| S5 | dev server | `modules/ingest/**`, `modules/sessions/**` | S2, **8a merged** | Hint and `init` linking rules in 2.6 |
+| R1 | dev runner | `apps/runner/**` | C0, **SC3 results** for the TBD items | Sections 2.1-2.5, 4.2, 4.3. Unit tests: HMAC both directions (bad server proof leads to a disconnect and no `run:start` handled); argv builder (`--flag=value`, stdin, `--` fallback, NUL rejected, receptionist ignores server allow/mode/prompt); realpath and trust checks (symlink escape, `/a/b` vs `/a/bc`); tool policy (Bash refused unless local; `alwaysDeny` appended); session ledger; env allowlist and `passEnv`; stream parser on fixtures; all buffer bounds; kill of the process group or scope; exact-set watchdog; bwrap argv snapshot; docs copy without symlinks |
+| I1 | dev infra | `packages/hook/office-hook.sh`, `scripts/{install,doctor,pair}.ts`, `packages/agent-templates/attribution/README.md.tmpl`, `packages/agent-templates/skills/tagconn-save/SKILL.md`, root `package.json` (`office:runner`, `office:pair`), `.env.example` | C0 | The hook still always exits 0 with no stdout; attribution work runs in the background with the `head -c` cap; README only in owned git repos, never in `$HOME` or `/`, never over an existing file or symlink; receptionist env skips everything. The installer asks before README writes (default N), writes `runner.json`, generates the token, handles `--runner-allow`, and warns about broad parents; tested with a sandboxed `--claude-dir`/`--config-dir`. `pair.ts` does the HMAC flow plus the instanceId check through :4318. Doctor reports runner, pairing, the squatter check and broad dirs |
+| W1 | dev web | `lib/auth.ts`, `lib/socket.ts`, the REST client in `lib/`, `stores/authStore.ts`, `features/auth/**` | C0, S1 | Handles `#pair=` (then clears it), the handshake token and header, clears the token on 401 or `auth:changed`, session list and revoke, the "admin = code execution" copy |
+| W2 | dev web | `features/quests/**`, `stores/runsStore.ts`, `lib/markdown.ts` (the sanitized renderer, shared with W3) | W1 | Section 3 incl. the markdown rules, rejection guidance and the demo quest |
+| W3 | dev web | `features/receptionist/**`, `stores/receptionistStore.ts`, `game/npc/receptionist.ts` (new file) | W1, W2 (`markdown.ts`) | Section 4.1, the sandbox and flags label. **W3b** (scene wiring) comes after the living-office game work |
+| W4 | dev web | `features/settings/**`, `features/attribution/**`, `apps/web/vite.config.ts` (CSP via `server.headers`) | C0, S4 | New sections render; immutable keys are shown read-only; the pending toast shows the repo path and unknown roles; the app works under CSP in dev |
+| D1 | dev infra | `docker/nginx.conf` | none | CSP and headers from 5.3, `no-store` on `/api/auth/`; the app works (Phaser, blob textures, websocket) |
+| Q1 | qa | `apps/server/test/security/m8-*.test.ts`, `apps/runner/test/e2e/**` | S1-S4, R1 | All of 5.4; end to end with a fake `claude` script (runner, server, socket); real-CLI smoke test in a sandboxed dir |
+| DOC | PM | `docs/architecture.md`, `docs/decisions.md` (16 runner: host authority, HMAC, stdin; 17 pairing admin auth, superseding 12; 18 receptionist layers; 19 attribution opt-in), `ROADMAP.md`, `CLAUDE.md` security section | all | Docs match the code |
 
-**Security review checkpoints:** SC1: this design, before C0. SC2: S1+S2 merged (auth, the runner namespace, redaction).
-SC3: R1 (argv, env, realpath, bwrap probe, watchdog), which needs a **real-CLI** check that plan mode plus the deny lists
-block Edit/Write/Bash, that `init.tools` reflects the deny list, and that `--setting-sources user` skips project hooks.
-SC4: I1 (the hook writing into repos, the installer secrets). SC5: 8g full review before v0.3.0.
+Security checkpoints:
+- **SC1:** done (this rev).
+- **SC2:** S1+S2 merged.
+- **SC3:** in progress (QA, empirical CLI V1-V16). **R1 must not finalize its argv and bwrap binds before SC3.**
+- **SC4:** I1 (hook writes, installer secrets, pairing).
+- **SC5:** 8g before v0.3.0.
 
-**Open questions for SC1:** (1) Should `protect` default to `all-writes`? It changes existing tests and the dev UX (a one-time
-pairing), but it closes T3 and T4 for role sync. Recommended: yes. (2) Should project-scope Receptionist be allowed on
-`readOnlyProjectDirs` that are wider than `allowedProjectDirs`? (3) Is `WebFetch` in the general scope acceptable given the
-LAN SSRF residual risk, or should the default be `never`?
+## 10. TBD by SC3 (to finalize when the results arrive)
+1. Headless behavior of `--permission-mode=plan` vs `dontAsk` for the Receptionist (ExitPlanMode loops?), and whether
+   `dontAsk` should be the quest default.
+2. Whether `init.tools` reflects `--tools` exactly (the L5 exact-equality check depends on it), and how names look.
+3. `--restricted`: its exact scope (cwd plus `--add-dir` confinement, exec removal, ignored settings, protected files) and
+   whether it composes with `--resume` and `--tools`.
+4. `--safe-mode`: whether it composes with `--resume` and `--tools`, and whether it is usable for project scope.
+5. `--permission-prompts=none` with `WebFetch(domain:x)` allow rules: are other domains denied?
+6. Trust: whether the `hasTrustDialogAccepted` key and parent-dir or worktree inheritance hold for the realpath.
+7. The bwrap rw set: the transcript dir key format, todos and state dirs, whether `.credentials.json` must be rw for OAuth
+   refresh, and whether `~/.claude.json` tolerates EROFS or needs the disposable copy.
+8. Whether stdin prompts work with `-p` plus stream-json, and whether `--flag=value` parses for every flag used.
+9. Whether `--help` exposes the list of accepted permission modes (otherwise a probe run is needed).
+10. Whether `--resume` keeps the same session id or forks, which affects the ledger and `Session.runId` updates.
