@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Project, Settings, OfficeLayout } from '@tagconn/shared';
-import { OfficeGame, type OfficeState } from '../../game/OfficeGame';
+import { OfficeGame, officeNavBus, type FloorNavDirection, type OfficeState } from '../../game/OfficeGame';
 import { getTheme } from '../../game/themes';
 import { ALL_FLOORS, onFloor, useOfficeStore } from '../../stores/officeStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useFloorAgents } from '../../lib/hooks';
-import { firstFloor, floorNeighbors, floorsInOrder, isTypingTarget, lastFloor, neighborFloor } from '../../lib/floors';
+import { firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isTypingTarget, lastFloor, neighborFloor } from '../../lib/floors';
 import { layoutForProject, useLayoutStore } from '../../stores/layoutStore';
 import { ZERO_INSETS, insetsFromOverlay } from '../../game/camera/insets';
 import { Roster } from './Roster';
@@ -68,13 +68,22 @@ function floorLabelFor(project: Project, index: number, layouts: Record<string, 
   return getTheme(layout.style ?? settings.office.style).floorLabel(index, project.name);
 }
 
+/**
+ * True when a floor change may proceed: not already mid-transition (bug: re-entrancy would stack
+ * fades), and the Hall Planner editor (or any other full-screen modal) isn't covering the screen
+ * (bug: PageUp/PageDown/Home/End/F and stairs clicks used to fire underneath it).
+ */
+function canNavigateFloors(game: OfficeGame | null): boolean {
+  return !isModalOpen() && !game?.isTransitioning;
+}
+
 /** Runs the stairs transition (fade via the scene), then re-selects the floor and toasts its label. */
-async function goToFloor(game: OfficeGame | null, target: Project, ms: number, layouts: Record<string, OfficeLayout>, settings: Settings, showToast: (s: string) => void) {
+async function goToFloor(game: OfficeGame | null, target: Project, ms: number, layouts: Record<string, OfficeLayout>, settings: Settings, showToast: (s: string) => void, dir?: FloorNavDirection) {
   const order = floorsInOrder(Object.values(useOfficeStore.getState().projects), settings.office.floorOrder);
   const index = order.findIndex((p) => p.id === target.id);
   const label = floorLabelFor(target, index, layouts, settings);
   const select = () => useOfficeStore.getState().selectProject(target.id);
-  if (game) await game.transitionFloor(ms, select);
+  if (game) await game.transitionFloor(ms, select, dir);
   else select();
   showToast(label);
 }
@@ -135,6 +144,7 @@ export function OfficeView({ active }: { active: boolean }) {
   useEffect(() => {
     if (!game) return;
     return game.on('stairs', (dir) => {
+      if (!canNavigateFloors(game)) return;
       const { projects, selectedProjectId } = useOfficeStore.getState();
       const { settings } = useSettingsStore.getState();
       if (selectedProjectId === ALL_FLOORS) {
@@ -145,37 +155,56 @@ export function OfficeView({ active }: { active: boolean }) {
       const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, selectedProjectId);
       const target = neighborFloor(order, selectedProjectId, dir);
       if (!target) return;
-      void goToFloor(game, target, settings.office.floorTransitionMs, layouts, settings, showToast);
+      void goToFloor(game, target, settings.office.floorTransitionMs, layouts, settings, showToast, dir);
     });
   }, [game]);
 
-  // Global hotkeys (ignored while typing, or with a modifier held so Ctrl+F/Cmd+F still finds text).
+  // The top bar's floor up/down buttons (docs/design/guild-hall.md section 6, item 7g): the same
+  // animated transition as the stairs, reached through a small command bus so `TopBar` doesn't need
+  // the game instance — this effect is its one subscriber, sharing the guards below.
+  useEffect(() => {
+    return officeNavBus.onFloorNavRequest((dir) => {
+      if (!canNavigateFloors(game)) return;
+      const { projects, selectedProjectId } = useOfficeStore.getState();
+      const { settings } = useSettingsStore.getState();
+      if (selectedProjectId === ALL_FLOORS) return;
+      const layouts = useLayoutStore.getState().layouts;
+      const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, selectedProjectId);
+      const target = neighborFloor(order, selectedProjectId, dir);
+      if (!target) return;
+      void goToFloor(game, target, settings.office.floorTransitionMs, layouts, settings, showToast, dir);
+    });
+  }, [game]);
+
+  // Global hotkeys (ignored while typing, with a modifier held so Ctrl+F/Cmd+F still finds text,
+  // mid-transition, or while a modal — the Hall Planner editor — covers the screen).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return;
       if (!['PageUp', 'PageDown', 'Home', 'End', 'f', 'F'].includes(e.key)) return;
+      if (!canNavigateFloors(game)) return;
       const { projects, selectedProjectId } = useOfficeStore.getState();
       const { settings } = useSettingsStore.getState();
       const layouts = useLayoutStore.getState().layouts;
       const allFloors = selectedProjectId === ALL_FLOORS;
       const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, allFloors ? undefined : selectedProjectId);
-      const go = (target: Project | undefined) => {
+      const go = (target: Project | undefined, dir?: FloorNavDirection) => {
         if (!target) return;
         e.preventDefault();
-        void goToFloor(game, target, settings.office.floorTransitionMs, layouts, settings, showToast);
+        void goToFloor(game, target, settings.office.floorTransitionMs, layouts, settings, showToast, dir);
       };
       switch (e.key) {
         case 'PageUp':
-          go(allFloors ? firstFloor(order) : neighborFloor(order, selectedProjectId, 'up'));
+          go(allFloors ? firstFloor(order) : neighborFloor(order, selectedProjectId, 'up'), 'up');
           break;
         case 'PageDown':
-          go(allFloors ? firstFloor(order) : neighborFloor(order, selectedProjectId, 'down'));
+          go(allFloors ? firstFloor(order) : neighborFloor(order, selectedProjectId, 'down'), 'down');
           break;
         case 'Home':
-          go(firstFloor(order));
+          go(firstFloor(order), 'down');
           break;
         case 'End':
-          go(lastFloor(order));
+          go(lastFloor(order), 'up');
           break;
         case 'f':
         case 'F':

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Project } from '@tagconn/shared';
-import { firstFloor, floorNeighbors, floorsInOrder, isTypingTarget, lastFloor, neighborFloor } from './floors';
+import { firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isTypingTarget, lastFloor, neighborFloor } from './floors';
 
 function project(id: string, overrides: Partial<Project> = {}): Project {
   return { id, cwd: `/code/${id}`, name: id, archived: false, createdAt: 0, lastActivityAt: 0, ...overrides };
@@ -88,5 +88,19 @@ describe('isTypingTarget', () => {
   it('does not flag a button or a plain div', () => {
     expect(isTypingTarget({ tagName: 'BUTTON', isContentEditable: false } as unknown as EventTarget)).toBe(false);
     expect(isTypingTarget({ tagName: 'DIV', isContentEditable: false } as unknown as EventTarget)).toBe(false);
+  });
+});
+
+describe('isModalOpen', () => {
+  // The test environment has no DOM (`environment: 'node'`), so this takes an injectable `doc` —
+  // the same reason the real caller can pass the real `document` without a dependency edge here.
+  const fakeDoc = (found: boolean): Document => ({ querySelector: () => (found ? ({} as Element) : null) }) as unknown as Document;
+
+  it('is false with no [aria-modal] or [data-modal] element on the page', () => {
+    expect(isModalOpen(fakeDoc(false))).toBe(false);
+  });
+
+  it('is true while the Hall Planner (or any [data-modal]/[aria-modal="true"]) is open', () => {
+    expect(isModalOpen(fakeDoc(true))).toBe(true);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, insetsFromOverlay, safeViewportRect } from '../insets';
+import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, insetsFromOverlay, safeViewportRect, type SafeInsets } from '../insets';
+import { centerOn, screenToWorld } from './phaserCameraModel';
 
 describe('safeViewportRect', () => {
   it('subtracts each edge inset from the camera rect', () => {
@@ -51,6 +52,48 @@ describe('clampScrollToSafeBounds', () => {
     const { scrollX } = clampScrollToSafeBounds(-99999, 0, { ...base, margin: 24 });
     expect(scrollX).toBeCloseTo(-24);
   });
+
+  // Regression for the "Fit" bug: `fitCamera` calls Phaser's own (zoom-independent) `cam.centerOn`
+  // and then `clampCamera`. When the world exactly fills the safe rect (as it does right at the fit
+  // zoom — a 128x96 layout in an 800x600 viewport hits this at zoom ~0.39), the clamp's pan bounds
+  // collapse to a single point, so its result depends *entirely* on getting the world-point-at-the-
+  // safe-rect-center conversion right — this is what actually exposed the bug: a stale formula that
+  // divided the whole conversion by zoom (instead of just the part beyond the viewport's own,
+  // zoom-independent center) landed on the wrong point and silently un-centered the map.
+  for (const zoom of [1, 0.5, 4, 8]) {
+    it(`reconstructs the exact center when the world fills the safe rect, at zoom ${zoom}`, () => {
+      const worldW = base.camWidth / zoom; // world == safe rect exactly -> clamp bounds collapse to a point
+      const worldH = base.camHeight / zoom;
+      const centered = centerOn(base.camWidth, base.camHeight, worldW / 2, worldH / 2);
+      const clamped = clampScrollToSafeBounds(0, 0, { ...base, zoom, worldW, worldH }); // any input scroll -> same forced result
+      expect(clamped.scrollX).toBeCloseTo(centered.scrollX);
+      expect(clamped.scrollY).toBeCloseTo(centered.scrollY);
+    });
+  }
+
+  it('collapses to the safe rect (not the raw viewport) center when insets are open, at a high zoom', () => {
+    const insets = { ...ZERO_INSETS, right: 300 };
+    const zoom = 6;
+    const safe = safeViewportRect(base.camWidth, base.camHeight, insets);
+    const worldW = safe.w / zoom;
+    const worldH = safe.h / zoom;
+    const wantScroll = centerInSafeRect(worldW / 2, worldH / 2, base.camWidth, base.camHeight, zoom, insets);
+    const clamped = clampScrollToSafeBounds(0, 0, { ...base, zoom, worldW, worldH, insets });
+    expect(clamped.scrollX).toBeCloseTo(wantScroll.scrollX);
+    expect(clamped.scrollY).toBeCloseTo(wantScroll.scrollY);
+  });
+
+  it('a 128x96 layout (2048x1536 world px at the 16px tile size) fits and centers in an 800x600 viewport', () => {
+    // The exact repro from the bug report: same aspect ratio as the viewport (4:3), so both axes
+    // hit their fit-zoom bound together — a 128x96 layout is where the crop was "dramatic".
+    const worldW = 128 * 16;
+    const worldH = 96 * 16;
+    const fitZoom = Math.min(base.camWidth / worldW, base.camHeight / worldH);
+    const centered = centerOn(base.camWidth, base.camHeight, worldW / 2, worldH / 2);
+    const clamped = clampScrollToSafeBounds(centered.scrollX, centered.scrollY, { ...base, zoom: fitZoom, worldW, worldH });
+    expect(clamped.scrollX).toBeCloseTo(centered.scrollX);
+    expect(clamped.scrollY).toBeCloseTo(centered.scrollY);
+  });
 });
 
 describe('centerInSafeRect', () => {
@@ -67,11 +110,47 @@ describe('centerInSafeRect', () => {
     expect(scrollX).toBeCloseTo(500 - 250);
   });
 
-  it('accounts for zoom', () => {
-    const { scrollX, scrollY } = centerInSafeRect(500, 400, 800, 600, 2, ZERO_INSETS);
-    expect(scrollX).toBeCloseTo(500 - 200);
-    expect(scrollY).toBeCloseTo(400 - 150);
-  });
+  // Regression for the M7 bug: at zoom !== 1, a stale formula divided the *whole* screen-center
+  // offset by zoom, instead of just the delta beyond the viewport's own (zoom-independent) center.
+  // With zero insets the safe rect *is* the viewport, so this must match Phaser's own
+  // `Camera#centerOn` exactly, at every zoom — that's the case `focusAgent`'s "6-8x zoom centers on
+  // the wrong place" bug was really hitting.
+  for (const zoom of [1, 0.5, 4, 8]) {
+    it(`matches Phaser's own centerOn with no insets, at zoom ${zoom}`, () => {
+      const camWidth = 800;
+      const camHeight = 600;
+      const got = centerInSafeRect(500, 400, camWidth, camHeight, zoom, ZERO_INSETS);
+      const want = centerOn(camWidth, camHeight, 500, 400);
+      expect(got.scrollX).toBeCloseTo(want.scrollX);
+      expect(got.scrollY).toBeCloseTo(want.scrollY);
+    });
+  }
+
+  // With insets, only the part of the safe-rect center beyond the viewport's own center is a real
+  // screen-space distance — verified against the pure Phaser model by round-tripping: scroll to
+  // center world point (x, y) in the safe rect, then read back the world point Phaser would show at
+  // the safe rect's own screen center. It must be (x, y) again, at every zoom.
+  const insetCases: { label: string; insets: SafeInsets }[] = [
+    { label: 'no insets', insets: ZERO_INSETS },
+    { label: 'a right-docked panel', insets: { ...ZERO_INSETS, right: 300 } },
+    { label: 'a bottom sheet', insets: { ...ZERO_INSETS, bottom: 200 } },
+    { label: 'top + left insets', insets: { top: 50, left: 120, right: 0, bottom: 0 } },
+  ];
+  for (const zoom of [1, 0.5, 4, 8]) {
+    for (const { label, insets } of insetCases) {
+      it(`round-trips through the safe rect's screen center at zoom ${zoom} (${label})`, () => {
+        const camWidth = 800;
+        const camHeight = 600;
+        const x = 500;
+        const y = 400;
+        const { scrollX, scrollY } = centerInSafeRect(x, y, camWidth, camHeight, zoom, insets);
+        const safe = safeViewportRect(camWidth, camHeight, insets);
+        const back = screenToWorld({ scrollX, scrollY, zoom, camWidth, camHeight }, safe.x + safe.w / 2, safe.y + safe.h / 2);
+        expect(back.x).toBeCloseTo(x);
+        expect(back.y).toBeCloseTo(y);
+      });
+    }
+  }
 });
 
 describe('insetsFromOverlay', () => {

@@ -9,7 +9,7 @@ import { generateTextures } from '../textures';
 import { resolveCostume, resolveTitle } from '../lookResolver';
 import { getTheme, paintCostumeTextures, prefersReducedMotion, renderGeneratedMap, themedBubble, THEME_BASE_TEXTURE, type ThemeDefinition } from '../themes';
 import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets } from '../camera/insets';
-import { zoomAboutPoint } from '../camera/zoom';
+import { zoomCameraAboutPoint } from '../camera/zoom';
 import { isDragMove } from '../camera/drag';
 
 /** A neighboring floor reachable by the stairs, with its display label pre-formatted by the theme. */
@@ -62,9 +62,13 @@ export class OfficeScene extends Phaser.Scene {
   private theme!: ThemeDefinition;
   private finder!: PathFinder;
   private seats!: SeatAllocator;
-  /** Static world art (base texture, room labels, theme decor/animation) — rebuilt on any geometry
-   *  or style change and never touched by anything else. */
+  /** Static world art (base texture, room labels) — rebuilt on any geometry or style change and
+   *  never touched by anything else. */
   private worldLayer: Phaser.GameObjects.GameObject[] = [];
+  /** `theme.animate()`'s objects (torches, motes, ...) — split out from `worldLayer` so toggling
+   *  `office.ambientEffects` can refresh just these live, without a geometry rebuild (bug: it used
+   *  to take effect only after the next rebuild/reskin). */
+  private ambientLayer: Phaser.GameObjects.GameObject[] = [];
   private stairsSprites: StairsSprite[] = [];
   private tooltip!: Phaser.GameObjects.Text;
   private characters = new Map<string, Character>();
@@ -85,6 +89,11 @@ export class OfficeScene extends Phaser.Scene {
   private insetsTween?: Phaser.Tweens.Tween;
   /** Agent id the camera keeps centered while it moves, or null when nothing is being followed. */
   private followId: string | null = null;
+  /** Zoom/scroll saved by `runTransition` so `finishTransition` can restore them instead of leaving
+   *  the +6% transition bump applied forever (docs/design/guild-hall.md section 6). `null` when no
+   *  transition is in flight. */
+  private preTransitionZoom: number | null = null;
+  private preTransitionScrollY: number | null = null;
   private endDragOnBlur = () => {
     this.drag = null;
   };
@@ -178,8 +187,15 @@ export class OfficeScene extends Phaser.Scene {
       this.worldLayer.push(label);
     }
 
+    this.refreshAmbient();
+  }
+
+  /** (Re)runs `theme.animate()` alone — used on a full `renderVisuals()` pass and, live, whenever
+   *  `office.ambientEffects` changes (bug fix: it used to need a rebuild/reskin to take effect). */
+  private refreshAmbient() {
+    for (const o of this.ambientLayer) o.destroy();
     const ambient = this.state?.settings.office.ambientEffects ?? true;
-    this.worldLayer.push(...this.theme.animate(this, this.map, { ambient }));
+    this.ambientLayer = this.theme.animate(this, this.map, { ambient });
   }
 
   // ---------------------------------------------------------------- stairs
@@ -234,27 +250,64 @@ export class OfficeScene extends Phaser.Scene {
 
   /**
    * The stairs transition (docs/design/guild-hall.md section 6): fade the camera out (with a
-   * slight zoom-in), resolve so the caller can swap floors, then the caller calls `finishTransition`
-   * to fade back in. Instant (no visual) under reduced motion or `ms <= 0`.
+   * slight zoom-in and a 12px directional scroll), resolve so the caller can swap floors, then the
+   * caller calls `finishTransition` to fade back in. Instant (no visual) under reduced motion or
+   * `ms <= 0`. `dir` is which way the viewer is climbing, for the directional scroll only — omit it
+   * for a jump that isn't "up" or "down" (e.g. the floor picker).
    */
-  runTransition(ms: number): Promise<void> {
+  runTransition(ms: number, dir?: 'up' | 'down'): Promise<void> {
     this.inputLocked = true;
-    if (prefersReducedMotion() || ms <= 0) return Promise.resolve();
     const cam = this.cameras.main;
+    // Saved so `finishTransition` can restore them instead of leaving the bump/nudge applied.
+    this.preTransitionZoom = cam.zoom;
+    this.preTransitionScrollY = cam.scrollY;
+    if (prefersReducedMotion() || ms <= 0) return Promise.resolve();
     const half = Math.max(1, Math.floor(ms / 2));
     const c = this.theme.palette.transition;
-    this.tweens.add({ targets: cam, zoom: cam.zoom * 1.06, duration: half, ease: 'Sine.easeIn' });
+    const shift = dir === 'up' ? -12 : dir === 'down' ? 12 : 0;
+    this.tweens.add({
+      targets: cam,
+      zoom: cam.zoom * 1.06,
+      scrollY: cam.scrollY + shift,
+      duration: half,
+      ease: 'Sine.easeIn',
+      onUpdate: () => this.clampCamera(),
+    });
     return new Promise((resolve) => {
       cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => resolve());
       cam.fadeOut(half, (c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff);
     });
   }
 
-  finishTransition(ms: number) {
+  /** Fades back in, restoring the zoom/scroll `runTransition` saved (from the opposite scroll
+   *  offset, so the 12px nudge reads as a single continuous motion). `onComplete` fires once the
+   *  fade-in has actually finished (immediately under reduced motion or `ms <= 0`) — the host uses
+   *  it to release its own re-entrancy lock. */
+  finishTransition(ms: number, dir?: 'up' | 'down', onComplete?: () => void) {
     this.inputLocked = false;
-    if (prefersReducedMotion() || ms <= 0) return;
+    const cam = this.cameras.main;
+    const zoom = this.preTransitionZoom;
+    const scrollY = this.preTransitionScrollY;
+    this.preTransitionZoom = null;
+    this.preTransitionScrollY = null;
+    if (zoom !== null) cam.setZoom(zoom);
+    if (prefersReducedMotion() || ms <= 0) {
+      if (scrollY !== null) {
+        cam.setScroll(cam.scrollX, scrollY);
+        this.clampCamera();
+      }
+      onComplete?.();
+      return;
+    }
     const half = Math.max(1, Math.floor(ms / 2));
-    this.cameras.main.fadeIn(half);
+    if (scrollY !== null) {
+      const shift = dir === 'up' ? -12 : dir === 'down' ? 12 : 0;
+      cam.setScroll(cam.scrollX, scrollY - shift);
+      this.clampCamera();
+      this.tweens.add({ targets: cam, scrollY, duration: half, ease: 'Sine.easeOut', onUpdate: () => this.clampCamera() });
+    }
+    if (onComplete) cam.once(Phaser.Cameras.Scene2D.Events.FADE_IN_COMPLETE, onComplete);
+    cam.fadeIn(half);
   }
 
   // ---------------------------------------------------------------- camera
@@ -290,7 +343,7 @@ export class OfficeScene extends Phaser.Scene {
       this.userZoom = Phaser.Math.Clamp(this.userZoom * (dy > 0 ? 0.88 : 1.12), 0.4, 6);
       const newZoom = this.targetZoom();
       cam.setZoom(newZoom);
-      const { scrollX, scrollY } = zoomAboutPoint({ pointerX: p.x, pointerY: p.y, scrollX: cam.scrollX, scrollY: cam.scrollY, oldZoom, newZoom });
+      const { scrollX, scrollY } = zoomCameraAboutPoint({ pointerX: p.x, pointerY: p.y, scrollX: cam.scrollX, scrollY: cam.scrollY, oldZoom, newZoom, camWidth: cam.width, camHeight: cam.height });
       cam.setScroll(scrollX, scrollY);
       this.panned = true;
       this.clampCamera();
@@ -410,6 +463,7 @@ export class OfficeScene extends Phaser.Scene {
 
   setOfficeState(state: OfficeState) {
     const prevZoom = this.state?.settings.office.zoom;
+    const prevAmbient = this.state?.settings.office.ambientEffects;
     this.state = state;
     const office = state.settings.office;
     const effectiveStyle = state.layout.style ?? state.style;
@@ -422,6 +476,10 @@ export class OfficeScene extends Phaser.Scene {
       this.buildWorld(state.layout, effectiveStyle);
     } else if (reskin) {
       this.applySkin(effectiveStyle);
+    } else if (prevAmbient !== undefined && prevAmbient !== office.ambientEffects) {
+      // Bug fix: the ambient toggle used to only take effect on the next rebuild/reskin. Refresh
+      // just the theme's animated objects — no geometry rebuild — when only this flag changed.
+      this.refreshAmbient();
     }
     this.refreshStairsAvailability();
     if (prevZoom !== office.zoom) this.fitCamera();

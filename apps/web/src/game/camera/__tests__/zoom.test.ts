@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { clampScrollToSafeBounds, ZERO_INSETS } from '../insets';
-import { zoomAboutPoint } from '../zoom';
+import { zoomAboutPoint, zoomCameraAboutPoint } from '../zoom';
+import { screenToWorld } from './phaserCameraModel';
 
 describe('zoomAboutPoint', () => {
   it('keeps the world point under the cursor fixed when zooming in', () => {
@@ -32,6 +33,65 @@ describe('zoomAboutPoint', () => {
     const clamped = clampScrollToSafeBounds(zoomed.scrollX, zoomed.scrollY, {
       camWidth: 800,
       camHeight: 600,
+      zoom: 1.5,
+      worldW: 2000,
+      worldH: 2000,
+      insets: { ...ZERO_INSETS, right: 300 },
+    });
+    expect(Number.isFinite(clamped.scrollX)).toBe(true);
+    expect(Number.isFinite(clamped.scrollY)).toBe(true);
+  });
+});
+
+describe('zoomCameraAboutPoint', () => {
+  const CAM = { camWidth: 800, camHeight: 600 };
+
+  it('keeps the world point under the cursor fixed when zooming in', () => {
+    const before = { pointerX: 300, pointerY: 200, scrollX: 0, scrollY: 0, oldZoom: 1, newZoom: 2, ...CAM };
+    const worldBefore = screenToWorld({ scrollX: before.scrollX, scrollY: before.scrollY, zoom: before.oldZoom, ...CAM }, before.pointerX, before.pointerY);
+    const { scrollX, scrollY } = zoomCameraAboutPoint(before);
+    const worldAfter = screenToWorld({ scrollX, scrollY, zoom: before.newZoom, ...CAM }, before.pointerX, before.pointerY);
+    expect(worldAfter.x).toBeCloseTo(worldBefore.x);
+    expect(worldAfter.y).toBeCloseTo(worldBefore.y);
+  });
+
+  it('is a no-op when zoom does not change', () => {
+    const input = { pointerX: 50, pointerY: 50, scrollX: 10, scrollY: 20, oldZoom: 1.5, newZoom: 1.5, ...CAM };
+    expect(zoomCameraAboutPoint(input)).toEqual({ scrollX: 10, scrollY: 20 });
+  });
+
+  // Regression: the office scene used to call the plain `zoomAboutPoint` (no `camWidth/2`
+  // correction), which only kept the cursor's point fixed when zooming exactly at the viewport's
+  // center — never true for a real mouse wheel. Sweep zoom pairs and off-center pointers.
+  const zoomPairs: [number, number][] = [
+    [1, 2],
+    [1, 0.5],
+    [0.5, 4],
+    [4, 8],
+    [8, 1],
+  ];
+  const pointers = [
+    { pointerX: 0, pointerY: 0 }, // the far corner from center
+    { pointerX: 700, pointerY: 500 }, // off-center, near the opposite corner
+    { pointerX: 400, pointerY: 300 }, // dead center — the one case the plain formula also gets right
+  ];
+  for (const [oldZoom, newZoom] of zoomPairs) {
+    for (const { pointerX, pointerY } of pointers) {
+      it(`keeps (${pointerX}, ${pointerY}) fixed zooming ${oldZoom} -> ${newZoom}`, () => {
+        const before = { pointerX, pointerY, scrollX: 133, scrollY: -47, oldZoom, newZoom, ...CAM };
+        const worldBefore = screenToWorld({ scrollX: before.scrollX, scrollY: before.scrollY, zoom: oldZoom, ...CAM }, pointerX, pointerY);
+        const { scrollX, scrollY } = zoomCameraAboutPoint(before);
+        const worldAfter = screenToWorld({ scrollX, scrollY, zoom: newZoom, ...CAM }, pointerX, pointerY);
+        expect(worldAfter.x).toBeCloseTo(worldBefore.x);
+        expect(worldAfter.y).toBeCloseTo(worldBefore.y);
+      });
+    }
+  }
+
+  it('composes with inset-aware clamping without fighting the cursor-fixed point', () => {
+    const zoomed = zoomCameraAboutPoint({ pointerX: 100, pointerY: 100, scrollX: 900, scrollY: 900, oldZoom: 1, newZoom: 1.5, ...CAM });
+    const clamped = clampScrollToSafeBounds(zoomed.scrollX, zoomed.scrollY, {
+      ...CAM,
       zoom: 1.5,
       worldW: 2000,
       worldH: 2000,

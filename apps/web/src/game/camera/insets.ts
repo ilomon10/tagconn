@@ -47,6 +47,24 @@ export interface SafeBoundsInput {
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
 /**
+ * Phaser's `scrollX`/`scrollY` are *not* the world coordinate at the camera's top-left, except at
+ * zoom 1. With the default origin (0.5), Phaser's own `Camera#centerOn(x, y)` sets
+ * `scrollX = x - camWidth / 2` — no division by zoom at all (see `BaseCamera#centerOnX` and the
+ * `midX`/`worldView` math in `Camera#preRender`). Only the *screen-space delta* between a point and
+ * the viewport's own center scales with zoom when converting to world units; the `camWidth / 2`
+ * term itself never does. This generalizes that to the "safe rect" (the part of the viewport an
+ * inset hasn't covered): the world point that lands at the safe rect's center is `scrollX/Y` plus
+ * this offset.
+ */
+function safeCenterOffset(camWidth: number, camHeight: number, zoom: number, insets: SafeInsets): { offsetX: number; offsetY: number } {
+  const safe = safeViewportRect(camWidth, camHeight, insets);
+  return {
+    offsetX: camWidth / 2 + (safe.x + safe.w / 2 - camWidth / 2) / zoom,
+    offsetY: camHeight / 2 + (safe.y + safe.h / 2 - camHeight / 2) / zoom,
+  };
+}
+
+/**
  * Clamp a proposed camera scroll so every point of the map can still be panned into the safe
  * (unobscured) rect — not just the full viewport. This is what lets a tile hidden behind the
  * panel be dragged out from under it. Falls back to centering the world in the safe rect when the
@@ -57,9 +75,7 @@ export function clampScrollToSafeBounds(scrollX: number, scrollY: number, input:
   const safe = safeViewportRect(camWidth, camHeight, insets);
   const safeWorldW = safe.w / zoom;
   const safeWorldH = safe.h / zoom;
-  // World-space offset from `scrollX`/`scrollY` (top-left of the camera) to the center of the safe rect.
-  const offsetX = safe.x / zoom + safeWorldW / 2;
-  const offsetY = safe.y / zoom + safeWorldH / 2;
+  const { offsetX, offsetY } = safeCenterOffset(camWidth, camHeight, zoom, insets);
 
   const cx = clamp(scrollX + offsetX, Math.min(safeWorldW / 2 - margin, worldW / 2), Math.max(worldW - safeWorldW / 2 + margin, worldW / 2));
   const cy = clamp(scrollY + offsetY, Math.min(safeWorldH / 2 - margin, worldH / 2), Math.max(worldH - safeWorldH / 2 + margin, worldH / 2));
@@ -69,10 +85,10 @@ export function clampScrollToSafeBounds(scrollX: number, scrollY: number, input:
 
 /** The scroll that puts world point (x, y) at the center of the unobscured safe rect. */
 export function centerInSafeRect(x: number, y: number, camWidth: number, camHeight: number, zoom: number, insets: SafeInsets): { scrollX: number; scrollY: number } {
-  const safe = safeViewportRect(camWidth, camHeight, insets);
+  const { offsetX, offsetY } = safeCenterOffset(camWidth, camHeight, zoom, insets);
   return {
-    scrollX: x - (safe.x + safe.w / 2) / zoom,
-    scrollY: y - (safe.y + safe.h / 2) / zoom,
+    scrollX: x - offsetX,
+    scrollY: y - offsetY,
   };
 }
 

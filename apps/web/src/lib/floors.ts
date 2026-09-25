@@ -67,3 +67,14 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   if (el.isContentEditable) return true;
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
 }
+
+/**
+ * True while a full-screen modal — the Hall Planner editor (`data-modal="hall-planner"`), or any
+ * future dialog carrying `aria-modal="true"` or a `data-modal` attribute — covers the screen.
+ * Global floor hotkeys and stairs clicks must no-op while one is open (docs/design/guild-hall.md
+ * section 6). Checked via a DOM query rather than importing the editor's own store, so this stays
+ * decoupled from files owned by that feature.
+ */
+export function isModalOpen(doc: Document = document): boolean {
+  return !!doc.querySelector('[aria-modal="true"], [data-modal]');
+}

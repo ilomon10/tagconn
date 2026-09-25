@@ -4,6 +4,26 @@ import type { SafeInsets } from './camera/insets';
 
 export type { OfficeFloorInfo, OfficeFloorNeighbor, OfficeState };
 
+export type FloorNavDirection = 'up' | 'down';
+type FloorNavListener = (dir: FloorNavDirection) => void;
+const floorNavListeners = new Set<FloorNavListener>();
+
+/**
+ * A tiny command bus (docs/design/guild-hall.md section 6, item 7g) so a plain component — the top
+ * bar's floor up/down buttons — can ask for the same animated stairs transition the in-scene stairs
+ * use, without importing an `OfficeGame` instance. `OfficeView` is the sole subscriber: it already
+ * owns the neighbor-resolution and transitioning/modal guards shared with the stairs and hotkeys.
+ */
+export const officeNavBus = {
+  requestFloorNav(dir: FloorNavDirection) {
+    floorNavListeners.forEach((cb) => cb(dir));
+  },
+  onFloorNavRequest(cb: FloorNavListener): () => void {
+    floorNavListeners.add(cb);
+    return () => floorNavListeners.delete(cb);
+  },
+};
+
 type Events = {
   agentClick: (agentId: string) => void;
   /** A click (not a drag) that hit no character — the host closes the agent panel on this. */
@@ -21,6 +41,9 @@ export class OfficeGame {
   private pending: OfficeState | null = null;
   private pendingInsets: SafeInsets | null = null;
   private destroyed = false;
+  /** Set for the whole stairs transition, fade-out through fade-in (bug: re-entrancy). Callers
+   *  (hotkeys, stairs clicks, top bar buttons) check this and no-op rather than stacking transitions. */
+  private transitioning = false;
   private listeners: { [K in keyof Events]: Set<Events[K]> } = {
     agentClick: new Set(),
     emptyClick: new Set(),
@@ -94,20 +117,33 @@ export class OfficeGame {
     this.scene?.resetView();
   }
 
+  /** Whether a stairs/floor transition is currently running (fade-out through fade-in). Hotkeys,
+   *  stairs clicks and the top bar's floor buttons all check this and no-op while it's true. */
+  get isTransitioning(): boolean {
+    return this.transitioning;
+  }
+
   /**
    * The stairs transition (docs/design/guild-hall.md section 6): fade out, call `swap` (the host
    * re-selects the floor, so React re-renders with the new project's agents/layout), fade back in.
    * Resolves once the fade-in has been kicked off; `ms <= 0` or reduced motion means no visual at
-   * all, and `swap` runs immediately.
+   * all, and `swap` runs immediately. No-ops (does not call `swap`) if a transition is already
+   * running — the caller is expected to have checked `isTransitioning` already, but this is the
+   * shared lock of last resort so a second trigger can never stack a transition mid-flight. `dir`
+   * drives the 12px directional scroll only (omit it for a jump with no "up"/"down" sense).
    */
-  async transitionFloor(ms: number, swap: () => void): Promise<void> {
+  async transitionFloor(ms: number, swap: () => void, dir?: FloorNavDirection): Promise<void> {
+    if (this.transitioning) return;
     if (!this.scene) {
       swap();
       return;
     }
-    await this.scene.runTransition(ms);
+    this.transitioning = true;
+    await this.scene.runTransition(ms, dir);
     swap();
-    this.scene.finishTransition(ms);
+    this.scene.finishTransition(ms, dir, () => {
+      this.transitioning = false;
+    });
   }
 
   destroy() {
