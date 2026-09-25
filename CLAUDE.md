@@ -37,6 +37,8 @@ apps/server/test/fixtures/  REAL hook payloads captured from Claude Code; use th
 
 ## Conventions
 - **Contract first**: change `packages/shared` before server or web. Never rename existing fields silently.
+  After any shared change run the ROOT `pnpm typecheck` (not just the shared package) before committing, and avoid
+  zod `.default()` inside schemas used for both input and stored types (it makes input and output types differ).
 - Server modules are encapsulated `fastify-plugin`s with the same files: `index.ts`, `*.routes.ts`,
   `*.service.ts`, `*.repository.ts`, `*.schema.ts`, `*.socket.ts`, `__tests__/`. Modules talk
   through the typed **event bus** (`core/event-bus`), not by importing each other's internals.
