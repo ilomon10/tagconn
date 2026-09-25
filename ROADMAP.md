@@ -91,14 +91,15 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [x] Design B finalization with SC3 facts (rev 3)  [Architect B]
 - [x] Contract patch A (heroes, pm mode, multiverse) applied  [PM]
 - [x] Contract patch B (runner/auth/receptionist/attribution; whole runner + auth sections GUI-immutable)  [PM]
-- [x] Wave B1: S1 admin auth/pairing/gating [x] · S2 runs module + /runner HMAC [x] · R1 host runner [x] (protocol ack fix pending) · I1 hook/installer/doctor/pair [x] · D1 nginx CSP [x]
-- [~] Wave B2: S3 receptionist module [~] · S4 attribution module [~] · S5 run↔session linking [~] · W1 web auth [~] · W2 quest board · W3 receptionist UI · W4 settings/attribution UI + Vite CSP
+- [x] Wave B1: S1 admin auth/pairing/gating [x] · S2 runs module + /runner HMAC [x] · R1 host runner [x] (protocol verified against a real socket.io server) · I1 hook/installer/doctor/pair [x] · D1 nginx CSP [x]
+- [~] Wave B2: S3 receptionist module [x] · S4 attribution module [x] · S5 run↔session linking [x] · W1 web auth [x] · W2 quest board [~] · W3 receptionist UI [~] · W4 settings/attribution UI + Vite CSP [~]
 - [x] SC2 security review of S1 + S2: NOT READY: 1 High (unauthenticated /runner crash, confirmed), 5 Med (idle expiry never runs out, pairing lockout DoS, runner.enabled ignored, missing server dir check, caps don't stop storage), 8 Low; flakes are test-side fixed sleeps
-- [~] SC2 fixes (auth + runs)  [Developer: server]
+- [x] SC2 fixes (auth + runs): H1 crash fixed (safe-ack + try/catch in runs.gateway.ts), M1-M5 and L1-L8 all addressed (idle-expiry touch split, pairing bucket separation, runner.enabled enforced at handshake+enqueue, server-side dir check + pre-dispatch schema parse, output-cap drop-and-single-stop with a persisted byte counter, redaction, resume provenance, unverified-socket cap, boot token validation); flaky fixed-sleep tests replaced with vi.waitFor; awaits Q1 sign-off  [Developer: server]
 - [ ] Q1 M8 security tests + real-CLI R1 acceptance (a)–(i) in sandbox; SC2 (after S1+S2)
 - [x] SC4 security review of I1: approve with required changes (3 Med: hook sed slows big events, skill pointed at .env, pair prints link on squatter mismatch; 6 Low)
-- [~] I1 fixes for SC4  [Developer: infra]
-- [ ] S4 requirement from SC4: a rejected profile import must never echo, log or store the raw body or zod value details
+- [x] I1 fixes for SC4 (132 script tests)  [Developer: infra]
+- [x] S4 requirement from SC4: a rejected profile import never echoes, logs or stores the raw body (logger-spy test)
+- [ ] Wire `attribution:save` (server) to the runner's `attribution:write` (currently a stub); export endpoint stays public per design
 - [x] Wave A1: H1 server heroes [x] · W2 web hero data [x] · W3 cast resolver [x] · W4 hero look/preview [x] · W6 multiverse plan + rift theme [x]
 - [x] Wave A2: W5 hero editor UI [x] · W7a scene integration [x] · W7b React bridge + floors [x] (uncommitted)
 User request: no stale characters, one clear PM per floor, reuse idle characters, glow on the selected character, bubbles that never overlap, and UX best practice for showing characters and the office.
@@ -120,7 +121,7 @@ so parallel or old sessions leave extra PMs on a floor.
 - [~] 8n. **Richer rooms + door editing + reachability** (user request): furnishing fills rooms properly for their size and type (no more mostly empty server rooms); per-room controls (density, seat/desk count, decoration amount, aisle width, reroll seed) and layout-wide defaults; editable doors (add, move, resize, delete; explicit list or auto); a reachability check that shows exactly which rooms or seats are blocked and why, with one-click fixes. Contract done (`RoomFurnish`, `DoorSpec`, door validation).
   - [~] P1 procgen furnishing engine + doors + reachability report  [Developer: web]
   - [~] T1 new furniture/decor kinds painted in modern, guild and rift  [Developer: web]
-  - [~] E1 Hall Planner: furnishing inspector, door tool, reachability overlay  [Developer: web]
+  - [x] E1 Hall Planner: furnishing inspector, door tool, reachability overlay with one-click fixes  [Developer: web]
 - [ ] 8g. Review + security + QA → v0.3.0
 
 ## Backlog
