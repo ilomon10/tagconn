@@ -3,7 +3,7 @@
 // The theme contract: geometry (procgen) never depends on style, so switching skins never moves
 // characters or seats (D2). A theme only paints. Two implementations exist: `modern.ts` (a straight
 // port of the pre-M7 office art) and `guild.ts` (the magic guild hall).
-import type { Activity, OfficeStyle, RoomType, Zone } from '@tagconn/shared';
+import type { Activity, MULTIVERSE_THEME_ID, OfficeStyle, RoomType, Zone } from '@tagconn/shared';
 import type * as Phaser from 'phaser';
 import type { DecorSlot, GeneratedMap, PlacedFurniture } from '../procgen/types';
 
@@ -32,7 +32,9 @@ export interface Costume {
 }
 
 export interface ThemeDefinition {
-  id: OfficeStyle;
+  /** Widened for the Multiverse's web-only `rift` theme (M8 8h), which is never a user-selectable
+   *  `OfficeStyle` — see `MULTIVERSE_THEME_ID` and `game/themes/rift.ts`. */
+  id: OfficeStyle | typeof MULTIVERSE_THEME_ID;
   palette: Palette;
   /** Paint one floor or corridor tile into the base texture. `rand` is seeded per tile. */
   paintFloor(g: Phaser.GameObjects.Graphics, kind: RoomType | 'corridor', px: number, py: number, rand: () => number): void;
@@ -46,9 +48,22 @@ export interface ThemeDefinition {
   paintDoor(g: Phaser.GameObjects.Graphics, kind: RoomType | 'corridor', px: number, py: number, wide: boolean, rand: () => number): void;
   /** Static furniture art per semantic kind (drawn into the base texture). */
   paintFurniture(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number): void;
-  /** Animated objects (torch flames, cauldron bubbles, portal swirl). Returns objects to destroy on rebuild. */
-  animate(scene: Phaser.Scene, map: GeneratedMap, opts: { ambient: boolean }): Phaser.GameObjects.GameObject[];
+  /**
+   * Animated objects (torch flames, cauldron bubbles, portal swirl). Returns objects to destroy on
+   * rebuild. `motes` and `budget` are Multiverse-only (M8 8h): the scene calls each realm's theme
+   * with `motes: false` (no duplicate starfield per realm) and calls `rift` once for the whole map
+   * with the global motes and its share of `office.multiverseMaxCharacters`'s ambient sibling,
+   * `MULTIVERSE_LIMITS.maxAmbientObjects`. A theme that ignores them (guild, modern) is unaffected.
+   */
+  animate(scene: Phaser.Scene, map: GeneratedMap, opts: { ambient: boolean; motes?: boolean; budget?: number }): Phaser.GameObjects.GameObject[];
   decorFor(slot: DecorSlot): string | null; // texture key for a wall or floor decoration
+  /**
+   * Multiverse-only (M8 8h): paints a floating-island rock underside on a `void` tile 1 or 2 rows
+   * below a themed region's bottom-most floor/wall row (`depth`), so each realm reads as an island
+   * adrift in the rift's starfield. Only `rift.ts` implements this; `renderGeneratedMap` calls it
+   * (if present) on the base theme for the tiles just below every region — see `renderTheme.ts`.
+   */
+  paintIslandEdge?(g: Phaser.GameObjects.Graphics, px: number, py: number, depth: 1 | 2, rand: () => number): void;
   zoneNames: Record<Zone, string>;
   roomNames: Record<RoomType, string>;
   roleTitles: Record<string, string>; // by role name; unknown roles keep role.title
