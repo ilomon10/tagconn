@@ -136,7 +136,8 @@ export type DoorSide = (typeof DOOR_SIDES)[number];
 export const DoorSpecSchema = z.object({
   side: z.enum(DOOR_SIDES),
   offset: z.number().int().min(1),
-  width: z.number().int().min(1).max(3).default(1),
+  /** Door width in tiles (1-3); omitted = 1. No zod default, so input and output types stay identical. */
+  width: z.number().int().min(1).max(3).optional(),
 });
 export type DoorSpec = z.infer<typeof DoorSpecSchema>;
 
