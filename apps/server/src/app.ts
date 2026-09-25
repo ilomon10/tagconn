@@ -7,13 +7,17 @@ import { httpPlugin } from './core/http/index.js';
 import { realtimePlugin } from './core/realtime/index.js';
 import { activityModule } from './modules/activity/index.js';
 import { agentsModule } from './modules/agents/index.js';
+import { attributionModule } from './modules/attribution/index.js';
+import { authModule } from './modules/auth/index.js';
 import { eventsModule } from './modules/events/index.js';
 import { healthModule } from './modules/health/index.js';
 import { heroesModule } from './modules/heroes/index.js';
 import { ingestModule } from './modules/ingest/index.js';
 import { layoutsModule } from './modules/layouts/index.js';
 import { projectsModule } from './modules/projects/index.js';
+import { receptionistModule } from './modules/receptionist/index.js';
 import { rolesModule } from './modules/roles/index.js';
+import { runsModule } from './modules/runs/index.js';
 import { resolveTemplatesDir } from './modules/roles/roles.templates.js';
 import { sessionsModule } from './modules/sessions/index.js';
 import { settingsModule } from './modules/settings/index.js';
@@ -69,6 +73,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // Modules. 'hook.received' listeners run in this registration order:
   // projects → sessions → agents → transcripts → tasks → events.
   await app.register(healthModule);
+  await app.register(authModule);
   await app.register(settingsModule);
   await app.register(activityModule);
   await app.register(rolesModule);
@@ -82,6 +87,9 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(tasksModule);
   await app.register(eventsModule);
   await app.register(snapshotModule);
+  await app.register(runsModule);
+  await app.register(receptionistModule);
+  await app.register(attributionModule);
 
   return app;
 }

@@ -65,6 +65,9 @@ export const MIGRATIONS: string[] = [
   CREATE UNIQUE INDEX IF NOT EXISTS heroes_project_role_slot_idx ON heroes (project_id, role, slot);
   CREATE INDEX IF NOT EXISTS heroes_bound_agent_idx ON heroes (bound_agent_id);
   `,
+  // M8 slots (final order; insert your SQL string at your slot, keep this order):
+  //   5: auth (S1)  6: runs (S2)  7: receptionist (S3)  8: attribution (S4)
+  // Define new drizzle tables inside your module (e.g. modules/runs/runs.tables.ts), not in core/db/schema.ts.
 ];
 
 export function migrate(sqlite: Database.Database): number {
