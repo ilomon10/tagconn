@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import { OFFICE_NAMESPACE, type ClientToServerEvents, type ServerToClientEvents } from '@tagconn/shared';
+import { OFFICE_NAMESPACE, type ClientToServerEvents, type LayoutAssign, type OfficeLayoutInput, type ServerToClientEvents } from '@tagconn/shared';
 
 export type OfficeSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -50,3 +50,12 @@ export function emitWithAck<E extends keyof C2S>(event: E, ...args: AckArgs<C2S[
     (s.emit as unknown as (ev: string, ...rest: unknown[]) => void)(event, ...args, cb);
   });
 }
+
+/** M7 office editor: typed wrappers around the `layouts:*` acked events (guild-hall.md section 2). */
+export const layoutSocket = {
+  list: () => emitWithAck('layouts:list'),
+  get: (id: string) => emitWithAck('layouts:get', id),
+  save: (layout: OfficeLayoutInput) => emitWithAck('layouts:save', layout),
+  delete: (id: string) => emitWithAck('layouts:delete', id),
+  assign: (req: LayoutAssign) => emitWithAck('layouts:assign', req),
+};

@@ -1,4 +1,4 @@
-import type { OfficeEvent, OfficeSnapshot, Project, Role, Settings, SettingsPatch } from '@tagconn/shared';
+import type { OfficeEvent, OfficeLayout, OfficeLayoutInput, OfficeSnapshot, Project, Role, Settings, SettingsPatch } from '@tagconn/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -57,4 +57,13 @@ export const api = {
   projects: () => request<Project[]>('/api/projects'),
   patchProject: (id: string, patch: { name?: string; archived?: boolean }) =>
     request<Project>(`/api/projects/${encodeURIComponent(id)}`, { method: 'PATCH', body: json(patch) }),
+  // M7 office editor (guild-hall.md section 2). Layouts are global (not per project).
+  layouts: () => request<OfficeLayout[]>('/api/layouts'),
+  layout: (id: string) => request<OfficeLayout>(`/api/layouts/${encodeURIComponent(id)}`),
+  createLayout: (input: OfficeLayoutInput) => request<OfficeLayout>('/api/layouts', { method: 'POST', body: json(input) }),
+  saveLayout: (id: string, input: OfficeLayoutInput) => request<OfficeLayout>(`/api/layouts/${encodeURIComponent(id)}`, { method: 'PUT', body: json(input) }),
+  deleteLayout: (id: string) => request<unknown>(`/api/layouts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  /** `PATCH /api/projects/:id { layoutId }`: assign (or clear, with null) a floor's layout. */
+  assignLayout: (projectId: string, layoutId: string | null) =>
+    request<Project>(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'PATCH', body: json({ layoutId }) }),
 };

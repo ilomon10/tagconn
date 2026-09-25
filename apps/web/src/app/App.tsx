@@ -5,6 +5,7 @@ import { KanbanBoard } from '../features/board/KanbanBoard';
 import { EventLog } from '../features/log/EventLog';
 import { RolesEditor } from '../features/roles/RolesEditor';
 import { SettingsPanel } from '../features/settings/SettingsPanel';
+import { OfficeEditor } from '../features/editor/OfficeEditor';
 
 const tabFromHash = (): Tab => {
   const h = window.location.hash.replace('#', '') as Tab;
@@ -13,6 +14,10 @@ const tabFromHash = (): Tab => {
 
 export function App() {
   const [tab, setTab] = useState<Tab>(tabFromHash);
+  // The Hall Planner (M7 office editor) isn't a TopBar tab (TopBar/its `Tab` union belong to the
+  // other M7 developer's slice) — it's a full-screen modal reachable from a button over the office
+  // view instead. See docs/design/guild-hall.md section 5.
+  const [editorOpen, setEditorOpen] = useState(false);
 
   useEffect(() => {
     const onHash = () => setTab(tabFromHash());
@@ -38,7 +43,18 @@ export function App() {
         {tab === 'log' && <EventLog />}
         {tab === 'roles' && <RolesEditor />}
         {tab === 'settings' && <SettingsPanel />}
+        {tab === 'office' && (
+          <button
+            type="button"
+            onClick={() => setEditorOpen(true)}
+            title="Draw and edit floor plans"
+            className="absolute right-3 top-3 z-30 rounded-md bg-cozy px-2.5 py-1 text-xs font-semibold text-ink-950 shadow-lg hover:brightness-110"
+          >
+            Hall Planner
+          </button>
+        )}
       </main>
+      {editorOpen && <OfficeEditor onClose={() => setEditorOpen(false)} />}
     </div>
   );
 }
