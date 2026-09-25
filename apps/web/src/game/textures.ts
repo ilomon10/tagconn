@@ -1,13 +1,14 @@
 import type * as Phaser from 'phaser';
+import { HERO_HAIR_COLORS, HERO_HAIR_STYLE_COUNT, HERO_SKIN_TONES } from '@tagconn/shared';
 
 /**
  * All art is generated at runtime from tiny ASCII bitmaps — no asset files.
  * White/grey pixels are meant to be tinted (shirt = role color, hair, skin).
  */
 
-type Palette = Record<string, number>;
+export type Palette = Record<string, number>;
 
-interface Bitmap {
+export interface Bitmap {
   rows: string[];
   palette: Palette;
   /** Auto-outline empty pixels touching filled ones with this color. */
@@ -18,10 +19,19 @@ const W = 0xffffff;
 const SHADE = 0xc9c9c9;
 const DARK_SHADE = 0x9a9a9a;
 
-export const HAIR_COLORS = [0x3b2a20, 0x16110f, 0xd6a852, 0x8d3b1f, 0x8a8a8a, 0x6a4a9a, 0x2f4f6f];
-export const SKIN_TONES = [0xf5c89a, 0xe3ab7c, 0xc08457, 0x8d5a36, 0xffe0bd];
+/** `#rrggbb` (as stored on `HeroAppearance`) to a Phaser/canvas tint number. */
+export function hexToNumber(hex: string): number {
+  return parseInt(hex.slice(1), 16);
+}
 
-const bitmaps: Record<string, Bitmap> = {
+// Derived from the shared vocabulary (packages/shared/src/heroes.ts) rather than duplicated, so
+// the web palette can never drift from `HERO_HAIR_COLORS` / `HERO_SKIN_TONES` (W4 acceptance: the
+// values stay equal to `HERO_*`).
+export const HAIR_COLORS = HERO_HAIR_COLORS.map(hexToNumber);
+export const SKIN_TONES = HERO_SKIN_TONES.map(hexToNumber);
+
+/** Bitmaps for the base character (body/legs/head/hair/props/icons), keyed by texture name. */
+export const CHARACTER_BITMAPS: Record<string, Bitmap> = {
   'ch-body': {
     rows: [' wwwwww ', 'wwwwwwww', 'swwwwwws', 'swwwwwws', 'swwwwwws', ' ssssss '],
     palette: { w: W, s: SHADE },
@@ -106,7 +116,7 @@ export function paintBitmap(scene: Phaser.Scene, key: string, b: Bitmap) {
 }
 
 export function generateTextures(scene: Phaser.Scene) {
-  for (const [key, b] of Object.entries(bitmaps)) paintBitmap(scene, key, b);
+  for (const [key, b] of Object.entries(CHARACTER_BITMAPS)) paintBitmap(scene, key, b);
 }
 
-export const HAIR_STYLES = 7;
+export const HAIR_STYLES = HERO_HAIR_STYLE_COUNT;

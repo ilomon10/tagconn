@@ -1,4 +1,5 @@
 import type * as Phaser from 'phaser';
+import type { Bitmap } from '../textures';
 import { paintBitmap } from '../textures';
 import type { Costume } from './types';
 
@@ -7,12 +8,15 @@ import type { Costume } from './types';
  * (reusing its `paintBitmap`). Hats and the cloak use tintable placeholders (`h` = main, `s` =
  * shade) so `Costume.hatColor` / the role colour recolour them, exactly like `ch-body`/`ch-hair-*`.
  * Hand props use fixed baked colours, like the existing `prop-*` bitmaps.
+ *
+ * The raw bitmap data is exported (`HAT_BITMAPS`, `STAFF_BITMAPS`, `CLOAK_BITMAP`, `GOGGLES_BITMAP`)
+ * so `../heroPreview.ts` can paint the same art on a plain 2D canvas, with no Phaser scene.
  */
 
-type Hat = NonNullable<Costume['hat']>;
-type Staff = NonNullable<Costume['staff']>;
+export type Hat = NonNullable<Costume['hat']>;
+export type Staff = NonNullable<Costume['staff']>;
 
-const HAT_BITMAPS: Partial<Record<Hat, { rows: string[]; palette: Record<string, number> }>> = {
+export const HAT_BITMAPS: Partial<Record<Hat, Bitmap>> = {
   wizard: {
     rows: ['   h   ', '  hhh  ', '  hsh  ', ' hhhhh ', ' hshsh ', 'hhhhhhh'],
     palette: { h: 0xffffff, s: 0xc9c9c9 },
@@ -39,7 +43,7 @@ const HAT_BITMAPS: Partial<Record<Hat, { rows: string[]; palette: Record<string,
   },
 };
 
-const STAFF_BITMAPS: Partial<Record<Staff, { rows: string[]; palette: Record<string, number> }>> = {
+export const STAFF_BITMAPS: Partial<Record<Staff, Bitmap>> = {
   staff: {
     rows: [' gg ', 'gyyg', ' gg ', ' bb ', ' bb ', ' bb ', ' bb '],
     palette: { g: 0x8a5aff, y: 0xd8c6ff, b: 0x6b4a2c },
@@ -66,12 +70,12 @@ const STAFF_BITMAPS: Partial<Record<Staff, { rows: string[]; palette: Record<str
   },
 };
 
-const CLOAK_BITMAP = {
+export const CLOAK_BITMAP: Bitmap = {
   rows: [' hhhhhh ', 'hhhhhhhh', 'hhhhhhhh', 'hhhhhhhh', 'hhhhhhhh', 'hhhhhhhh', 'h      h'],
   palette: { h: 0xffffff },
 };
 
-const GOGGLES_BITMAP = {
+export const GOGGLES_BITMAP: Bitmap = {
   rows: ['oo oo', 'ogogo'],
   palette: { o: 0x3a3f4e, g: 0x8fd3ff },
 };
