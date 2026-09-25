@@ -91,7 +91,9 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [x] Design B finalization with SC3 facts (rev 3)  [Architect B]
 - [x] Contract patch A (heroes, pm mode, multiverse) applied  [PM]
 - [x] Contract patch B (runner/auth/receptionist/attribution; whole runner + auth sections GUI-immutable)  [PM]
-- [ ] Wave B: S1 auth/pairing + gating · S2 runs module · R1 host runner · I1 installer/doctor/pairing · D1 attribution · W1 quest board + receptionist UI (per runner-and-helpdesk.md §9)
+- [~] Wave B1: S1 admin auth/pairing/gating · S2 runs module + /runner HMAC · R1 host runner · I1 hook/installer/doctor/pair · D1 nginx CSP
+- [ ] Wave B2: S3 receptionist module · S4 attribution module · S5 run↔session linking · W1 web auth · W2 quest board · W3 receptionist UI · W4 settings/attribution UI + Vite CSP
+- [ ] Q1 M8 security tests + real-CLI R1 acceptance (a)–(i) in sandbox; SC2 (after S1+S2), SC4 (after I1)
 - [x] Wave A1: H1 server heroes [x] · W2 web hero data [x] · W3 cast resolver [x] · W4 hero look/preview [x] · W6 multiverse plan + rift theme [x]
 - [~] Wave A2: W5 hero editor UI [~] · W7a scene integration [~] · W7b React bridge + floors [~]
 User request: no stale characters, one clear PM per floor, reuse idle characters, glow on the selected character, bubbles that never overlap, and UX best practice for showing characters and the office.
