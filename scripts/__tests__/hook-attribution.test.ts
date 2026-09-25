@@ -295,4 +295,80 @@ describe('.tagconn/office.json import (opt-in via attribution.conf)', () => {
     const log = existsSync(sandbox.logFile) ? readFileSync(sandbox.logFile, 'utf8') : '';
     expect(log).not.toContain('x-tagconn-session-id');
   });
+
+  it('skips office.json when it is a FIFO, not a regular file (never blocks on head)', async () => {
+    sandbox = createHookSandbox();
+    writeAttributionConf(sandbox);
+    mkdirSync(join(sandbox.projectDir, '.tagconn'), { recursive: true });
+    const fifoPath = join(sandbox.projectDir, '.tagconn', 'office.json');
+    const mkfifo = spawnSync('mkfifo', [fifoPath]);
+    if (mkfifo.status !== 0) return; // mkfifo unavailable on this platform: nothing to assert.
+    const res = runHook(sandbox, { session_id: 'sess-fifo', hook_event_name: 'SessionStart' });
+    expect(res.status).toBe(0); // must not hang reading from the FIFO.
+    await afterBackground();
+    const log = existsSync(sandbox.logFile) ? readFileSync(sandbox.logFile, 'utf8') : '';
+    expect(log).not.toContain('x-tagconn-session-id');
+  });
+});
+
+describe('SC4 hardening: perf gate for the hook_event_name check (M1)', () => {
+  it('stays fast on a large non-SessionStart body (no sed forked over megabytes of data)', async () => {
+    sandbox = createHookSandbox();
+    // No attribution-README.md / attribution.conf installed, so this only
+    // exercises the foreground POST + the is_session_start gate - exactly
+    // the path that used to fork `sed` over the whole body on every event.
+    const bigBody = { session_id: 's', hook_event_name: 'PostToolUse', tool_response: 'x'.repeat(8_000_000) };
+    const start = Date.now();
+    const res = runHook(sandbox, bigBody);
+    const elapsedMs = Date.now() - start;
+    expect(res.status).toBe(0);
+    // Generous budget (CI can be slow) but meaningful: the regression this
+    // guards against measured ~1.2s for an 8MB body; a healthy run is a few
+    // hundred ms (dominated by piping 8MB through the fake curl itself).
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+
+  it('also stays fast when the body contains the literal string "SessionStart" but is large', async () => {
+    sandbox = createHookSandbox();
+    const bigBody = {
+      session_id: 's',
+      hook_event_name: 'PostToolUse',
+      tool_response: `mentions SessionStart once, then: ${'x'.repeat(8_000_000)}`,
+    };
+    const start = Date.now();
+    const res = runHook(sandbox, bigBody);
+    const elapsedMs = Date.now() - start;
+    expect(res.status).toBe(0);
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+});
+
+describe('SC4 hardening: canonicalized $HOME/project-dir guard (L1)', () => {
+  it('never writes when CLAUDE_PROJECT_DIR has a trailing slash equal to $HOME', async () => {
+    sandbox = createHookSandbox();
+    writeFileSync(join(sandbox.configDir, 'attribution-README.md'), readFileSync(readmeTemplate, 'utf8'));
+    mkdirSync(join(sandbox.home, '.git'), { recursive: true });
+    runHook(sandbox, { session_id: 's', hook_event_name: 'SessionStart' }, { CLAUDE_PROJECT_DIR: `${sandbox.home}/` });
+    await afterBackground();
+    expect(existsSync(join(sandbox.home, '.tagconn'))).toBe(false);
+  });
+
+  it('never writes when CLAUDE_PROJECT_DIR is a symlink resolving to $HOME', async () => {
+    sandbox = createHookSandbox();
+    writeFileSync(join(sandbox.configDir, 'attribution-README.md'), readFileSync(readmeTemplate, 'utf8'));
+    mkdirSync(join(sandbox.home, '.git'), { recursive: true });
+    const link = join(sandbox.home, '..', 'home-link');
+    symlinkSync(sandbox.home, link);
+    runHook(sandbox, { session_id: 's', hook_event_name: 'SessionStart' }, { CLAUDE_PROJECT_DIR: link });
+    await afterBackground();
+    expect(existsSync(join(sandbox.home, '.tagconn'))).toBe(false);
+  });
+
+  it('still writes normally for an ordinary project dir once canonicalized (regression check)', async () => {
+    sandbox = createHookSandbox();
+    writeFileSync(join(sandbox.configDir, 'attribution-README.md'), readFileSync(readmeTemplate, 'utf8'));
+    mkdirSync(join(sandbox.projectDir, '.git'), { recursive: true });
+    runHook(sandbox, { session_id: 's', hook_event_name: 'SessionStart' }, { CLAUDE_PROJECT_DIR: `${sandbox.projectDir}/` });
+    await waitFor(() => existsSync(join(sandbox.projectDir, '.tagconn', 'README.md')));
+  });
 });

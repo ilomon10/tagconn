@@ -22,6 +22,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -305,10 +306,19 @@ function basenameOf(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-/** Writes a secret file (mode 600 from the moment it exists) and re-asserts the mode afterward. */
+/**
+ * Writes a secret file atomically (SC4 L4): a temp file (mode 600, exclusive create) next to
+ * the target, then an atomic rename over it - like writeJsonAtomic, so a reader (or a crashed
+ * install) never observes a partially written secret, and a pre-existing file at `path` is
+ * replaced in one step rather than truncated-then-rewritten in place.
+ */
 function writeSecretFile(path: string, content: string): void {
-  writeFileSync(path, content, { encoding: 'utf8', mode: 0o600 });
-  chmodSync(path, 0o600);
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const tmpPath = join(dir, `.${basenameOf(path)}.tagconn-tmp-${randomBytes(6).toString('hex')}`);
+  writeFileSync(tmpPath, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  chmodSync(tmpPath, 0o600); // belt-and-suspenders: the mode above is still subject to umask.
+  renameSync(tmpPath, path);
 }
 
 function ensureDir(path: string, dryRun: boolean): void {
@@ -316,10 +326,17 @@ function ensureDir(path: string, dryRun: boolean): void {
   mkdirSync(path, { recursive: true });
 }
 
-/** Ensures the config dir exists, mode 700, and not dry-run. */
+/**
+ * Ensures the config dir exists, mode 700, and not dry-run. SC4 INFO: never chmods a
+ * directory we didn't just create unless it's literally named "tagconn" - so a misdirected
+ * `--config-dir ~` (or any other pre-existing directory the user pointed us at) doesn't get
+ * its permissions silently changed.
+ */
 function ensureConfigDir(configDir: string, dryRun: boolean): string {
-  if (!dryRun) {
-    mkdirSync(configDir, { recursive: true, mode: 0o700 });
+  if (dryRun) return configDir;
+  const existedBefore = existsSync(configDir);
+  mkdirSync(configDir, { recursive: true });
+  if (!existedBefore || basenameOf(configDir) === 'tagconn') {
     chmodSync(configDir, 0o700);
   }
   return configDir;
@@ -423,6 +440,39 @@ function ensureCurlConf(configDir: string, token: string, url: string, dryRun: b
   writeSecretFile(confPath, content);
   log(`  wrote ${confPath}`);
   return confPath;
+}
+
+/**
+ * Writes <configDir>/server-url: a plain-text, NON-secret file holding just the server URL, so
+ * skills/scripts that need it (e.g. the tagconn-save skill, SC4 M2) don't have to read the repo
+ * `.env` - which holds OFFICE_HOOK_TOKEN and OFFICE_RUNNER__TOKEN and should never be read by an
+ * agent skill just to learn a URL.
+ */
+function ensureServerUrlFile(configDir: string, url: string, dryRun: boolean): string {
+  const path = join(configDir, 'server-url');
+  const content = `${url}\n`;
+  if (dryRun) {
+    log(`  [dry-run] would write ${path}`);
+    return path;
+  }
+  ensureConfigDir(configDir, dryRun);
+  const tmpPath = join(configDir, `.server-url.tagconn-tmp-${randomBytes(6).toString('hex')}`);
+  writeFileSync(tmpPath, content, { encoding: 'utf8', flag: 'wx' });
+  renameSync(tmpPath, path);
+  log(`  wrote ${path}`);
+  return path;
+}
+
+/** Removes <configDir>/server-url on uninstall. */
+function removeServerUrlFile(configDir: string, dryRun: boolean): void {
+  const path = join(configDir, 'server-url');
+  if (!existsSync(path)) return;
+  if (dryRun) {
+    log(`  [dry-run] would remove ${path}`);
+    return;
+  }
+  rmSync(path);
+  log(`  removed ${path}`);
 }
 
 /** Removes <configDir>/curl.conf (holds the shared secret) on uninstall. */
@@ -604,15 +654,39 @@ export function countGitReposBelow(dir: string, maxDepth = 2, cap = 4, budget = 
   return count;
 }
 
+/** True when `parent` is `child` itself, or a path component prefix of it (an ancestor). */
+function isAncestorOrSelf(parent: string, child: string): boolean {
+  if (parent === child) return true;
+  const prefix = parent === '/' ? '/' : `${parent}/`;
+  return child.startsWith(prefix);
+}
+
 /**
- * True for `$HOME`, `/`, or any dir with more than 3 git repos under it (see
- * countGitReposBelow) - the design's examples of a "broad parent dir" like `~/Projects`.
- * Quests/the Receptionist can run in any repo under an allowed dir, so a broad one
- * effectively means "run code as me anywhere under here".
+ * True for `/`, `$HOME`, any ancestor of `$HOME` (e.g. `/home`), or any dir with more than 3
+ * git repos under it (see countGitReposBelow) - the design's examples of a "broad parent dir"
+ * like `~/Projects`. Quests/the Receptionist can run in any repo under an allowed dir, so a
+ * broad one effectively means "run code as me anywhere under here".
+ *
+ * SC4 L5: both `dir` and `$HOME` are resolved with realpathSync first, so a symlink pointing
+ * at (or into) $HOME, or a trailing slash, can't be used to dodge the check the way a plain
+ * string compare could. A dir that doesn't exist yet is compared as given (nothing to resolve).
  */
 export function isBroadAllowDir(dir: string): boolean {
-  if (dir === homedir() || dir === '/') return true;
-  return countGitReposBelow(dir) > 3;
+  let real = dir;
+  try {
+    real = realpathSync(dir);
+  } catch {
+    // Doesn't exist (yet): fall back to the literal path.
+  }
+  if (real === '/') return true;
+  let realHome = homedir();
+  try {
+    realHome = realpathSync(realHome);
+  } catch {
+    // Fall back to the literal $HOME.
+  }
+  if (isAncestorOrSelf(real, realHome)) return true;
+  return countGitReposBelow(real) > 3;
 }
 
 /** Prints a loud warning for each broad allow-dir; returns the ones flagged. */
@@ -1052,6 +1126,7 @@ export async function main(): Promise<void> {
     log('\n[hook config]');
     removeCurlConf(args.configDir, args.dryRun);
     removeLegacyHookEnv(args.configDir, args.dryRun);
+    removeServerUrlFile(args.configDir, args.dryRun);
 
     log('\n[attribution]');
     removeAttributionReadme(args.configDir, args.dryRun);
@@ -1072,6 +1147,7 @@ export async function main(): Promise<void> {
   const confPath = ensureCurlConf(args.configDir, token, args.url, args.dryRun);
   removeLegacyHookEnv(args.configDir, args.dryRun);
   const hookScriptPath = ensureHookScript(args.configDir, args.dryRun);
+  ensureServerUrlFile(args.configDir, args.url, args.dryRun);
 
   log('\n[attribution]');
   ensureAttributionConf(args.configDir, token, args.url, args.dryRun);

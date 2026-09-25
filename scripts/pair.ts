@@ -14,10 +14,11 @@
 //                         [--label <text>] [--no-squatter-check]
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { isValidRunnerToken, validateUrl } from './install.ts';
 
 // Mirrors packages/shared/src/auth.ts NONCE_RE/PROOF_RE: 32 random bytes, base64url, no padding.
 const NONCE_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -56,8 +57,8 @@ export interface Args {
 export function parseArgs(argv: string[]): Args {
   const args: Args = {
     configDir: process.env.TAGCONN_CONFIG_DIR ? resolve(process.env.TAGCONN_CONFIG_DIR) : DEFAULT_CONFIG_DIR,
-    url: process.env.OFFICE_URL || 'http://127.0.0.1:4317',
-    webUrl: process.env.OFFICE_WEB_URL || 'http://localhost:4318',
+    url: validateUrl(process.env.OFFICE_URL || 'http://127.0.0.1:4317'),
+    webUrl: validateUrl(process.env.OFFICE_WEB_URL || 'http://localhost:4318'),
     label: undefined,
     noSquatterCheck: false,
     help: false,
@@ -65,8 +66,8 @@ export function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--config-dir') args.configDir = resolve(argv[++i] ?? '');
-    else if (a === '--url') args.url = argv[++i] ?? args.url;
-    else if (a === '--web-url') args.webUrl = argv[++i] ?? args.webUrl;
+    else if (a === '--url') args.url = validateUrl(argv[++i] ?? args.url);
+    else if (a === '--web-url') args.webUrl = validateUrl(argv[++i] ?? args.webUrl);
     else if (a === '--label') args.label = argv[++i];
     else if (a === '--no-squatter-check') args.noSquatterCheck = true;
     else if (a === '--help' || a === '-h') args.help = true;
@@ -95,11 +96,20 @@ Options:
 `);
 }
 
-/** Reads the runner token out of <configDir>/runner.json (written by scripts/install.ts). */
+/**
+ * Reads the runner token out of <configDir>/runner.json (written by scripts/install.ts).
+ * Mirrors the runner's own load checks (mode 0600, token shape) - see
+ * RunnerLocalConfigSchema in packages/shared/src/runner.ts - so a misconfigured or
+ * tampered-with file is caught here rather than silently HMAC-ing with garbage.
+ */
 export function readRunnerToken(configDir: string): string {
   const path = join(configDir, 'runner.json');
   if (!existsSync(path)) {
     throw new Error(`${path} not found. Run \`pnpm office:install --allow-dir <path>\` first.`);
+  }
+  const mode = statSync(path).mode & 0o777;
+  if (mode !== 0o600) {
+    throw new Error(`${path} has mode ${mode.toString(8)}, expected 600. Run: chmod 600 ${path}`);
   }
   let parsed: unknown;
   try {
@@ -110,6 +120,9 @@ export function readRunnerToken(configDir: string): string {
   const token = (parsed as { token?: unknown } | null)?.token;
   if (typeof token !== 'string' || token.length === 0) {
     throw new Error(`${path} has no runner token.`);
+  }
+  if (!isValidRunnerToken(token)) {
+    throw new Error(`${path}'s token is not a valid runner token (expected 32-128 lowercase hex chars).`);
   }
   return token;
 }
@@ -132,12 +145,22 @@ interface HealthBody {
   version?: string;
 }
 
-async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+async function postJson<T>(url: string, body: unknown, timeoutMs = 5000): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    throw new Error(`${url} did not respond within ${timeoutMs}ms: ${(err as Error).message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
   const text = await res.text();
   let parsed: unknown;
   try {
@@ -169,7 +192,11 @@ export interface PairResult {
   code: string;
   url: string;
   expiresAt: number;
-  /** Undefined = skipped or inconclusive; true/false = the web origin's instanceId did/didn't match. */
+  /**
+   * Undefined = skipped (--no-squatter-check) or inconclusive (a health endpoint was
+   * unreachable). true/false = the web origin (SC4 M3: instanceId AND version AND the
+   * pairing URL's origin) matched what the HMAC-verified server told us.
+   */
   squatterCheckPassed?: boolean;
 }
 
@@ -177,6 +204,12 @@ export interface PairResult {
  * Runs the full two-step HMAC pairing handshake (§5.2) against `baseUrl`, using `token` as the HMAC
  * key. Throws on a bad/missing/late proof (the server proof check happens locally, before any
  * further request - a wrong URL or an impersonator is refused, not silently trusted).
+ *
+ * The squatter check (T9, residual risk in §5.2) runs AFTER minting the code, because it needs the
+ * code response's own `url` to check its origin. It never weakens the proof check above - that one
+ * already refuses to continue on any mismatch. This one is reported back for the caller (main()) to
+ * act on: SC4 M3 requires refusing to print/reveal the code on a mismatch, fail-closed, unless the
+ * caller explicitly opted out with `skipSquatterCheck`.
  */
 export async function mintPairingCode(
   baseUrl: string,
@@ -199,20 +232,39 @@ export async function mintPairingCode(
     );
   }
 
-  let squatterCheckPassed: boolean | undefined;
-  if (!skipSquatterCheck) {
-    const webHealth = await getJson<HealthBody>(`${webUrl.replace(/\/+$/, '')}/api/health`);
-    if (webHealth?.instanceId) {
-      squatterCheckPassed = webHealth.instanceId === challenge.instanceId;
-    }
-  }
-
   const clientProof = hmac(token, proofMessage('client', challenge.nonce, nc));
   const code = await postJson<PairingCodeResponse>(`${base}/api/auth/pairing-codes`, {
     challengeId: challenge.challengeId,
     proof: clientProof,
     ...(label ? { label } : {}),
   });
+
+  let squatterCheckPassed: boolean | undefined;
+  if (!skipSquatterCheck) {
+    // Free, local check: does the URL the server handed us even point at the web origin
+    // the caller asked about? A server that redirects the printed link elsewhere is
+    // exactly the T9 scenario this check exists for.
+    let originMatches: boolean;
+    try {
+      originMatches = new URL(code.url).origin === new URL(webUrl).origin;
+    } catch {
+      originMatches = false;
+    }
+
+    const directHealth = await getJson<HealthBody>(`${base}/api/health`);
+    const webHealth = await getJson<HealthBody>(`${webUrl.replace(/\/+$/, '')}/api/health`);
+    if (directHealth?.instanceId && webHealth?.instanceId) {
+      squatterCheckPassed =
+        originMatches &&
+        webHealth.instanceId === directHealth.instanceId &&
+        webHealth.instanceId === challenge.instanceId &&
+        webHealth.version === directHealth.version;
+    } else {
+      // Health endpoints inconclusive (unreachable): still enforce the free origin check -
+      // a mismatch there is decisive on its own and needs no network round trip to trust.
+      squatterCheckPassed = originMatches ? undefined : false;
+    }
+  }
 
   return { ...code, squatterCheckPassed };
 }
@@ -228,13 +280,20 @@ export async function main(): Promise<void> {
   const result = await mintPairingCode(args.url, args.webUrl, token, args.label, args.noSquatterCheck);
 
   if (result.squatterCheckPassed === false) {
-    console.warn(
-      `WARNING: ${args.webUrl} reports a different instanceId than the server at ${args.url}. ` +
-        'Something else may be answering on the web port - do not open the link below until this is resolved. ' +
+    // SC4 M3: fail closed - never print the code/URL when the web origin doesn't check out.
+    // The code the server minted is now spent (single use), but that's a smaller cost than
+    // handing the user a link that might not be their own server.
+    console.error(
+      `REFUSING to print the pairing code: ${args.webUrl} does not look like the same server as ${args.url} ` +
+        '(instanceId/version mismatch, or the pairing URL points at a different origin). Something else may be ' +
+        'answering on the web port. Re-run with --no-squatter-check to override if you are certain this is safe. ' +
         '(See docs/design/runner-and-helpdesk.md §5.2, T9.)',
     );
-  } else if (result.squatterCheckPassed === undefined && !args.noSquatterCheck) {
-    console.warn(`Could not verify ${args.webUrl} matches the server (unreachable) - skipping the squatter check.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (result.squatterCheckPassed === undefined && !args.noSquatterCheck) {
+    console.warn(`Could not fully verify ${args.webUrl} matches the server (a health endpoint was unreachable).`);
   }
 
   console.log(`Pairing code: ${result.code}`);

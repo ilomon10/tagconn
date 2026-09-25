@@ -32,6 +32,13 @@
 #     Both are strictly guarded - see the comments below - and both require
 #     files scripts/install.ts writes, so a install that never opted in never
 #     does any of this.
+#
+# LC_ALL=C: every ${#var} length check below (the SC4 M1/L3 fixes) must count
+# BYTES, matching `wc -c`/`head -c`. In a multibyte locale, shell parameter
+# length expansion counts characters instead, which would silently miscount a
+# UTF-8 body and defeat the size caps. This also keeps sed/case matching
+# locale-independent.
+export LC_ALL=C
 
 # Always read stdin fully first, even if we bail out below, so Claude Code
 # never sees a broken pipe.
@@ -90,12 +97,26 @@ fi
 # --------------------------------------------------------------------------
 # Only ever considered on SessionStart, and only when the user hasn't turned
 # it off for this run (TAGCONN_ATTRIBUTION=off, set by the runner on quests).
-# sed, not a case/glob match, so pretty-printed (space after ':') and compact
-# JSON both work, and it can't be confused by "SessionStart" appearing as
-# some other field's value.
-hook_event=$(printf '%s' "$body" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+#
+# Perf (SC4 M1): a PostToolUse (or any) body can be megabytes (tool output),
+# and running `sed` over the whole thing on EVERY event was measured at ~1.2s
+# for an 8MB body vs ~0.18s for the cheap check below. So: first, a plain
+# shell `case` glob (no subprocess, short-circuits fast) checks whether the
+# literal string "SessionStart" appears at all; only then, and only when the
+# body is small (real SessionStart payloads are a few hundred bytes), do we
+# fork `sed` to parse hook_event_name properly (so we're not fooled by
+# "SessionStart" appearing as some other field's value). Anything that
+# doesn't match both cheap checks is treated as "not SessionStart" - safe,
+# since attribution is opt-in best-effort, never required for correctness.
 is_session_start=0
-[ "$hook_event" = "SessionStart" ] && is_session_start=1
+case "$body" in
+  *'"SessionStart"'*)
+    if [ ${#body} -le 16384 ]; then
+      hook_event=$(printf '%s' "$body" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+      [ "$hook_event" = "SessionStart" ] && is_session_start=1
+    fi
+    ;;
+esac
 
 if [ "$is_session_start" = "1" ] && [ "${TAGCONN_ATTRIBUTION:-}" != "off" ]; then
   (
@@ -104,50 +125,84 @@ if [ "$is_session_start" = "1" ] && [ "${TAGCONN_ATTRIBUTION:-}" != "off" ]; the
     attrconf="$configdir/attribution.conf"
     dir="${CLAUDE_PROJECT_DIR:-}"
 
+    # Canonicalize (SC4 L1): a plain string compare against $HOME is bypassed
+    # by a trailing slash, `..`, or CLAUDE_PROJECT_DIR being a symlink INTO
+    # $HOME. Resolve both to their real, symlink-free paths via `cd && pwd -P`
+    # and use $rd (never the original $dir) for every path below.
+    rd=""
+    if [ -n "$dir" ] && [ -d "$dir" ]; then
+      rd=$(cd "$dir" 2>/dev/null && pwd -P) || rd=""
+    fi
+    rh=""
+    if [ -n "$HOME" ] && [ -d "$HOME" ]; then
+      rh=$(cd "$HOME" 2>/dev/null && pwd -P) || rh=""
+    fi
+
     # -------------------- README write (opt-in) --------------------
     # Guards: dir must exist, be owned by us, be a git repo, and never be
     # $HOME or /. No mkdir -p: only ever create the single ".tagconn" dir.
-    if [ -n "$dir" ] && [ -d "$dir" ] && [ -O "$dir" ] && [ -e "$dir/.git" ] \
-      && [ "$dir" != "$HOME" ] && [ "$dir" != "/" ]; then
+    if [ -n "$rd" ] && [ -O "$rd" ] && [ -e "$rd/.git" ] && [ "$rd" != "$rh" ] && [ "$rd" != "/" ]; then
       # Skip if .tagconn already exists (file, dir, or symlink) - never
       # touch or follow it. This is also how a user opts back out: replace
       # .tagconn with an empty file named .tagconn (see the README itself).
-      if [ ! -e "$dir/.tagconn" ] && [ ! -L "$dir/.tagconn" ] && [ -f "$tpl" ]; then
-        if mkdir "$dir/.tagconn" 2>/dev/null; then
-          # noclobber (set -C): never overwrite an existing README.md even
-          # if something raced us between the checks above and here.
-          (set -C; cat "$tpl" > "$dir/.tagconn/README.md") 2>/dev/null
+      if [ ! -e "$rd/.tagconn" ] && [ ! -L "$rd/.tagconn" ] && [ -f "$tpl" ]; then
+        if mkdir "$rd/.tagconn" 2>/dev/null; then
+          # Re-check (SC4 L2): close the window between mkdir succeeding and
+          # the write below - something could have raced us and swapped
+          # .tagconn for a symlink in between. Then `cd` into it and write a
+          # relative path: once `cd` resolves, the write targets that exact
+          # directory inode even if the path component is later replaced.
+          if [ -d "$rd/.tagconn" ] && [ ! -L "$rd/.tagconn" ]; then
+            (
+              cd "$rd/.tagconn" 2>/dev/null || exit 0
+              # noclobber (set -C): never overwrite an existing README.md.
+              set -C
+              cat "$tpl" > README.md
+            ) 2>/dev/null
+          fi
         fi
       fi
     fi
 
     # -------------------- Profile import (opt-in via attribution.conf) --------------------
     # Requires: attribution.conf present (installer writes it 0600 by
-    # default), and a REGULAR, NON-SYMLINK .tagconn/office.json under a
-    # NON-SYMLINK .tagconn.
-    if [ -n "$dir" ] && [ -f "$attrconf" ] && [ ! -L "$dir/.tagconn" ]; then
-      f="$dir/.tagconn/office.json"
-      if [ -f "$f" ] && [ ! -L "$f" ]; then
-        # +1 byte over the cap so we can detect "too large" without reading
-        # the whole (possibly huge) file twice.
-        n=$(head -c 65537 "$f" 2>/dev/null | wc -c)
-        if [ "$n" -gt 0 ] && [ "$n" -le 65536 ]; then
-          sid=$(printf '%s' "$body" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-          # Restrict to the session-id character set; an empty or
-          # out-of-charset value skips the import (the server can't
-          # correlate it to a project without a usable token anyway).
-          case "$sid" in
-            *[!A-Za-z0-9_-]*) sid="" ;;
-          esac
-          if [ -n "$sid" ]; then
-            head -c 65536 "$f" | curl -s -o /dev/null \
-              --connect-timeout 0.3 \
-              -m 1 \
-              -K "$attrconf" \
-              -H "x-tagconn-session-id: $sid" \
-              -H 'content-type: application/json' \
-              --data-binary @- \
-              >/dev/null 2>&1
+    # default), and a REGULAR, NON-SYMLINK, OWNED-BY-US .tagconn/office.json
+    # under a REGULAR (well, directory), NON-SYMLINK, OWNED-BY-US .tagconn.
+    if [ -n "$rd" ] && [ -f "$attrconf" ]; then
+      t="$rd/.tagconn"
+      if [ -d "$t" ] && [ ! -L "$t" ] && [ -O "$t" ]; then
+        f="$t/office.json"
+        # [ -f ] is true only for a regular file (never a FIFO/socket/device),
+        # so a planted named pipe can't make the `head` below block forever.
+        if [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ]; then
+          # Read ONCE (SC4 L3): the old code read the file twice (once to
+          # measure it with `wc -c`, once to send it), leaving a TOCTOU
+          # window where the content could change in between. Reading into a
+          # variable strips trailing newlines, so a trailing literal "x" is
+          # appended first and stripped back off after - the classic shell
+          # idiom for capturing a command's exact byte output including
+          # trailing whitespace (see comments on `raw`/`payload` below).
+          raw=$(head -c 65537 -- "$f" 2>/dev/null; printf x)
+          n=$(( ${#raw} - 1 ))
+          if [ "$n" -gt 0 ] && [ "$n" -le 65536 ]; then
+            sid=$(printf '%s' "$body" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+            # Restrict to the session-id character set; an empty or
+            # out-of-charset value skips the import (the server can't
+            # correlate it to a project without a usable token anyway).
+            case "$sid" in
+              *[!A-Za-z0-9_-]*) sid="" ;;
+            esac
+            if [ -n "$sid" ]; then
+              payload=${raw%x}
+              printf '%s' "$payload" | curl -s -o /dev/null \
+                --connect-timeout 0.3 \
+                -m 1 \
+                -K "$attrconf" \
+                -H "x-tagconn-session-id: $sid" \
+                -H 'content-type: application/json' \
+                --data-binary @- \
+                >/dev/null 2>&1
+            fi
           fi
         fi
       fi

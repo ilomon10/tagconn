@@ -11,7 +11,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { isBroadAllowDir } from './install.ts';
+import { isBroadAllowDir, validateUrl } from './install.ts';
 
 const HOOK_MARKER = 'tagconn/office-hook.sh';
 const HOOK_EVENTS = [
@@ -77,8 +77,8 @@ export function parseArgs(argv: string[]): Args {
   const args: Args = {
     claudeDir: envClaudeDir ? resolve(envClaudeDir) : DEFAULT_CLAUDE_DIR,
     configDir: DEFAULT_CONFIG_DIR, // resolved below, once all flags are parsed
-    url: process.env.OFFICE_URL || 'http://127.0.0.1:4317',
-    webUrl: process.env.OFFICE_WEB_URL || 'http://127.0.0.1:4318',
+    url: validateUrl(process.env.OFFICE_URL || 'http://127.0.0.1:4317'),
+    webUrl: validateUrl(process.env.OFFICE_WEB_URL || 'http://127.0.0.1:4318'),
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -88,8 +88,8 @@ export function parseArgs(argv: string[]): Args {
       claudeDirExplicit = true;
     } else if (a === '--config-dir') {
       configDirFlag = resolve(argv[++i] ?? '');
-    } else if (a === '--url') args.url = argv[++i] ?? args.url;
-    else if (a === '--web-url') args.webUrl = argv[++i] ?? args.webUrl;
+    } else if (a === '--url') args.url = validateUrl(argv[++i] ?? args.url);
+    else if (a === '--web-url') args.webUrl = validateUrl(argv[++i] ?? args.webUrl);
     else if (a === '--help' || a === '-h') args.help = true;
   }
 
@@ -150,6 +150,44 @@ function checkCurlConf(configDir: string): void {
     }
   } catch (err) {
     fail(`curl.conf is not readable (${path})`, String((err as Error).message));
+  }
+}
+
+/** attribution.conf holds the hook token too (SC4 INFO): same mode-600 check as curl.conf, but optional (opt-in feature). */
+function checkAttributionConf(configDir: string): void {
+  const path = join(configDir, 'attribution.conf');
+  if (!existsSync(path)) {
+    warn(`attribution.conf not found (${path})`, 'Optional: run `pnpm office:install` (it is installed by default unless removed).');
+    return;
+  }
+  try {
+    const mode = statSync(path).mode & 0o777;
+    if (mode !== 0o600) {
+      fail(`attribution.conf has mode ${mode.toString(8)}, expected 600 (${path})`, `Run: chmod 600 ${path}`);
+      return;
+    }
+    ok(`attribution.conf present, mode 600 (${path})`);
+  } catch (err) {
+    fail(`attribution.conf is not readable (${path})`, String((err as Error).message));
+  }
+}
+
+/** The repo .env holds OFFICE_HOOK_TOKEN and OFFICE_RUNNER__TOKEN (SC4 INFO): warn if it's not mode 600. */
+function checkEnvFileMode(): void {
+  const path = join(repoRoot, '.env');
+  if (!existsSync(path)) {
+    warn(`.env not found (${path})`, 'Optional: run `pnpm office:install` to create it.');
+    return;
+  }
+  try {
+    const mode = statSync(path).mode & 0o777;
+    if (mode !== 0o600) {
+      warn(`.env has mode ${mode.toString(8)}, expected 600 (${path})`, `It holds secrets - run: chmod 600 ${path}`);
+      return;
+    }
+    ok(`.env present, mode 600 (${path})`);
+  } catch (err) {
+    warn(`.env is not readable (${path})`, String((err as Error).message));
   }
 }
 
@@ -405,10 +443,10 @@ async function checkPairingStatus(url: string): Promise<void> {
       return;
     }
     const body = (await res.json()) as { mode?: string; admin?: boolean };
-    ok(`pairing: auth.mode=${body.mode ?? 'unknown'}`);
-    if (body.admin !== true) {
-      warn('this doctor run has no admin session', 'Run `pnpm office:pair` and open the printed URL to pair a browser.');
-    }
+    // doctor never carries an admin token itself, so `admin: false` here is expected and not a
+    // problem to flag - it says nothing about whether a browser elsewhere is paired.
+    const adminNote = body.admin === true ? 'admin=true' : 'not checked without a session (normal for this CLI)';
+    ok(`pairing: auth.mode=${body.mode ?? 'unknown'} (${adminNote})`);
   } catch {
     warn('could not reach /api/auth/status', 'Start the server (`pnpm office:up` or `pnpm dev`) to check pairing status.');
   }
@@ -466,8 +504,10 @@ export async function main(): Promise<void> {
   checkSettingsHooks(args.claudeDir);
   const direct = await checkServerHealth(args.url);
   checkDockerCompose();
+  checkEnvFileMode();
 
   console.log('\n[runner]');
+  checkAttributionConf(args.configDir);
   checkRunnerConfig(args.configDir);
   checkCliCapabilities();
   checkSystemdScope();
@@ -488,5 +528,8 @@ export async function main(): Promise<void> {
 
 // Only run when this file is the entry point (not when imported by tests).
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  main();
+  main().catch((err: unknown) => {
+    console.error(`tagconn doctor failed: ${(err as Error).message}`);
+    process.exitCode = 1;
+  });
 }
