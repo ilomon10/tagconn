@@ -1,5 +1,5 @@
 import type { Agent } from '@tagconn/shared';
-import { useNow, useRoleLookup } from '../../lib/hooks';
+import { useNow, useThemedRoleLookup } from '../../lib/hooks';
 import { elapsed, formatTokens } from '../../lib/format';
 import { contextRatio, totalTokens } from '../../lib/tokens';
 import { Badge, Dot, Empty, cx } from '../../components/ui';
@@ -13,7 +13,7 @@ const STATUS_STYLE: Record<Agent['status'], string> = {
 };
 
 function RosterItem({ agent, selected, onSelect, now }: { agent: Agent; selected: boolean; onSelect: () => void; now: number }) {
-  const lookup = useRoleLookup();
+  const lookup = useThemedRoleLookup();
   const role = lookup(agent.role);
   const project = useOfficeStore((s) => s.projects[agent.projectId]?.name);
   const multiFloor = useOfficeStore((s) => s.selectedProjectId === '*');
@@ -30,7 +30,11 @@ function RosterItem({ agent, selected, onSelect, now }: { agent: Agent; selected
       >
         <div className="flex items-center gap-2">
           <Dot color={role.color} />
-          <span className="truncate text-xs font-semibold text-ink-100">{role.title}</span>
+          <span className="truncate text-xs font-semibold text-ink-100">{role.themedTitle}</span>
+          {/* Guild titles read like flavor text ("Archmage"); keep the plain role title (e.g.
+              "Architect") visible too, but only when it actually differs (skip the redundant
+              duplicate under the modern style, where the two usually match). */}
+          {role.themedTitle !== role.title && <span className="truncate text-[10px] text-ink-400">{role.title}</span>}
           {agent.isMain && <Badge>main</Badge>}
           <span className="ml-auto shrink-0 font-pixel text-[10px] text-ink-400">{elapsed(agent.startedAt, agent.endedAt ?? now)}</span>
         </div>

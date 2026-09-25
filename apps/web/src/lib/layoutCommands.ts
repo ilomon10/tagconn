@@ -37,17 +37,41 @@ export async function refreshLayouts(): Promise<OfficeLayout[]> {
   return list;
 }
 
-/** Create (no `input.id`) or replace (existing id) a layout. Rejects builtins server-side (409). */
+/**
+ * Classifies a failed `saveLayout()` by matching the server's message text. Both transports
+ * (REST 409 and the `layouts:save` socket ack) only carry a message, no status code — see
+ * `layouts.service.ts` and `layouts.socket.ts`'s `layoutAck` — so this is necessarily string-based.
+ * Demo mode never throws these (see `saveLayout` below), so this only matters in live mode.
+ */
+export type SaveLayoutFailure =
+  | { kind: 'max-stored'; message: string }
+  | { kind: 'conflict'; message: string }
+  | { kind: 'other'; message: string };
+
+export function classifySaveLayoutError(err: unknown): SaveLayoutFailure {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes('office.maxStoredLayouts')) return { kind: 'max-stored', message };
+  if (message.includes('was changed since you loaded it') || message.includes('no longer exists')) return { kind: 'conflict', message };
+  return { kind: 'other', message };
+}
+
+/**
+ * Create (no `input.id`) or replace (existing id) a layout. Rejects builtins server-side (409).
+ * `input.baseUpdatedAt`, when set, asks the server to 409 (`classifySaveLayoutError` -> 'conflict')
+ * if the layout was changed or deleted since it was loaded (optimistic concurrency, M7 hardening);
+ * demo mode has only one client, so it ignores the field entirely.
+ */
 export async function saveLayout(input: OfficeLayoutInput): Promise<OfficeLayout> {
   if (isDemo()) {
     const now = Date.now();
-    const existing = input.id ? useLayoutStore.getState().layouts[input.id] : undefined;
+    const { baseUpdatedAt: _baseUpdatedAt, ...rest } = input; // demo has one client — nothing to conflict with
+    const existing = rest.id ? useLayoutStore.getState().layouts[rest.id] : undefined;
     if (existing?.builtin) throw new Error(`"${existing.name}" is a builtin layout — duplicate it to edit.`);
     const saved: OfficeLayout = {
-      ...input,
-      id: input.id ?? genLocalLayoutId(input.name),
-      background: input.background ?? 'hall',
-      corridorWidth: input.corridorWidth ?? 2,
+      ...rest,
+      id: rest.id ?? genLocalLayoutId(rest.name),
+      background: rest.background ?? 'hall',
+      corridorWidth: rest.corridorWidth ?? 2,
       builtin: false,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,

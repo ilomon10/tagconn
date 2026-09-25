@@ -31,6 +31,31 @@ describe('editorStore', () => {
     expect(s.history).toEqual([]);
   });
 
+  describe('originalUpdatedAt (save concurrency, M7 hardening)', () => {
+    it('load() remembers the saved updatedAt, for the next save to send back as baseUpdatedAt', () => {
+      useEditorStore.getState().load(layout({ updatedAt: 42 }));
+      expect(useEditorStore.getState().originalUpdatedAt).toBe(42);
+    });
+
+    it('createNew()/close()/duplicateAsEditable() all clear it (no baseUpdatedAt on a create)', () => {
+      useEditorStore.getState().load(layout({ updatedAt: 42 }));
+      useEditorStore.getState().duplicateAsEditable();
+      expect(useEditorStore.getState().originalUpdatedAt).toBeUndefined();
+      useEditorStore.getState().load(layout({ updatedAt: 42 }));
+      useEditorStore.getState().createNew();
+      expect(useEditorStore.getState().originalUpdatedAt).toBeUndefined();
+      useEditorStore.getState().load(layout({ updatedAt: 42 }));
+      useEditorStore.getState().close();
+      expect(useEditorStore.getState().originalUpdatedAt).toBeUndefined();
+    });
+
+    it('applySaved() adopts the server-returned updatedAt for the next save', () => {
+      useEditorStore.getState().load(layout({ updatedAt: 1 }));
+      useEditorStore.getState().applySaved(layout({ updatedAt: 2 }));
+      expect(useEditorStore.getState().originalUpdatedAt).toBe(2);
+    });
+  });
+
   it('createNew() starts a blank, dirty, unsaved draft', () => {
     useEditorStore.getState().createNew({ name: 'Blank' });
     const s = useEditorStore.getState();

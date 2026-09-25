@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Role } from '@tagconn/shared';
+import { resolveTitle } from '../game/lookResolver';
+import { getTheme } from '../game/themes';
 import { onFloor, useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { FALLBACK_COLOR } from './defaultRoles';
@@ -48,4 +50,28 @@ export function useRoleLookup(): (name: string | undefined) => RoleInfo {
       return { title: role?.title ?? name ?? 'unknown', color: role?.color ?? FALLBACK_COLOR, role };
     };
   }, [roles]);
+}
+
+export interface ThemedRoleInfo extends RoleInfo {
+  /** The current style's name for this role (e.g. guild's "Archmage" for `architect`); falls back
+   * to the plain `title` for a custom role the theme doesn't know about. */
+  themedTitle: string;
+}
+
+/** Pure composition of a plain `RoleInfo` with a theme's title map — kept separate from the hook
+ * below so it's testable without a React render (`useThemedRoleLookup` just wires the two stores in). */
+export function themedRoleInfo(theme: Pick<{ roleTitles: Record<string, string> }, 'roleTitles'>, info: RoleInfo, roleName: string | undefined): ThemedRoleInfo {
+  return { ...info, themedTitle: roleName ? resolveTitle(theme, roleName, info.title) : info.title };
+}
+
+/** Like `useRoleLookup`, but the primary label is the THEMED title (guild titles when
+ * `office.style` is `guild`) — see `Roster.tsx`, which shows it as the primary label with the plain
+ * role title as small secondary text. */
+export function useThemedRoleLookup(): (name: string | undefined) => ThemedRoleInfo {
+  const lookup = useRoleLookup();
+  const style = useSettingsStore((s) => s.settings.office.style);
+  return useMemo(() => {
+    const theme = getTheme(style);
+    return (name) => themedRoleInfo(theme, lookup(name), name);
+  }, [lookup, style]);
 }

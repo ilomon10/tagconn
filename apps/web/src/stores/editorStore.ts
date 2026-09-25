@@ -58,6 +58,12 @@ export interface EditorState {
   draft: OfficeLayoutInput | null;
   /** The id of the saved layout this draft started from; undefined for a brand-new, unsaved layout. */
   originalId?: string;
+  /**
+   * The saved layout's `updatedAt` as of the last `load()`/`applySaved()` — sent back as
+   * `baseUpdatedAt` on the next save so the server can 409 if someone else saved (or deleted) it in
+   * the meantime, instead of silently overwriting them. Undefined for a brand-new, unsaved layout.
+   */
+  originalUpdatedAt?: number;
   /** True while editing a read-only builtin — mutating actions no-op until `duplicateAsEditable()`. */
   builtin: boolean;
   dirty: boolean;
@@ -120,6 +126,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
   return {
     draft: null,
     originalId: undefined,
+    originalUpdatedAt: undefined,
     builtin: false,
     dirty: false,
     selection: [],
@@ -133,6 +140,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       set({
         draft: { ...layout },
         originalId: layout.id,
+        originalUpdatedAt: layout.updatedAt,
         builtin: layout.builtin,
         dirty: false,
         selection: [],
@@ -146,6 +154,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       set({
         draft: emptyDraft(opts),
         originalId: undefined,
+        originalUpdatedAt: undefined,
         builtin: false,
         dirty: true,
         selection: [],
@@ -159,6 +168,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       set({
         draft: null,
         originalId: undefined,
+        originalUpdatedAt: undefined,
         builtin: false,
         dirty: false,
         selection: [],
@@ -208,6 +218,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       set({
         draft: { ...s.draft, id: undefined, name: newName ?? `${s.draft.name} copy` },
         originalId: undefined,
+        originalUpdatedAt: undefined,
         builtin: false,
         dirty: true,
         history: [],
@@ -216,7 +227,8 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       });
     },
 
-    applySaved: (saved) => set({ draft: { ...saved }, originalId: saved.id, builtin: saved.builtin, dirty: false }),
+    applySaved: (saved) =>
+      set({ draft: { ...saved }, originalId: saved.id, originalUpdatedAt: saved.updatedAt, builtin: saved.builtin, dirty: false }),
 
     select: (ids, additive) =>
       set((s) => (additive ? { selection: [...new Set([...s.selection, ...ids])] } : { selection: [...new Set(ids)] })),

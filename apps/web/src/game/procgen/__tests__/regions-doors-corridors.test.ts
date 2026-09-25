@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { astarVoid, carveCorridor, findExitCandidates } from '../corridors';
 import { footprintRing, findDoorSpans } from '../doors';
-import { buildRegionAtGrid, buildRoomToRegion, findRegions } from '../regions';
+import { buildRegionAtGrid, buildRoomToRegion, findRegions, findVoidAreas } from '../regions';
 import type { TileKind } from '../types';
 
 /** Build a `[y][x]` tile grid from an array of same-length row strings (f=floor, w=wall, v=void). */
@@ -96,6 +96,28 @@ describe('corridors', () => {
   it('astarVoid returns null when there is no void path', () => {
     const tiles = grid(['vwv', 'vwv', 'vwv']);
     expect(astarVoid(tiles, { x: 0, y: 0 }, { x: 2, y: 0 })).toBeNull();
+  });
+
+  it('astarVoid stops after maxExpansions instead of exhausting a huge or maze-like void area', () => {
+    // A wide open void strip: `astarVoid` would normally find this trivially (it's a straight line).
+    const tiles = grid(['v'.repeat(50)]);
+    expect(astarVoid(tiles, { x: 0, y: 0 }, { x: 49, y: 0 })).not.toBeNull();
+    // With a tiny expansion budget, the same call gives up before reaching the goal.
+    expect(astarVoid(tiles, { x: 0, y: 0 }, { x: 49, y: 0 }, 3)).toBeNull();
+  });
+
+  it('findVoidAreas labels disconnected void components separately, and a connected one as a single id', () => {
+    // Two 1x1 void pockets on either side of a wall column: never orthogonally adjacent.
+    const tiles = grid(['vwv']);
+    const areas = findVoidAreas(tiles);
+    expect(areas[0]![0]).not.toBeNull();
+    expect(areas[0]![2]).not.toBeNull();
+    expect(areas[0]![0]).not.toBe(areas[0]![2]);
+    expect(areas[0]![1]).toBeNull(); // the wall tile itself is never labelled
+
+    const connected = grid(['vvv']);
+    const connectedAreas = findVoidAreas(connected);
+    expect(new Set(connectedAreas[0]).size).toBe(1); // one contiguous strip -> one area id
   });
 
   it('carveCorridor only converts void tiles to floor, never walls', () => {

@@ -6,7 +6,7 @@ import { ALL_FLOORS, useOfficeStore } from '../../stores/officeStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useLayoutStore, layoutForProject } from '../../stores/layoutStore';
 import { draftAsLayout, useEditorStore, type EditorTool } from '../../stores/editorStore';
-import { assignLayout, deleteLayout, refreshLayouts, saveLayout } from '../../lib/layoutCommands';
+import { assignLayout, classifySaveLayoutError, deleteLayout, refreshLayouts, saveLayout } from '../../lib/layoutCommands';
 import { resolveShortcut, type KeyLike } from './shortcuts';
 import { PlanCanvas } from './PlanCanvas';
 import { Inspector } from './Inspector';
@@ -40,14 +40,21 @@ const HELP_LINES = [
   ['Esc', 'Cancel the popover, then clear selection, then close'],
 ];
 
-export function OfficeEditor({ onClose }: { onClose: () => void }) {
+/**
+ * `targetProjectId`: opens the planner preloaded for a specific floor regardless of the globally
+ * selected one — used by the "Edit floor" row action in Manage floors (FloorManager), which lists
+ * every floor, not just the selected one. The floating "Hall Planner" button omits it and gets the
+ * old behavior (whatever floor is currently selected).
+ */
+export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void; targetProjectId?: string }) {
   const store = useEditorStore();
-  const { draft, selection, tool, history, future, dirty, builtin, originalId } = store;
+  const { draft, selection, tool, history, future, dirty, builtin, originalId, originalUpdatedAt } = store;
   const layouts = useLayoutStore((s) => s.layouts);
   const settings = useSettingsStore((s) => s.settings);
   const selectedProjectId = useOfficeStore((s) => s.selectedProjectId);
   const projects = useOfficeStore((s) => s.projects);
-  const project = selectedProjectId === ALL_FLOORS ? undefined : projects[selectedProjectId];
+  const effectiveProjectId = targetProjectId ?? selectedProjectId;
+  const project = effectiveProjectId === ALL_FLOORS ? undefined : projects[effectiveProjectId];
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewStyle, setPreviewStyle] = useState<OfficeStyle>(settings.office.style);
@@ -55,6 +62,9 @@ export function OfficeEditor({ onClose }: { onClose: () => void }) {
   const [flashRoomIds, setFlashRoomIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set on a 409 conflict (someone else saved or deleted this layout since it was loaded): offers
+  // Reload (discard mine) or Save as copy instead of silently losing one side's edits.
+  const [conflict, setConflict] = useState<string | null>(null);
   const [generatedMap, setGeneratedMap] = useState<GeneratedMap | null>(null);
 
   const previewHostRef = useRef<HTMLDivElement>(null);
@@ -80,6 +90,9 @@ export function OfficeEditor({ onClose }: { onClose: () => void }) {
       const registry = Object.fromEntries(list.map((l) => [l.id, l]));
       const initial = layoutForProject(registry, project, settings.office.defaultLayoutId);
       useEditorStore.getState().load(initial);
+      // "Edit floor" (FloorManager) always wants something editable, not a read-only builtin —
+      // "duplicate-to-edit" up front instead of making the user click Duplicate first.
+      if (targetProjectId && initial.builtin) useEditorStore.getState().duplicateAsEditable();
     });
     return () => useEditorStore.getState().close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -125,11 +138,56 @@ export function OfficeEditor({ onClose }: { onClose: () => void }) {
     if (!draft || !canSave || busy) return;
     setBusy(true);
     setError(null);
+    setConflict(null);
     try {
-      const saved = await saveLayout(originalId ? { ...draft, id: originalId } : draft);
+      // baseUpdatedAt only makes sense when replacing a layout we actually loaded from the server;
+      // omitting it on a create (no originalId) keeps that path's old, unconditional behavior.
+      const input = originalId ? { ...draft, id: originalId, baseUpdatedAt: originalUpdatedAt } : draft;
+      const saved = await saveLayout(input);
       useEditorStore.getState().applySaved(saved);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const failure = classifySaveLayoutError(err);
+      if (failure.kind === 'conflict') setConflict('This layout was changed or deleted elsewhere.');
+      else setError(failure.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Conflict dialog: "Reload" — discard my edits and load whatever is on the server now. */
+  const performReload = async () => {
+    if (!originalId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const list = await refreshLayouts();
+      const fresh = list.find((l) => l.id === originalId);
+      if (fresh) {
+        store.load(fresh);
+      } else {
+        setError(`"${draft?.name ?? originalId}" was deleted elsewhere — start a new layout or pick another.`);
+        store.createNew();
+      }
+    } finally {
+      setBusy(false);
+      setConflict(null);
+    }
+  };
+
+  /** Conflict dialog: "Save as copy" — keep my edits, but as a brand-new layout (no baseUpdatedAt). */
+  const performSaveAsCopy = async () => {
+    if (busy) return;
+    store.duplicateAsEditable();
+    setConflict(null);
+    setError(null);
+    setBusy(true);
+    try {
+      const fresh = useEditorStore.getState().draft;
+      if (!fresh) return;
+      const saved = await saveLayout(fresh);
+      useEditorStore.getState().applySaved(saved);
+    } catch (err) {
+      setError(classifySaveLayoutError(err).message);
     } finally {
       setBusy(false);
     }
@@ -184,10 +242,14 @@ export function OfficeEditor({ onClose }: { onClose: () => void }) {
   };
 
   // ------------------------------------------------------------------------------ global shortcuts
+  // Capture phase + stopPropagation: the planner's own shortcuts must win over any other
+  // window-level keydown listener (e.g. the office's floor-switch hotkeys), which is also why the
+  // root element below carries `data-modal="hall-planner"` for listeners that check for it directly.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const action = resolveShortcut(e as unknown as KeyLike);
       if (!action) return;
+      e.stopPropagation();
       switch (action.type) {
         case 'undo':
           e.preventDefault();
@@ -241,21 +303,35 @@ export function OfficeEditor({ onClose }: { onClose: () => void }) {
           break;
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true); // capture: see comment above
+    return () => window.removeEventListener('keydown', onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, draft, dirty]);
 
   if (!draft) {
     return (
-      <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 text-ink-300">Loading the Hall Planner…</div>
+      <div
+        className="fixed inset-0 z-50 grid place-items-center bg-black/70 text-ink-300"
+        data-modal="hall-planner"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Hall Planner"
+      >
+        Loading the Hall Planner…
+      </div>
     );
   }
 
   const errorCount = issues.filter((i) => i.severity === 'error').length;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-ink-950">
+    <div
+      className="fixed inset-0 z-50 flex flex-col bg-ink-950"
+      data-modal="hall-planner"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Hall Planner"
+    >
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-ink-700 bg-ink-900 px-3">
         <span className="font-pixel text-xs font-semibold text-ink-100">Hall Planner</span>
         <Select className="w-48" value={originalId ?? ''} onChange={(e) => (e.target.value ? openLayout(e.target.value) : store.createNew())}>
@@ -379,6 +455,23 @@ export function OfficeEditor({ onClose }: { onClose: () => void }) {
             <Button className="mt-3" onClick={() => setHelpOpen(false)}>
               Close
             </Button>
+          </div>
+        </div>
+      )}
+
+      {conflict && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" role="alertdialog" aria-modal="true">
+          <div className="w-full max-w-sm rounded-lg border border-ink-600 bg-ink-850 p-4">
+            <h2 className="mb-2 text-sm font-semibold text-ink-100">Layout conflict</h2>
+            <p className="mb-4 text-[12px] text-ink-300">{conflict}</p>
+            <div className="flex justify-end gap-2">
+              <Button variant="subtle" disabled={busy} onClick={() => void performReload()}>
+                Reload (discard mine)
+              </Button>
+              <Button variant="primary" disabled={busy} onClick={() => void performSaveAsCopy()}>
+                Save as copy
+              </Button>
+            </div>
           </div>
         </div>
       )}

@@ -16,7 +16,7 @@ import {
 import { astarVoid, carveCorridor, findExitCandidates, type ExitCandidate } from './corridors';
 import { footprintRing, findDoorSpans, SIDE_DIR, type DoorRoomShape, type DoorSpan, type Side } from './doors';
 import { furnishRoom, type RecipeItem } from './recipes';
-import { buildRegionAtGrid, buildRoomToRegion, findRegions, reachableFrom, regionCentroid, type Region } from './regions';
+import { buildRegionAtGrid, buildRoomToRegion, findRegions, findVoidAreas, reachableFrom, regionCentroid, type Region } from './regions';
 import { rngFor, randInt } from './rng';
 import type {
   DecorSlot,
@@ -274,12 +274,28 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     exitsByRegion.set(rid, list);
   }
 
+  // Precomputed once: two exits that don't share a void area can never be joined by `astarVoid`, so
+  // `tryCorridor` below can skip that (potentially expensive, and here guaranteed doomed) call
+  // entirely — see `findVoidAreas`'s doc comment for why this matters for many sealed void pockets.
+  const voidAreas = layout.background === 'void' ? findVoidAreas(tiles) : null;
+  const voidAreaAt = (p: Point): number | null => voidAreas?.[p.y]?.[p.x] ?? null;
+
   const tryCorridor = (a: number, b: number): boolean => {
     const exitsA = exitsByRegion.get(a) ?? [];
     const exitsB = exitsByRegion.get(b) ?? [];
     if (!exitsA.length || !exitsB.length) return false;
     const pairs: { a: ExitCandidate; b: ExitCandidate; d: number }[] = [];
-    for (const ea of exitsA) for (const eb of exitsB) pairs.push({ a: ea, b: eb, d: manhattan(ea.voidTile, eb.voidTile) });
+    for (const ea of exitsA) {
+      for (const eb of exitsB) {
+        if (voidAreas) {
+          const areaA = voidAreaAt(ea.voidTile);
+          const areaB = voidAreaAt(eb.voidTile);
+          if (areaA === null || areaB === null || areaA !== areaB) continue;
+        }
+        pairs.push({ a: ea, b: eb, d: manhattan(ea.voidTile, eb.voidTile) });
+      }
+    }
+    if (!pairs.length) return false;
     pairs.sort((p1, p2) => p1.d - p2.d);
     for (const { a: ea, b: eb } of pairs.slice(0, 4)) {
       const path = astarVoid(tiles, ea.voidTile, eb.voidTile);
@@ -465,8 +481,9 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
           queue.push(s);
         }
       }
-      while (queue.length) {
-        const p = queue.shift()!;
+      let head = 0;
+      while (head < queue.length) {
+        const p = queue[head++]!;
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
           const n = { x: p.x + dx, y: p.y + dy };
           if (!insideRect(n, interior) || blockedSet.has(key(n)) || seen.has(key(n))) continue;

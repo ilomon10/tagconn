@@ -44,8 +44,9 @@ export function findRegions(tiles: readonly TileKind[][], roomAt: readonly (stri
       let maxY = y;
       const queue: Point[] = [{ x, y }];
       seen[y]![x] = true;
-      while (queue.length) {
-        const p = queue.shift()!;
+      let head = 0; // index pointer instead of queue.shift(), which is O(n) per call on an array
+      while (head < queue.length) {
+        const p = queue[head++]!;
         regionTiles.push(p);
         const rid = roomAt[p.y]?.[p.x] ?? null;
         if (rid) roomIds.add(rid);
@@ -93,6 +94,42 @@ export function regionCentroid(r: Region): Point {
   return { x: sx / r.tiles.length, y: sy / r.tiles.length };
 }
 
+/**
+ * Connected components of `void` tiles only, computed once up front (security/perf hardening: a
+ * layout with many small, fully walled-in void pockets used to make the corridor carver run a full
+ * A* search — `astarVoid` — between every nearest-region pair even when the two exits sit in
+ * completely disconnected void areas, where it was always going to fail after exploring the whole
+ * component. Two exits in different void areas can never be joined, so a caller (`generate.ts`'s
+ * `tryCorridor`) can skip that doomed pathfinding call entirely just by comparing area ids.
+ */
+export function findVoidAreas(tiles: readonly TileKind[][]): (number | null)[][] {
+  const rows = tiles.length;
+  const cols = tiles[0]?.length ?? 0;
+  const areas: (number | null)[][] = Array.from({ length: rows }, () => new Array<number | null>(cols).fill(null));
+  let nextId = 0;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (tiles[y]![x] !== 'void' || areas[y]![x] !== null) continue;
+      const id = nextId++;
+      const queue: Point[] = [{ x, y }];
+      areas[y]![x] = id;
+      let head = 0;
+      while (head < queue.length) {
+        const p = queue[head++]!;
+        for (const [dx, dy] of DIRS) {
+          const nx = p.x + dx;
+          const ny = p.y + dy;
+          if (nx < 0 || ny < 0 || ny >= rows || nx >= cols) continue;
+          if (areas[ny]![nx] !== null || tiles[ny]![nx] !== 'void') continue;
+          areas[ny]![nx] = id;
+          queue.push({ x: nx, y: ny });
+        }
+      }
+    }
+  }
+  return areas;
+}
+
 /** Breadth-first flood fill over walkable tiles (0 = walkable), shared by verification and seat fallback. */
 export function reachableFrom(walkable: readonly number[][], start: Point): Set<string> {
   const seen = new Set<string>();
@@ -100,8 +137,9 @@ export function reachableFrom(walkable: readonly number[][], start: Point): Set<
   if (walkable[start.y]?.[start.x] !== 0) return seen;
   const queue: Point[] = [start];
   seen.add(key(start));
-  while (queue.length) {
-    const p = queue.shift()!;
+  let head = 0;
+  while (head < queue.length) {
+    const p = queue[head++]!;
     for (const [dx, dy] of DIRS) {
       const n = { x: p.x + dx, y: p.y + dy };
       if (walkable[n.y]?.[n.x] !== 0) continue;

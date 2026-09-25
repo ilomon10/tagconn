@@ -75,10 +75,16 @@ class MinHeap<T> {
 /**
  * A* over `void` tiles only (corridors.ts step 6: "run A* over void tiles"). Cost 1 per step, +2 when
  * next to a wall (biases corridors toward the middle of open void, away from room walls).
+ *
+ * `maxExpansions` bounds the search (default: one visit per tile in the grid, `cols * rows`) so a
+ * pathological layout with a huge or maze-like void area can't make a single call scan far more than
+ * the grid's own size before giving up — security/perf hardening alongside `findVoidAreas`, which
+ * lets most doomed calls (start and goal in different, disconnected void areas) skip this entirely.
  */
-export function astarVoid(tiles: readonly TileKind[][], start: Point, goal: Point): Point[] | null {
+export function astarVoid(tiles: readonly TileKind[][], start: Point, goal: Point, maxExpansions?: number): Point[] | null {
   const rows = tiles.length;
   const cols = tiles[0]?.length ?? 0;
+  const limit = maxExpansions ?? rows * cols;
   const passable = (p: Point) => p.x >= 0 && p.y >= 0 && p.x < cols && p.y < rows && tiles[p.y]![p.x] === 'void';
   if (!passable(start) || !passable(goal)) return null;
 
@@ -96,6 +102,7 @@ export function astarVoid(tiles: readonly TileKind[][], start: Point, goal: Poin
   const closed = new Set<string>();
   const open = new MinHeap<Point>();
   open.push(manhattan(start, goal), start);
+  let expansions = 0;
 
   while (open.size) {
     const current = open.pop()!;
@@ -111,6 +118,7 @@ export function astarVoid(tiles: readonly TileKind[][], start: Point, goal: Poin
       }
       return path.reverse();
     }
+    if (++expansions > limit) return null;
     closed.add(currentKey);
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       const n = { x: current.x + dx, y: current.y + dy };

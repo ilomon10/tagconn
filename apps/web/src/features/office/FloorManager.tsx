@@ -3,8 +3,9 @@ import type { Project } from '@tagconn/shared';
 import { useOfficeStore, visibleProjects } from '../../stores/officeStore';
 import { patchProject } from '../../lib/commands';
 import { Badge, Button, Checkbox, Empty, Input, Panel } from '../../components/ui';
+import { OfficeEditor } from '../editor/OfficeEditor';
 
-function FloorRow({ project }: { project: Project }) {
+function FloorRow({ project, onEdit }: { project: Project; onEdit: () => void }) {
   const [name, setName] = useState(project.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +71,9 @@ function FloorRow({ project }: { project: Project }) {
           }}
         />
         {project.archived && <Badge className="shrink-0 bg-ink-700 text-ink-400">archived</Badge>}
+        <Button variant="subtle" className="shrink-0" disabled={busy} onClick={onEdit} title="Draw and edit this floor's plan">
+          Edit floor
+        </Button>
         <Button variant={project.archived ? 'primary' : 'subtle'} className="shrink-0" disabled={busy} onClick={toggleArchived}>
           {project.archived ? 'Unarchive' : 'Archive'}
         </Button>
@@ -88,36 +92,42 @@ export function FloorManager({ onClose }: { onClose: () => void }) {
   const projects = useOfficeStore((s) => s.projects);
   const selected = useOfficeStore((s) => s.selectedProjectId);
   const [showArchived, setShowArchived] = useState(false);
+  // "Edit floor" opens the Hall Planner targeted at a specific row (7g). Self-contained here (rather
+  // than plumbed through a callback prop) so it works regardless of which screen renders this panel.
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const list = visibleProjects(projects, { selectedId: selected, showArchived });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-20" onClick={onClose}>
-      <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
-        <Panel
-          title="Manage floors"
-          actions={
-            <Button variant="ghost" onClick={onClose} aria-label="Close">
-              ✕
-            </Button>
-          }
-        >
-          <div className="flex items-center justify-between border-b border-ink-700 px-3 py-2">
-            <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
-            <span className="text-[11px] text-ink-400">
-              {list.length} floor{list.length === 1 ? '' : 's'}
-            </span>
-          </div>
-          {list.length === 0 ? (
-            <Empty>No floors yet — start a Claude Code session to see one appear.</Empty>
-          ) : (
-            <ul className="max-h-[60vh] space-y-1 overflow-y-auto p-2">
-              {list.map((p) => (
-                <FloorRow key={p.id} project={p} />
-              ))}
-            </ul>
-          )}
-        </Panel>
+    <>
+      <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-20" onClick={onClose}>
+        <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
+          <Panel
+            title="Manage floors"
+            actions={
+              <Button variant="ghost" onClick={onClose} aria-label="Close">
+                ✕
+              </Button>
+            }
+          >
+            <div className="flex items-center justify-between border-b border-ink-700 px-3 py-2">
+              <Checkbox checked={showArchived} onChange={setShowArchived} label="Show archived" />
+              <span className="text-[11px] text-ink-400">
+                {list.length} floor{list.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            {list.length === 0 ? (
+              <Empty>No floors yet — start a Claude Code session to see one appear.</Empty>
+            ) : (
+              <ul className="max-h-[60vh] space-y-1 overflow-y-auto p-2">
+                {list.map((p) => (
+                  <FloorRow key={p.id} project={p} onEdit={() => setEditingProjectId(p.id)} />
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </div>
       </div>
-    </div>
+      {editingProjectId && <OfficeEditor targetProjectId={editingProjectId} onClose={() => setEditingProjectId(null)} />}
+    </>
   );
 }
