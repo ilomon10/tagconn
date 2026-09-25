@@ -87,10 +87,12 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [x] Design B `docs/design/runner-and-helpdesk.md` (8j, 8k, 8l, 8m) + `runner.ts`, `receptionist.ts`, `auth.ts`, `attribution.ts`  [Architect B]
 - [x] SC1 security design review: approve with 10 required changes (mutual HMAC runner auth, exact --tools/--restricted Receptionist, bwrap redesign, CLI-trust gate + host quest policy, fail-closed gating, docs-only add-dir, CSP, WebFetch allowlist, mode mapping, import never touches roles)  [Security]
 - [x] Design B revision per SC1 (rev 2; 10 items TBD by SC3)  [Architect B]
-- [~] SC3 empirical CLI verification (real CLI, sandboxed, haiku)  [QA]
+- [x] SC3 empirical CLI verification: 2 critical confirmed (repo settings redirect API traffic without --setting-sources; unscoped WebFetch reaches loopback), --restricted + bwrap verified, setsid escapes group kill; V15 pending  [QA]
+- [x] Design B finalization with SC3 facts (rev 3)  [Architect B]
 - [x] Contract patch A (heroes, pm mode, multiverse) applied  [PM]
-- [ ] Contract patch B (runner/auth/receptionist/attribution) after the SC1 revision + SC3  [PM]
-- [~] Wave A1: H1 server heroes [~] · W2 web hero data [x] · W3 cast resolver [x] · W4 hero look/preview [x] · W6 multiverse plan + rift theme [x]
+- [x] Contract patch B (runner/auth/receptionist/attribution; whole runner + auth sections GUI-immutable)  [PM]
+- [ ] Wave B: S1 auth/pairing + gating · S2 runs module · R1 host runner · I1 installer/doctor/pairing · D1 attribution · W1 quest board + receptionist UI (per runner-and-helpdesk.md §9)
+- [x] Wave A1: H1 server heroes [x] · W2 web hero data [x] · W3 cast resolver [x] · W4 hero look/preview [x] · W6 multiverse plan + rift theme [x]
 - [~] Wave A2: W5 hero editor UI [~] · W7a scene integration [~] · W7b React bridge + floors [~]
 User request: no stale characters, one clear PM per floor, reuse idle characters, glow on the selected character, bubbles that never overlap, and UX best practice for showing characters and the office.
 Diagnosis (live data, 2026-09-25): subagents whose SubagentStop never arrived (killed or lost background agents) stay "active/idle" in the lounge forever
@@ -111,6 +113,7 @@ so parallel or old sessions leave extra PMs on a floor.
 - [ ] 8g. Review + security + QA → v0.3.0
 
 ## Backlog
+- [ ] Move timing/perf tests into a separate `pnpm test:perf` run (they flake when the machine is loaded)
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 
 ## M5 (v2): Orchestrator runner → moved into M8 (8k, 8l, 8m) for v0.3.0

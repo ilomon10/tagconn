@@ -1,7 +1,12 @@
+import type { AttributionClientToServerEvents, AttributionServerToClientEvents } from './attribution.js';
+import { ADMIN_ROOM } from './auth.js';
+import type { AuthClientToServerEvents, AuthServerToClientEvents } from './auth.js';
 import type { Agent, OfficeEvent, OfficeSnapshot, Project, Session, Task } from './domain.js';
 import type { Hero, HeroCreate, HeroListRequest, HeroUpdateRequest } from './heroes.js';
 import type { LayoutAssign, OfficeLayout, OfficeLayoutInput } from './layout.js';
+import type { ReceptionistClientToServerEvents, ReceptionistServerToClientEvents } from './receptionist.js';
 import type { Role } from './roles.js';
+import type { RunsClientToServerEvents, RunsServerToClientEvents } from './runner.js';
 import type { Settings, SettingsPatch } from './settings.js';
 
 /** socket.io namespace used by the web client. */
@@ -9,7 +14,11 @@ export const OFFICE_NAMESPACE = '/office';
 
 export type Ack<T> = (res: { ok: true; data: T } | { ok: false; error: string }) => void;
 
-export interface ServerToClientEvents {
+export interface ServerToClientEvents
+  extends RunsServerToClientEvents,
+    ReceptionistServerToClientEvents,
+    AuthServerToClientEvents,
+    AttributionServerToClientEvents {
   snapshot: (s: OfficeSnapshot) => void;
   'project:upsert': (p: Project) => void;
   'session:upsert': (s: Session) => void;
@@ -27,7 +36,11 @@ export interface ServerToClientEvents {
   'hero:remove': (id: string) => void;
 }
 
-export interface ClientToServerEvents {
+export interface ClientToServerEvents
+  extends RunsClientToServerEvents,
+    ReceptionistClientToServerEvents,
+    AuthClientToServerEvents,
+    AttributionClientToServerEvents {
   /** Subscribe to one project floor, or '*' for all. Replies with a snapshot. */
   'office:subscribe': (projectId: string, ack: Ack<OfficeSnapshot>) => void;
   'settings:get': (ack: Ack<Settings>) => void;
@@ -58,4 +71,5 @@ export interface ClientToServerEvents {
 export const rooms = {
   all: 'project:*',
   project: (id: string) => `project:${id}`,
+  admin: ADMIN_ROOM,
 };

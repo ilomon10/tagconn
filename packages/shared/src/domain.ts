@@ -1,3 +1,4 @@
+import type { ProjectProfileMeta } from './attribution.js';
 import type { Hero } from './heroes.js';
 import type { OfficeLayout } from './layout.js';
 
@@ -50,6 +51,8 @@ export interface TokenUsage {
   model?: string;
 }
 
+export type SessionOrigin = 'cli' | 'quest';
+
 export interface Project {
   /** Stable id derived from cwd (slug + short hash). */
   id: string;
@@ -70,6 +73,9 @@ export interface Session {
   startedAt: number;
   endedAt?: number;
   lastPrompt?: string;
+  /** Runner run that started this session (M8 8k). */
+  runId?: string;
+  origin?: SessionOrigin;
   /** Sum over the main agent and all its subagents. */
   usage?: TokenUsage;
 }

@@ -29,7 +29,10 @@ describe('settings diff', () => {
     draft.storage.dbPath = '/tmp/db';
     draft.runner.permissionMode = 'plan';
     draft.runner.maxConcurrent = 5;
-    expect(diffSettings(base, draft)).toEqual({ runner: { maxConcurrent: 5 } });
+    draft.office.walkSpeed = 90;
+    expect(diffSettings(base, draft)).toEqual({ office: { walkSpeed: 90 } });
+    expect(isGuiImmutable('runner.maxConcurrent')).toBe(true);
+    expect(isGuiImmutable('auth.protect')).toBe(true);
     expect(isGuiImmutable('server.hookToken')).toBe(true);
     expect(isGuiImmutable('storage.dbPath')).toBe(true);
     expect(isGuiImmutable('storage.eventRetentionDays')).toBe(false);

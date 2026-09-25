@@ -1,9 +1,12 @@
 import { z } from 'zod';
 import { ACTIVITIES, ZONES } from './domain.js';
 import { HOOK_EVENTS } from './hook.js';
+import { ATTRIBUTION_MAX_PROFILE_BYTES } from './attribution.js';
+import { AUTH_MODES, AUTH_PROTECT_LEVELS } from './auth.js';
 import { DEFAULT_HERO_NAME_POOLS, HERO_LIMITS, HeroNamePoolsSchema } from './heroes.js';
 import { DEFAULT_LAYOUT_ID, LAYOUT_ID_RE, OFFICE_STYLES } from './layout.js';
 import { MULTIVERSE_LIMITS } from './multiverse.js';
+import { DOMAIN_RE, RUN_MODELS, RUN_PERMISSION_MODES, TOOL_RULE_RE } from './runner.js';
 
 export const ActivityRuleSchema = z.object({
   /** Regex matched against tool_name (anchored). */
@@ -206,8 +209,63 @@ export const SettingsSchema = z.object({
       enabled: z.boolean().default(false),
       maxConcurrent: z.number().int().min(1).default(3),
       defaultModel: z.enum(['opus', 'sonnet', 'haiku']).default('sonnet'),
-      permissionMode: z.enum(['default', 'acceptEdits', 'plan', 'bypassPermissions']).default('acceptEdits'),
+      permissionMode: z.enum(RUN_PERMISSION_MODES).default('acceptEdits'),
       allowedProjectDirs: z.array(z.string()).default([]),
+      /** Runner shared secret, used only as an HMAC key (never sent). Empty = runner connections refused. Masked. */
+      token: z.string().default(''),
+      allowedPermissionModes: z.array(z.enum(RUN_PERMISSION_MODES)).default(['plan', 'dontAsk', 'default', 'acceptEdits']),
+      /** Bare "WebFetch" is rejected here too (only WebFetch(domain:x)); the runner re-checks. */
+      allowedTools: z
+        .array(z.string().regex(TOOL_RULE_RE).refine((r) => r !== 'WebFetch', 'use WebFetch(domain:x)'))
+        .default([]),
+      disallowedTools: z.array(z.string().regex(TOOL_RULE_RE)).default([]),
+      maxQueued: z.number().int().min(0).default(20),
+      maxPromptChars: z.number().int().min(100).max(100_000).default(20_000),
+      runTimeoutSec: z.number().int().min(10).max(86_400).default(3_600),
+      maxTurns: z.number().int().min(1).max(500).optional(),
+      maxEventsPerRun: z.number().int().min(10).max(100_000).default(5_000),
+      maxEventBytesPerRun: z.number().int().min(10_000).max(64 * 1024 * 1024).default(4 * 1024 * 1024),
+      previewChars: z.number().int().min(100).max(8_000).default(2_000),
+      partialMessages: z.boolean().default(true),
+      runRetentionDays: z.number().int().min(1).default(30),
+      lostGraceSec: z.number().int().min(5).max(600).default(30),
+    })
+    .prefault({}),
+  receptionist: z
+    .object({
+      enabled: z.boolean().default(true),
+      model: z.enum(RUN_MODELS).default('sonnet'),
+      webSearch: z.boolean().default(true),
+      /** "allowlist" = general scope only, bwrap required, WebFetch(domain:x) per entry; never bare WebFetch. */
+      webFetch: z.enum(['never', 'allowlist']).default('never'),
+      webFetchAllowDomains: z.array(z.string().regex(DOMAIN_RE)).max(50).default([]),
+      extraDenyReadGlobs: z.array(z.string().regex(/^[^\n\r\0(),]{1,180}$/)).default([]),
+      allowTagconnDocs: z.boolean().default(true),
+      /** Add --safe-mode to project-scope turns (SC3 V5 trade-off; --restricted is always on there). */
+      projectSafeMode: z.boolean().default(false),
+      timeoutSec: z.number().int().min(10).max(3_600).default(300),
+      maxTurns: z.number().int().min(1).max(100).default(30),
+      maxConversations: z.number().int().min(1).max(1_000).default(50),
+      maxMessagesPerConversation: z.number().int().min(2).max(2_000).default(200),
+    })
+    .prefault({}),
+  auth: z
+    .object({
+      mode: z.enum(AUTH_MODES).default('pairing'),
+      protect: z.enum(AUTH_PROTECT_LEVELS).default('all-writes'),
+      sessionIdleHours: z.number().min(1).max(720).default(72),
+      sessionMaxAgeDays: z.number().min(1).max(365).default(30),
+      pairingCodeTtlSec: z.number().int().min(60).max(3_600).default(600),
+      maxSessions: z.number().int().min(1).max(100).default(10),
+      logPairingCodeOnBoot: z.boolean().default(true),
+    })
+    .prefault({}),
+  attribution: z
+    .object({
+      enabled: z.boolean().default(true),
+      autoImport: z.enum(['ask', 'auto', 'off']).default('ask'),
+      maxProfileBytes: z.number().int().min(1_024).max(ATTRIBUTION_MAX_PROFILE_BYTES).default(ATTRIBUTION_MAX_PROFILE_BYTES),
+      importWindowSec: z.number().int().min(10).max(3_600).default(120),
     })
     .prefault({}),
 });
@@ -227,8 +285,14 @@ export const GUI_IMMUTABLE_SETTINGS = [
   'server',
   'storage.dbPath',
   'paths',
-  'runner.permissionMode',
-  'runner.allowedProjectDirs',
+  'runner',
+  'auth',
+  'receptionist.webSearch',
+  'receptionist.webFetch',
+  'receptionist.webFetchAllowDomains',
+  'receptionist.extraDenyReadGlobs',
+  'receptionist.allowTagconnDocs',
+  'receptionist.projectSafeMode',
 ] as const;
 
 /** Record-typed settings that a patch replaces wholesale instead of deep-merging. */

@@ -15,6 +15,9 @@ export const SECTION_LABELS: Record<keyof Settings, { title: string; hint: strin
   office: { title: 'Office', hint: 'Look and feel of the pixel office. Applied live.' },
   notifications: { title: 'Notifications', hint: 'Browser notifications for agent state changes.' },
   runner: { title: 'Runner (v2)', hint: 'Host runner that spawns claude -p. Not active yet.' },
+  receptionist: { title: 'Receptionist', hint: 'Read-only help desk that answers questions in the browser (M8). Safety settings are file/env only.' },
+  auth: { title: 'Admin access', hint: 'Pairing and admin sessions that guard writes and code execution (file/env only).' },
+  attribution: { title: 'Attribution', hint: 'The .tagconn marker and profile import for projects that used tagconn.' },
 };
 
 export const ENUM_OPTIONS: Record<string, readonly string[]> = {

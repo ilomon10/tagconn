@@ -12,6 +12,16 @@ import type { Ack } from './socket.js';
  * The HOST is the authority: `<configDir>/runner.json` (RunnerLocalConfigSchema) bounds everything;
  * the server can only narrow it. Honest limit (T6): a compromised server can make the runner do
  * anything a quest may do inside the allowed + trusted dirs, up to the local mode cap and tool policy.
+ *
+ * SC3 (claude 2.1.282) facts baked in here:
+ *  - V14: without `--setting-sources user`, a repo's .claude/settings.json hooks, its .mcp.json and its
+ *    `env.ANTHROPIC_BASE_URL` were honored (API traffic redirected). EVERY runner-spawned process gets
+ *    `--setting-sources=user`, unconditionally; the runner refuses to spawn if the flag is unsupported.
+ *  - V14: `-p` skips the trust dialog and never sets hasTrustDialogAccepted, so the CLI gives no trust
+ *    gate headless; the runner's own trust check (flag set by interactive use, or trustOverrideDirs) is it.
+ *  - V11: an unscoped WebFetch reached loopback (127.0.0.1, 127.1, "localhost.", 2130706433). Bare
+ *    `WebFetch` is never allowed; only `WebFetch(domain:x)` allow rules + `--permission-prompts=none`.
+ *  - V13: a setsid'd grandchild escapes kill(-pgid). Bash in quests needs a cgroup (systemd scope).
  */
 
 // ------------------------------------------------------------------ constants
@@ -21,6 +31,9 @@ export const RUNNER_NAMESPACE = '/runner';
 export const RUNNER_PROTOCOL_VERSION = 1;
 /** Optional header the hook adds when TAGCONN_RUN_ID is set: a correlation hint, never authority. */
 export const RUN_ID_HEADER = 'x-tagconn-run-id';
+
+/** Pinned on every spawn (V14). Project/local settings (hooks, MCP, env, allow rules) never load. */
+export const REQUIRED_SETTING_SOURCES = 'user' as const;
 
 /** Environment variables the runner sets on every spawned `claude` (inherited by hooks). */
 export const RUN_ENV = {
@@ -45,34 +58,51 @@ export const CLAUDE_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/;
  * No commas (lists are passed comma-joined), no newlines, no nested parentheses, no NUL.
  */
 export const TOOL_RULE_RE = /^[A-Za-z][A-Za-z0-9_]*(\([^\n\r\0(),]{1,180}\))?$/;
-/** A bare DNS name for WebFetch allowlists (no scheme, port, path or wildcard). */
+/**
+ * A bare DNS name for WebFetch allowlists: no scheme, port, path, wildcard, trailing dot, and the TLD
+ * must be alphabetic, so IP literals ("127.1", "2130706433") can never be allowlisted.
+ */
 export const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** V11: unscoped WebFetch is SSRF to loopback. Allow rules must always be `WebFetch(domain:<DOMAIN_RE>)`. */
+export const isBareWebFetchRule = (rule: string): boolean => rule === 'WebFetch' || rule === 'WebFetch()';
+
+/**
+ * Backstop loopback/metadata denies (the primary control is: no bare WebFetch, domain allowlist only).
+ * Domain rules cannot express every numeric/alternate loopback form, which is exactly why bare
+ * WebFetch is forbidden rather than relying on this list.
+ */
+export const WEBFETCH_LOOPBACK_DENY_RULES = [
+  'WebFetch(domain:localhost)',
+  'WebFetch(domain:localhost.)',
+  'WebFetch(domain:127.0.0.1)',
+  'WebFetch(domain:127.1)',
+  'WebFetch(domain:2130706433)',
+  'WebFetch(domain:0x7f000001)',
+  'WebFetch(domain:0.0.0.0)',
+  'WebFetch(domain:[::1])',
+  'WebFetch(domain:[::ffff:127.0.0.1])',
+  'WebFetch(domain:host.docker.internal)',
+  'WebFetch(domain:metadata.google.internal)',
+  'WebFetch(domain:169.254.169.254)',
+] as const;
 
 export const RUN_KINDS = ['quest', 'receptionist'] as const;
 export type RunKind = (typeof RUN_KINDS)[number];
 
 /**
- * tagconn's permission-mode vocabulary. CLI 2.1.282 accepts: acceptEdits, auto, bypassPermissions,
- * manual, dontAsk, plan (NOT "default"). The runner maps each contract mode to the first CLI value
- * in CLI_PERMISSION_MODE_CANDIDATES that the probe found in `capabilities.permissionModes`, and
- * rejects the run (`mode_not_allowed`) when none is supported.
+ * tagconn's permission-mode vocabulary. SC3 V8: claude 2.1.282 accepts all of these (plus `manual`),
+ * including `default` even though --help does not list it. The runner probes by trying each value
+ * once (cached per claudeVersion) and rejects a run whose mode the CLI refused (`mode_not_allowed`).
  */
 export const RUN_PERMISSION_MODES = ['plan', 'dontAsk', 'default', 'acceptEdits', 'auto', 'bypassPermissions'] as const;
 export type RunPermissionMode = (typeof RUN_PERMISSION_MODES)[number];
 
-export const CLI_PERMISSION_MODE_CANDIDATES: Record<RunPermissionMode, readonly string[]> = {
-  plan: ['plan'],
-  dontAsk: ['dontAsk'],
-  default: ['manual', 'default'],
-  acceptEdits: ['acceptEdits'],
-  auto: ['auto'],
-  bypassPermissions: ['bypassPermissions'],
-};
-
 /**
  * Ordering used for caps: a run's mode must rank <= the runner's `maxPermissionMode`.
- * Every run also gets `--permission-prompts=none`, so "default"/"dontAsk" deny anything not pre-allowed.
- * `auto` ranks above acceptEdits: it lets the CLI approve actions on its own (exact semantics TBD by SC3).
+ * Every run also gets `--permission-prompts=none`, so plan/dontAsk/default deny anything not pre-allowed.
+ * `auto` and `bypassPermissions` can run Bash without an allow rule, so they need the same process
+ * isolation as Bash quests (systemd scope), else `isolation_unavailable`.
  */
 export const PERMISSION_MODE_RANK: Record<RunPermissionMode, number> = {
   plan: 0,
@@ -109,10 +139,11 @@ export const RUN_END_REASONS = [
   'stopped_by_user',
   'timeout',
   'dir_not_allowed',
-  'dir_not_trusted', // the CLI never accepted the trust dialog for this dir, and no runner.json override
+  'dir_not_trusted', // no hasTrustDialogAccepted from interactive use (-p never sets it) and no override
   'mode_not_allowed',
-  'tool_not_allowed', // a requested allow rule is outside runner.json questToolPolicy
-  'resume_not_allowed', // resume id was not created by this runner
+  'tool_not_allowed', // allow rule outside runner.json questToolPolicy, or a bare WebFetch
+  'isolation_unavailable', // Bash rules / auto / bypass requested but no systemd scope for cgroup kill
+  'resume_not_allowed', // resume id not created by this runner, or created with a different tool fingerprint
   'concurrency',
   'spawn_failed',
   'capability_missing',
@@ -125,7 +156,7 @@ export type RunEndReason = (typeof RUN_END_REASONS)[number];
 
 // ------------------------------------------------------------------ browser -> server requests
 
-/** Prompts may not contain NUL (argv/C-string truncation); the runner also strips/rejects it. */
+/** Prompts may not contain NUL (argv/C-string truncation); the runner also rejects it. */
 const PromptSchema = z
   .string()
   .trim()
@@ -182,8 +213,10 @@ export const RunEventSchema = z.discriminatedUnion('kind', [
     model: Str(100).optional(),
     cwd: Str(4096).optional(),
     permissionMode: Str(40).optional(),
-    /** Tool names the CLI exposed; receptionist runs require EXACT equality with the --tools set. */
+    /** Tool names the CLI exposed; receptionist runs require EXACT set equality with --tools (V1). */
     tools: z.array(Str(200)).max(500),
+    /** Names of MCP servers the CLI loaded; must be empty for receptionist runs. */
+    mcpServers: z.array(Str(200)).max(100).default([]),
   }),
   z.strictObject({
     kind: z.literal('text'),
@@ -299,27 +332,28 @@ export interface RunDetail {
   events: RunEventEnvelope[];
 }
 
-/** Probed by the runner at startup (`claude --version`, `claude --help`, optional probe runs). */
+/** Probed by the runner at startup (`claude --version`, `claude --help`, short probe runs), cached per claudeVersion. */
 export interface RunnerCapabilities {
-  /** `claude -p` reads the prompt from stdin (preferred: keeps prompts off argv/ps). */
+  /** `claude -p` reads the prompt from stdin (V9: confirmed; flag-looking stdin text stays prompt). */
   stdinPrompt: boolean;
   includePartialMessages: boolean;
+  /** `--setting-sources`. REQUIRED for EVERY run (V14); without it the runner refuses to spawn anything. */
   settingSources: boolean;
   strictMcpConfig: boolean;
-  /** `--tools <list>`: exact built-in tool set. REQUIRED for receptionist runs. */
+  /** `--tools <list>`: exact built-in tool set. REQUIRED for receptionist runs (V1). */
   tools: boolean;
   /** `--permission-prompts none`. REQUIRED for every run. */
   permissionPrompts: boolean;
   disableSlashCommands: boolean;
-  /** `--restricted`: file tools limited to cwd + --add-dir, exec tools removed, settings ignored. */
+  /** `--restricted` (V6): file tools confined to cwd + --add-dir; removes Bash and WebFetch. REQUIRED for receptionist project scope. */
   restricted: boolean;
-  /** `--safe-mode`: no CLAUDE.md/skills/plugins/hooks/MCP. */
+  /** `--safe-mode` (V5): no CLAUDE.md/skills/plugins/hooks/MCP. Optional (trade-off, see doc 4.4). */
   safeMode: boolean;
-  /** CLI values accepted by --permission-mode (e.g. ["acceptEdits","auto","bypassPermissions","manual","dontAsk","plan"]). */
+  /** Modes the CLI accepted when tried (V8: all RUN_PERMISSION_MODES on 2.1.282). */
   permissionModes: string[];
   /** bubblewrap available AND the sandboxed probe turn succeeded. */
   bwrap: boolean;
-  /** `systemd-run --user --scope` usable for per-run resource limits. */
+  /** `systemd-run --user --scope` usable: cgroup kill for quests (V13). Required for Bash / auto / bypass quests. */
   systemdScope: boolean;
 }
 
@@ -343,7 +377,7 @@ export interface RunnerStatus {
   /** Host-side maximum quest allowlist (runner.json questToolPolicy.maxAllowedTools). */
   questMaxAllowedTools: string[];
   receptionistSandbox?: 'bwrap' | 'none';
-  /** Receptionist hardening flags the runner will use (from the probe). */
+  /** Receptionist hardening the runner will use (from the probe). */
   receptionistFlags?: { restricted: boolean; safeModeProjectScope: boolean };
 }
 
@@ -428,12 +462,13 @@ export type RunLimits = z.infer<typeof RunLimitsSchema>;
 
 /**
  * server -> runner. The runner RE-VALIDATES everything against runner.json (defense in depth):
- * realpath(projectDir) inside allowedProjectDirs AND trusted by the CLI (or trustOverrideDirs);
- * mode within maxPermissionMode (bypass also needs allowBypassPermissions); allowedTools within
- * questToolPolicy (Bash* only if listed locally); questToolPolicy.alwaysDeny appended; resume id
- * must be one this runner created. For `readOnly` runs it ignores allowedTools/permissionMode and
- * builds the receptionist argv from RECEPTIONIST_* constants (server `disallowedTools` are kept:
- * deny only narrows). The realpath result, not the sent string, is used as cwd / --add-dir.
+ * realpath(projectDir) inside allowedProjectDirs AND trusted (hasTrustDialogAccepted from interactive
+ * use, or trustOverrideDirs); mode within maxPermissionMode (bypass also needs allowBypassPermissions);
+ * allowedTools within questToolPolicy (Bash* only if listed locally; bare WebFetch never); Bash / auto /
+ * bypass only with a systemd scope; alwaysDeny appended; resume id from this runner's ledger with the
+ * same tool fingerprint. For `readOnly` runs it ignores allowedTools/permissionMode and builds the
+ * receptionist argv from RECEPTIONIST_* constants (server `disallowedTools` are kept: deny only
+ * narrows). The realpath result, not the sent string, is used as cwd / --add-dir.
  */
 export const RunStartCommandSchema = z.strictObject({
   runId: z.string().regex(UUID_RE),
@@ -453,8 +488,15 @@ export const RunStartCommandSchema = z.strictObject({
   /** Receptionist general scope: --add-dir the runner's docs-only copy (never the repo root). */
   addTagconnDocs: z.boolean().default(false),
   allowWebSearch: z.boolean().default(true),
-  /** Receptionist: WebFetch is in --tools only when this is non-empty; each becomes WebFetch(domain:x). */
+  /**
+   * Receptionist general scope only: WebFetch is in --tools only when this is non-empty, each entry
+   * becomes a `WebFetch(domain:x)` allow rule. Ignored for project scope (always --restricted, which
+   * removes WebFetch). General-scope WebFetch turns run without --restricted and therefore REQUIRE
+   * bwrap; without bwrap the runner drops WebFetch for that turn (notice).
+   */
   webFetchDomains: z.array(z.string().regex(DOMAIN_RE)).max(50).default([]),
+  /** Receptionist project scope: add --safe-mode (V5 trade-off; settings.receptionist.projectSafeMode). */
+  safeMode: z.boolean().default(false),
   partialMessages: z.boolean().default(true),
   limits: RunLimitsSchema,
 });
@@ -511,7 +553,10 @@ export interface RunsClientToServerEvents {
 
 // ------------------------------------------------------------------ runner-local config (host file)
 
-/** Local denies appended to every quest (settings/agent/git/MCP config stay untouchable by quests). */
+/**
+ * Local denies appended to every quest: settings/agent/git/MCP config stay untouchable by quests,
+ * plus the loopback WebFetch backstop (matters for auto/bypass modes, where no allow rule is needed).
+ */
 export const DEFAULT_QUEST_ALWAYS_DENY = [
   'Edit(.claude/**)',
   'Write(.claude/**)',
@@ -519,9 +564,10 @@ export const DEFAULT_QUEST_ALWAYS_DENY = [
   'Write(.git/**)',
   'Edit(.mcp.json)',
   'Write(.mcp.json)',
+  ...WEBFETCH_LOOPBACK_DENY_RULES,
 ] as const;
 
-/** Default host-side maximum quest allowlist. No Bash: Bash rules must be listed here explicitly. */
+/** Default host-side maximum quest allowlist. No Bash (needs a local entry + systemd scope), no bare WebFetch. */
 export const DEFAULT_QUEST_MAX_ALLOWED_TOOLS = [
   'Read',
   'Grep',
@@ -548,18 +594,23 @@ export const RunnerLocalConfigSchema = z.object({
   /** Quests (and project-scope receptionist) may run in these dirs (realpath, prefix + path separator). */
   allowedProjectDirs: z.array(AbsPath).default([]),
   /**
-   * Dirs treated as trusted even if ~/.claude.json has no hasTrustDialogAccepted for them.
-   * Default: none; the runner otherwise requires the CLI's own trust flag (parent-dir semantics TBD by SC3).
+   * Dirs treated as trusted even without `hasTrustDialogAccepted === true` in ~/.claude.json.
+   * `-p` never sets that flag (SC3 V14), so only interactive use or this override makes a dir trusted.
    */
   trustOverrideDirs: z.array(AbsPath).default([]),
   questToolPolicy: z
     .object({
-      /** Server-sent allow rules outside this list are refused (reason tool_not_allowed). */
+      /** Server-sent allow rules outside this list are refused (tool_not_allowed). Bare WebFetch is always refused. */
       maxAllowedTools: z.array(z.string().regex(TOOL_RULE_RE)).default([...DEFAULT_QUEST_MAX_ALLOWED_TOOLS]),
       /** Appended to --disallowedTools on every quest. */
       alwaysDeny: z.array(z.string().regex(TOOL_RULE_RE)).default([...DEFAULT_QUEST_ALWAYS_DENY]),
     })
     .prefault({}),
+  /**
+   * Quests always run with --strict-mcp-config (project .mcp.json never loads). Point this at an MCP
+   * config file to give quests specific servers; unset = no MCP servers in quests.
+   */
+  questMcpConfigPath: AbsPath.optional(),
   maxConcurrent: z.number().int().min(1).max(16).default(2),
   maxPermissionMode: z.enum(RUN_PERMISSION_MODES).default('acceptEdits'),
   /** bypassPermissions is refused unless this is true AND maxPermissionMode allows it. */
@@ -567,14 +618,17 @@ export const RunnerLocalConfigSchema = z.object({
   /** Extra env var names passed through to claude (RUN_ENV_STRIP_PREFIXES still win). */
   passEnv: z.array(z.string().regex(/^[A-Z_][A-Z0-9_]{0,63}$/)).default([]),
   claudePath: z.string().min(1).default('claude'),
-  /** Default: $XDG_STATE_HOME/tagconn or ~/.local/state/tagconn (neutral dir, docs copy, session ledger). */
+  /** Default: $XDG_STATE_HOME/tagconn or ~/.local/state/tagconn (neutral dir, docs copy, ledger, per-run copies). */
   stateDir: AbsPath.optional(),
   receptionistSandbox: z.enum(['auto', 'bwrap', 'none']).default('auto'),
-  /** Wrap each run in `systemd-run --user --scope` (KillMode=control-group, MemoryMax, TasksMax) when available. */
+  /**
+   * Quest process containment. `auto` = systemd scope when available. Without one, quests that
+   * could execute commands (Bash rules, auto, bypassPermissions) are refused: isolation_unavailable (V13).
+   */
   processIsolation: z.enum(['auto', 'systemd-scope', 'none']).default('auto'),
   memoryMax: z.string().regex(/^\d+[KMGT]?$/).default('4G'),
   tasksMax: z.number().int().min(16).max(65_536).default(512),
-  /** A single stream-json line (also a partial line buffer) longer than this is dropped with a notice. */
+  /** A single stream-json line (also the partial-line buffer) longer than this is dropped with a notice. */
   maxLineBytes: z
     .number()
     .int()
@@ -583,7 +637,7 @@ export const RunnerLocalConfigSchema = z.object({
     .default(1024 * 1024),
   /** stderr lines forwarded per run (rest counted in one notice); each line truncated to 4k. */
   maxStderrLines: z.number().int().min(0).max(10_000).default(200),
-  /** SIGTERM -> SIGKILL grace when stopping a process group. */
+  /** SIGTERM -> SIGKILL grace when stopping a process group / scope. */
   killGraceMs: z.number().int().min(100).max(60_000).default(5_000),
   /** Events and bytes kept per active run while disconnected, replayed on reconnect (oldest dropped + notice). */
   offlineBufferEvents: z.number().int().min(0).max(100_000).default(2_000),
@@ -593,7 +647,10 @@ export const RunnerLocalConfigSchema = z.object({
     .min(0)
     .max(256 * 1024 * 1024)
     .default(8 * 1024 * 1024),
-  /** Session ids this runner created (for resume checks) are remembered up to this many. */
+  /**
+   * Session ids this runner created (from `init`), each with the tool fingerprint (sorted init.tools +
+   * mode + restricted/safe flags) it was created with; resume is only allowed with the same fingerprint.
+   */
   sessionLedgerSize: z.number().int().min(10).max(100_000).default(5_000),
 });
 export type RunnerLocalConfig = z.infer<typeof RunnerLocalConfigSchema>;
