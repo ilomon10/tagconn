@@ -193,7 +193,7 @@ function NotifyButton() {
   );
 }
 
-export function TopBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+export function TopBar({ tab, onTab, onOpenPlanner }: { tab: Tab; onTab: (t: Tab) => void; onOpenPlanner: () => void }) {
   return (
     <>
       <header className="flex h-12 shrink-0 items-center gap-4 border-b border-ink-700 bg-ink-900 px-4">
@@ -219,6 +219,9 @@ export function TopBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
           ))}
         </nav>
         <HeroesButton />
+        <Button variant="ghost" onClick={onOpenPlanner} title="Draw and edit floor plans">
+          Hall Planner
+        </Button>
         <div className="ml-auto flex items-center gap-2">
           <FloorUsage />
           <NotifyButton />
