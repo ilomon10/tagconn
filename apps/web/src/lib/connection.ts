@@ -1,5 +1,6 @@
 import { ALL_FLOORS, useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { registerLayoutEvents, useLayoutStore } from '../stores/layoutStore';
 import { emitWithAck, getSocket } from './socket';
 import { startDemo } from './mock';
 import { DEFAULT_ROLES } from './defaultRoles';
@@ -32,7 +33,12 @@ function wireLive() {
     if (office().connection !== 'demo') office().setConnection('connecting');
   });
 
-  s.on('snapshot', (snap) => office().applySnapshot(snap));
+  // Note: this server never pushes a bare 'snapshot' event — the only delivery is the ack reply to
+  // 'office:subscribe' (handled in `resync()` below). Kept for any future/alternate server that does.
+  s.on('snapshot', (snap) => {
+    office().applySnapshot(snap);
+    if (snap.layouts) useLayoutStore.getState().setLayouts(snap.layouts);
+  });
   s.on('project:upsert', (p) => office().upsertProject(p));
   s.on('session:upsert', (x) => office().upsertSession(x));
   s.on('agent:upsert', (a) => office().upsertAgent(a));
@@ -41,6 +47,7 @@ function wireLive() {
   s.on('event:new', (e) => office().addEvent(e));
   s.on('settings:changed', (x) => cfg().setSettings(x));
   s.on('roles:changed', (r) => cfg().setRoles(r));
+  registerLayoutEvents(s);
 }
 
 /** Fetch everything after (re)connecting. We subscribe to all floors and filter client-side. */
@@ -54,6 +61,9 @@ async function resync() {
     useSettingsStore.getState().setSettings(settings);
     useSettingsStore.getState().setRoles(roles);
     useOfficeStore.getState().applySnapshot(snap);
+    // M7: layouts are global (not per project), so the snapshot carries all of them (7b). Pre-M7
+    // servers and test fixtures omit the field; `layoutForProject` falls back to `DEFAULT_LAYOUT`.
+    useLayoutStore.getState().setLayouts(snap.layouts ?? []);
   } catch (err) {
     console.warn('[tagconn] resync failed', err);
   }

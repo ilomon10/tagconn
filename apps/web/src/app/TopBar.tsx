@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { ALL_FLOORS, onFloor, useOfficeStore, visibleProjects, type ConnectionState } from '../stores/officeStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { enterDemo, exitDemo, startLive } from '../lib/connection';
 import { notificationsSupported, requestNotificationPermission } from '../lib/notify';
 import { formatTokens } from '../lib/format';
 import { sumFloorUsage, totalTokens } from '../lib/tokens';
+import { floorNeighbors, floorsInOrder } from '../lib/floors';
 import { FloorManager } from '../features/office/FloorManager';
 import { Button, Select, cx } from '../components/ui';
 
@@ -48,6 +50,39 @@ function FloorSelect() {
         Manage
       </Button>
       {managing && <FloorManager onClose={() => setManaging(false)} />}
+    </div>
+  );
+}
+
+/**
+ * Floor position + up/down buttons mirroring the stairs (docs/design/guild-hall.md section 6): same
+ * `floorOrder` neighbor resolution as `OfficeView`'s stairs and PageUp/PageDown, disabled at the
+ * ends. This is a plain jump (no fade) — the animated stairs transition lives in the scene, which
+ * only `OfficeView` (via `OfficeGame`) can drive; the top bar just needs the destination logic.
+ */
+function FloorIndicator() {
+  const projects = useOfficeStore((s) => s.projects);
+  const selected = useOfficeStore((s) => s.selectedProjectId);
+  const select = useOfficeStore((s) => s.selectProject);
+  const floorOrder = useSettingsStore((s) => s.settings.office.floorOrder);
+  if (selected === ALL_FLOORS) {
+    return <span className="rounded-full bg-ink-800 px-2.5 py-1 text-[11px] text-ink-400">All floors</span>;
+  }
+  const order = floorsInOrder(Object.values(projects), floorOrder, selected);
+  const n = floorNeighbors(order, selected);
+  if (!n) return null;
+  const current = order[n.index]!;
+  return (
+    <div className="flex items-center gap-1 rounded-full bg-ink-800 px-1.5 py-1">
+      <Button variant="ghost" className="px-1.5" disabled={!n.below} onClick={() => select(n.below!.id)} aria-label="Floor down" title="Floor down (PageDown)">
+        ↓
+      </Button>
+      <span className="whitespace-nowrap px-1 text-[11px] text-ink-400">
+        Floor {n.index + 1} / {n.count} — {current.name}
+      </span>
+      <Button variant="ghost" className="px-1.5" disabled={!n.above} onClick={() => select(n.above!.id)} aria-label="Floor up" title="Floor up (PageUp)">
+        ↑
+      </Button>
     </div>
   );
 }
@@ -127,6 +162,7 @@ export function TopBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
         <span className="font-pixel text-sm font-semibold tracking-tight text-ink-100">tagconn</span>
       </div>
       <FloorSelect />
+      <FloorIndicator />
       <nav className="flex items-center gap-0.5 rounded-lg bg-ink-850 p-0.5">
         {TABS.map((t) => (
           <button

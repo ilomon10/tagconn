@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { buildOfficeMap } from './map/officeMap';
+import { DEFAULT_LAYOUT } from '@tagconn/shared';
+import { generateMap } from './procgen';
 import { SeatAllocator } from './seats';
 import { PathFinder } from './pathfinding';
 
+// `seats.ts` and `pathfinding.ts` were retyped from the pre-M7 `OfficeMap` to procgen's
+// `GeneratedMap` (M7 7e) — same shape (`zones`, `walkable`, `spawn`), so these behavioral tests
+// (allocation, release, fallback, reachability) are unchanged; only the map source changed. Seat
+// *count* parity with the pre-M7 map is covered by `procgen/__tests__/generate.test.ts` instead.
 describe('SeatAllocator', () => {
-  const map = buildOfficeMap();
+  const map = generateMap(DEFAULT_LAYOUT);
 
   it('gives distinct seats to agents in the same zone', () => {
     const seats = new SeatAllocator(map);
@@ -46,7 +51,7 @@ describe('SeatAllocator', () => {
 });
 
 describe('PathFinder', () => {
-  const map = buildOfficeMap();
+  const map = generateMap(DEFAULT_LAYOUT);
   const finder = new PathFinder(map.walkable);
 
   it('finds a path from the entrance to a seat in every zone', () => {

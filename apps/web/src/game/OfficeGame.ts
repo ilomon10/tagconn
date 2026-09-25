@@ -1,7 +1,8 @@
 import * as Phaser from 'phaser';
-import type { Agent, Role, Settings } from '@tagconn/shared';
-import { OfficeScene, type OfficeState } from './scenes/OfficeScene';
+import { OfficeScene, type OfficeFloorInfo, type OfficeFloorNeighbor, type OfficeState } from './scenes/OfficeScene';
 import type { SafeInsets } from './camera/insets';
+
+export type { OfficeFloorInfo, OfficeFloorNeighbor, OfficeState };
 
 type Events = {
   agentClick: (agentId: string) => void;
@@ -9,6 +10,8 @@ type Events = {
   emptyClick: () => void;
   /** Follow was turned off from inside the scene (a manual drag started). */
   followChanged: (agentId: string | null) => void;
+  /** A stairs portal was clicked. The host decides whether/where to move (see `lib/floors.ts`). */
+  stairs: (dir: 'up' | 'down') => void;
 };
 
 /** Framework-agnostic handle around a Phaser.Game hosting the office scene. */
@@ -18,7 +21,12 @@ export class OfficeGame {
   private pending: OfficeState | null = null;
   private pendingInsets: SafeInsets | null = null;
   private destroyed = false;
-  private listeners: { [K in keyof Events]: Set<Events[K]> } = { agentClick: new Set(), emptyClick: new Set(), followChanged: new Set() };
+  private listeners: { [K in keyof Events]: Set<Events[K]> } = {
+    agentClick: new Set(),
+    emptyClick: new Set(),
+    followChanged: new Set(),
+    stairs: new Set(),
+  };
 
   constructor(parent: HTMLElement) {
     const scene = new OfficeScene((ready) => {
@@ -27,6 +35,7 @@ export class OfficeGame {
       ready.events.on('agentClick', (id: string) => this.listeners.agentClick.forEach((cb) => cb(id)));
       ready.events.on('emptyClick', () => this.listeners.emptyClick.forEach((cb) => cb()));
       ready.events.on('followChanged', (id: string | null) => this.listeners.followChanged.forEach((cb) => cb(id)));
+      ready.events.on('stairs', (dir: 'up' | 'down') => this.listeners.stairs.forEach((cb) => cb(dir)));
       if (this.pending) ready.setOfficeState(this.pending);
       this.pending = null;
       if (this.pendingInsets) ready.setSafeInsets(this.pendingInsets);
@@ -45,8 +54,7 @@ export class OfficeGame {
     });
   }
 
-  setState(agents: Agent[], settings: Settings, roles: Role[], floorKey = '*') {
-    const state: OfficeState = { agents, settings, roles, floorKey };
+  setState(state: OfficeState) {
     if (this.scene) this.scene.setOfficeState(state);
     else this.pending = state;
   }
@@ -86,11 +94,28 @@ export class OfficeGame {
     this.scene?.resetView();
   }
 
+  /**
+   * The stairs transition (docs/design/guild-hall.md section 6): fade out, call `swap` (the host
+   * re-selects the floor, so React re-renders with the new project's agents/layout), fade back in.
+   * Resolves once the fade-in has been kicked off; `ms <= 0` or reduced motion means no visual at
+   * all, and `swap` runs immediately.
+   */
+  async transitionFloor(ms: number, swap: () => void): Promise<void> {
+    if (!this.scene) {
+      swap();
+      return;
+    }
+    await this.scene.runTransition(ms);
+    swap();
+    this.scene.finishTransition(ms);
+  }
+
   destroy() {
     this.destroyed = true;
     this.listeners.agentClick.clear();
     this.listeners.emptyClick.clear();
     this.listeners.followChanged.clear();
+    this.listeners.stairs.clear();
     this.scene = null;
     this.game.destroy(true);
   }

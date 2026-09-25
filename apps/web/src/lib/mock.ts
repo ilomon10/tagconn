@@ -1,4 +1,7 @@
-import type { Activity, Agent, AgentStatus, Project, Session, Task, TaskStatus, TokenUsage, Zone } from '@tagconn/shared';
+import type { Activity, Agent, AgentStatus, OfficeLayout, OfficeLayoutInput, Project, Session, Task, TaskStatus, TokenUsage, Zone } from '@tagconn/shared';
+import { DEFAULT_LAYOUT } from '@tagconn/shared';
+import { generateRandomLayout } from '../game/procgen';
+import { useLayoutStore } from '../stores/layoutStore';
 import { useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { sumUsage } from './tokens';
@@ -6,10 +9,34 @@ import { sumUsage } from './tokens';
 /**
  * Demo mode: a scripted software-house run fed through the same store actions the socket uses.
  * A PM spawns analyst → architect → 3 developers → qa / reviewer / security, then loops.
+ *
+ * Three floors showcase the guild skin and the stairs (docs/design/guild-hall.md section 8): the
+ * ground floor is the built-in `DEFAULT_LAYOUT` (a walled "hall"), the middle floor is a
+ * `generateRandomLayout` hall, and the top floor is a `void` keep with carved corridors.
  */
 
 const PROJECT_ID = 'demo-tagconn';
 const SIDE_PROJECT_ID = 'demo-pixel-garden';
+const THIRD_PROJECT_ID = 'demo-sunken-keep';
+const HALL_LAYOUT_ID = 'demo-random-hall';
+const VOID_LAYOUT_ID = 'demo-sunken-keep';
+
+/** Seeded once per demo start (not per loop) — layouts don't need to reshuffle every run. */
+function seedDemoLayouts() {
+  const now = Date.now();
+  const toLayout = (input: OfficeLayoutInput, id: string): OfficeLayout => ({
+    ...input,
+    id,
+    background: input.background ?? 'hall',
+    corridorWidth: input.corridorWidth ?? 2,
+    builtin: false,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const hall = toLayout(generateRandomLayout({ width: 32, height: 24, seed: 4217, background: 'hall', name: 'Random Hall' }), HALL_LAYOUT_ID);
+  const keep = toLayout(generateRandomLayout({ width: 48, height: 30, seed: 917, background: 'void', name: 'Sunken Keep' }), VOID_LAYOUT_ID);
+  useLayoutStore.getState().setLayouts([DEFAULT_LAYOUT, hall, keep]);
+}
 
 type Step = [seconds: number, run: () => void];
 
@@ -21,9 +48,11 @@ interface Ctx {
 
 const office = () => useOfficeStore.getState();
 
-function project(id: string, name: string, cwd: string): Project {
+/** `age` staggers `createdAt` so `office.floorOrder: 'created'` (the default) puts them in a stable
+ *  stairs order: the ground floor is whichever project has the smallest `age`. */
+function project(id: string, name: string, cwd: string, age = 0, layoutId?: string): Project {
   const now = Date.now();
-  return { id, name, cwd, archived: false, createdAt: now - 86_400_000, lastActivityAt: now };
+  return { id, name, cwd, archived: false, createdAt: now - 86_400_000 + age * 1000, lastActivityAt: now, ...(layoutId && { layoutId }) };
 }
 
 function makeHelpers(ctx: Ctx) {
@@ -284,9 +313,31 @@ function sideProject(ctx: Ctx, schedule: (at: number, fn: () => void) => void) {
   }
 }
 
+/** A third, quiet floor in the void-background "Sunken Keep" layout — mostly here to show the
+ *  guild skin's corridor art and the stairs, not to run a full software-house script. */
+function thirdFloor(ctx: Ctx, schedule: (at: number, fn: () => void) => void) {
+  const h = makeHelpers(ctx);
+  const sid = `keep-${ctx.run}`;
+  const pm = `main:${sid}`;
+  schedule(2, () => {
+    office().upsertSession({ id: sid, projectId: THIRD_PROJECT_ID, status: 'active', startedAt: h.now() });
+    h.spawn(pm, 'pm', 'main', 'Main session', 'entrance', 'idle', 'Exploring the sunken keep', THIRD_PROJECT_ID, sid, true);
+  });
+  const cycle: [Activity, Zone, string][] = [
+    ['thinking', 'whiteboard', 'Mapping the vault'],
+    ['reading', 'library', 'Reading old scrolls'],
+    ['idle', 'lounge', 'Resting'],
+  ];
+  for (let i = 0; i < 15; i++) {
+    const [activity, zone, bubble] = cycle[i % cycle.length]!;
+    schedule(6 + i * 7, () => h.patch(pm, { activity, zone, bubble }));
+  }
+}
+
 const RUN_SECONDS = 125;
 
 export function startDemo(): () => void {
+  seedDemoLayouts();
   const timers: ReturnType<typeof setTimeout>[] = [];
   const ctx: Ctx = { run: 0, sessionId: '', eventId: 0 };
   let stopped = false;
@@ -303,12 +354,14 @@ export function startDemo(): () => void {
     if (stopped) return;
     ctx.run += 1;
     ctx.sessionId = `demo-session-${ctx.run}`;
-    // Fresh floor and board for every loop.
+    // Fresh floor and board for every loop (layouts stay put — they're seeded once, above).
     if (ctx.run > 1) office().reset();
-    office().upsertProject(project(PROJECT_ID, 'tagconn (demo)', '/home/you/code/tagconn'));
-    office().upsertProject(project(SIDE_PROJECT_ID, 'pixel-garden (demo)', '/home/you/code/pixel-garden'));
+    office().upsertProject(project(PROJECT_ID, 'tagconn (demo)', '/home/you/code/tagconn', 0));
+    office().upsertProject(project(SIDE_PROJECT_ID, 'pixel-garden (demo)', '/home/you/code/pixel-garden', 1, HALL_LAYOUT_ID));
+    office().upsertProject(project(THIRD_PROJECT_ID, 'sunken-keep (demo)', '/home/you/code/sunken-keep', 2, VOID_LAYOUT_ID));
     script(ctx, schedule);
     sideProject(ctx, schedule);
+    thirdFloor(ctx, schedule);
     schedule(RUN_SECONDS, () => {
       const s = office().sessions[ctx.sessionId];
       if (s) office().upsertSession({ ...s, status: 'ended', endedAt: Date.now() });

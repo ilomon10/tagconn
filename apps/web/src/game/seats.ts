@@ -1,5 +1,5 @@
 import type { Zone } from '@tagconn/shared';
-import type { OfficeMap, Point } from './map/officeMap';
+import type { GeneratedMap, Point } from './procgen/types';
 
 const key = (p: Point) => `${p.x},${p.y}`;
 
@@ -26,7 +26,7 @@ export class SeatAllocator {
   private byAgent = new Map<string, Assignment>();
   private taken = new Map<string, string>(); // tile key -> agent id
 
-  constructor(private map: OfficeMap) {}
+  constructor(private map: GeneratedMap) {}
 
   get(agentId: string): Assignment | undefined {
     return this.byAgent.get(agentId);

@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { OfficeGame } from '../../game/OfficeGame';
-import { onFloor, useOfficeStore } from '../../stores/officeStore';
+import type { Project, Settings, OfficeLayout } from '@tagconn/shared';
+import { OfficeGame, type OfficeState } from '../../game/OfficeGame';
+import { getTheme } from '../../game/themes';
+import { ALL_FLOORS, onFloor, useOfficeStore } from '../../stores/officeStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useFloorAgents } from '../../lib/hooks';
+import { firstFloor, floorNeighbors, floorsInOrder, isTypingTarget, lastFloor, neighborFloor } from '../../lib/floors';
+import { layoutForProject, useLayoutStore } from '../../stores/layoutStore';
 import { ZERO_INSETS, insetsFromOverlay } from '../../game/camera/insets';
 import { Roster } from './Roster';
 import { AgentDrawer } from './AgentDrawer';
+import { FloorManager } from './FloorManager';
 import { Button } from '../../components/ui';
 
 /** Pushes store changes into the Phaser scene (the "bridge"). */
@@ -13,23 +18,65 @@ function useGameBridge(game: OfficeGame | null) {
   useEffect(() => {
     if (!game) return;
     const push = () => {
-      const { agents, selectedProjectId } = useOfficeStore.getState();
+      const { agents, projects, selectedProjectId } = useOfficeStore.getState();
       const { settings, roles } = useSettingsStore.getState();
+      const layouts = useLayoutStore.getState().layouts;
       const floorAgents = Object.values(agents).filter((a) => onFloor(selectedProjectId, a.projectId));
-      game.setState(floorAgents, settings, roles, selectedProjectId);
+
+      const allFloors = selectedProjectId === ALL_FLOORS;
+      const layout = layoutForProject(layouts, allFloors ? undefined : projects[selectedProjectId], settings.office.defaultLayoutId);
+      const style = layout.style ?? settings.office.style;
+
+      let floor: OfficeState['floor'] = null;
+      if (!allFloors) {
+        const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, selectedProjectId);
+        const n = floorNeighbors(order, selectedProjectId);
+        if (n) {
+          const theme = getTheme(style);
+          floor = {
+            index: n.index,
+            count: n.count,
+            above: n.above && { id: n.above.id, label: theme.floorLabel(n.index + 1, n.above.name) },
+            below: n.below && { id: n.below.id, label: theme.floorLabel(n.index - 1, n.below.name) },
+          };
+        }
+      }
+
+      game.setState({ agents: floorAgents, settings, roles, floorKey: selectedProjectId, layout, style, floor });
     };
     push();
     const unsubOffice = useOfficeStore.subscribe((s, p) => {
-      if (s.agents !== p.agents || s.selectedProjectId !== p.selectedProjectId) push();
+      if (s.agents !== p.agents || s.selectedProjectId !== p.selectedProjectId || s.projects !== p.projects) push();
     });
     const unsubSettings = useSettingsStore.subscribe((s, p) => {
       if (s.settings !== p.settings || s.roles !== p.roles) push();
     });
+    const unsubLayouts = useLayoutStore.subscribe((s, p) => {
+      if (s.layouts !== p.layouts) push();
+    });
     return () => {
       unsubOffice();
       unsubSettings();
+      unsubLayouts();
     };
   }, [game]);
+}
+
+/** The floor's display label ("Floor 2 · tagconn"), themed per that floor's own style. */
+function floorLabelFor(project: Project, index: number, layouts: Record<string, OfficeLayout>, settings: Settings): string {
+  const layout = layoutForProject(layouts, project, settings.office.defaultLayoutId);
+  return getTheme(layout.style ?? settings.office.style).floorLabel(index, project.name);
+}
+
+/** Runs the stairs transition (fade via the scene), then re-selects the floor and toasts its label. */
+async function goToFloor(game: OfficeGame | null, target: Project, ms: number, layouts: Record<string, OfficeLayout>, settings: Settings, showToast: (s: string) => void) {
+  const order = floorsInOrder(Object.values(useOfficeStore.getState().projects), settings.office.floorOrder);
+  const index = order.findIndex((p) => p.id === target.id);
+  const label = floorLabelFor(target, index, layouts, settings);
+  const select = () => useOfficeStore.getState().selectProject(target.id);
+  if (game) await game.transitionFloor(ms, select);
+  else select();
+  showToast(label);
 }
 
 export function OfficeView({ active }: { active: boolean }) {
@@ -39,6 +86,9 @@ export function OfficeView({ active }: { active: boolean }) {
   const [game, setGame] = useState<OfficeGame | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [follow, setFollow] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const agents = useFloorAgents();
   const maxCharacters = useSettingsStore((s) => s.settings.office.maxCharacters);
   const connection = useOfficeStore((s) => s.connection);
@@ -47,6 +97,12 @@ export function OfficeView({ active }: { active: boolean }) {
   const closePanel = () => {
     setSelected(null);
     setFollow(false);
+  };
+
+  const showToast = (label: string) => {
+    setToast(label);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 1500);
   };
 
   useEffect(() => {
@@ -68,10 +124,69 @@ export function OfficeView({ active }: { active: boolean }) {
       offFollow();
       g.destroy();
       setGame(null);
+      clearTimeout(toastTimer.current);
     };
   }, []);
 
   useGameBridge(game);
+
+  // Stairs (docs/design/guild-hall.md section 6): "All floors" opens the picker instead of moving;
+  // otherwise take the neighboring floor in `office.floorOrder`, or do nothing at an end.
+  useEffect(() => {
+    if (!game) return;
+    return game.on('stairs', (dir) => {
+      const { projects, selectedProjectId } = useOfficeStore.getState();
+      const { settings } = useSettingsStore.getState();
+      if (selectedProjectId === ALL_FLOORS) {
+        setPickerOpen(true);
+        return;
+      }
+      const layouts = useLayoutStore.getState().layouts;
+      const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, selectedProjectId);
+      const target = neighborFloor(order, selectedProjectId, dir);
+      if (!target) return;
+      void goToFloor(game, target, settings.office.floorTransitionMs, layouts, settings, showToast);
+    });
+  }, [game]);
+
+  // Global hotkeys (ignored while typing, or with a modifier held so Ctrl+F/Cmd+F still finds text).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return;
+      if (!['PageUp', 'PageDown', 'Home', 'End', 'f', 'F'].includes(e.key)) return;
+      const { projects, selectedProjectId } = useOfficeStore.getState();
+      const { settings } = useSettingsStore.getState();
+      const layouts = useLayoutStore.getState().layouts;
+      const allFloors = selectedProjectId === ALL_FLOORS;
+      const order = floorsInOrder(Object.values(projects), settings.office.floorOrder, allFloors ? undefined : selectedProjectId);
+      const go = (target: Project | undefined) => {
+        if (!target) return;
+        e.preventDefault();
+        void goToFloor(game, target, settings.office.floorTransitionMs, layouts, settings, showToast);
+      };
+      switch (e.key) {
+        case 'PageUp':
+          go(allFloors ? firstFloor(order) : neighborFloor(order, selectedProjectId, 'up'));
+          break;
+        case 'PageDown':
+          go(allFloors ? firstFloor(order) : neighborFloor(order, selectedProjectId, 'down'));
+          break;
+        case 'Home':
+          go(firstFloor(order));
+          break;
+        case 'End':
+          go(lastFloor(order));
+          break;
+        case 'f':
+        case 'F':
+          e.preventDefault();
+          setPickerOpen(true);
+          break;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [game]);
 
   // Phaser measures its parent; re-fit when the tab becomes visible again.
   useEffect(() => {
@@ -147,6 +262,11 @@ export function OfficeView({ active }: { active: boolean }) {
             </span>
           )}
         </div>
+        {toast && (
+          <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
+            <span className="rounded-full bg-ink-850/95 px-3 py-1.5 text-xs font-semibold text-ink-100 shadow-lg">{toast}</span>
+          </div>
+        )}
         <div className="absolute bottom-3 left-3 flex gap-1">
           <Button variant="subtle" onClick={() => game?.zoomBy(1.2)} aria-label="Zoom in">
             +
@@ -171,6 +291,7 @@ export function OfficeView({ active }: { active: boolean }) {
         )}
       </div>
       <Roster agents={agents} selectedId={selected} onSelect={selectAgent} />
+      {pickerOpen && <FloorManager onClose={() => setPickerOpen(false)} />}
     </div>
   );
 }

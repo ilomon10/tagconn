@@ -1,5 +1,5 @@
 import * as EasyStarNS from 'easystarjs';
-import type { Point } from './map/officeMap';
+import type { Point } from './procgen/types';
 
 // easystarjs is CommonJS; depending on the bundler the namespace may sit under `default`.
 const EasyStar: typeof EasyStarNS = (EasyStarNS as unknown as { default?: typeof EasyStarNS }).default ?? EasyStarNS;

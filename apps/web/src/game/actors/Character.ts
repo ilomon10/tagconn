@@ -1,7 +1,8 @@
 import * as Phaser from 'phaser';
 import type { Activity, AgentStatus } from '@tagconn/shared';
-import type { Point } from '../map/officeMap';
+import type { Point } from '../procgen/types';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '../textures';
+import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, staffTextureKey, type Costume } from '../themes';
 
 export interface CharacterLook {
   color: number;
@@ -51,6 +52,10 @@ export class Character extends Phaser.GameObjects.Container {
   private handR: Phaser.GameObjects.Image;
   private prop: Phaser.GameObjects.Image;
   private icon: Phaser.GameObjects.Image;
+  private cloak: Phaser.GameObjects.Image;
+  private hat: Phaser.GameObjects.Image;
+  private goggles: Phaser.GameObjects.Image;
+  private fx: Phaser.GameObjects.Container;
   readonly overlay: Phaser.GameObjects.Container;
   private tag: Phaser.GameObjects.Text;
   private bubble: Phaser.GameObjects.Container;
@@ -66,6 +71,10 @@ export class Character extends Phaser.GameObjects.Container {
   private bubbleUntil = 0;
   private lastBubble = '';
   private lookKey = '';
+  private costume: Costume = {};
+  private costumeKey = '';
+  private costumeProp: string | null = null;
+  private fxKey = '';
   private phase: number;
   leaving = false;
   gone = false;
@@ -87,9 +96,27 @@ export class Character extends Phaser.GameObjects.Container {
     this.handL = scene.add.image(-4, -4, 'px').setScale(0.5).setTint(skin);
     this.handR = scene.add.image(4, -4, 'px').setScale(0.5).setTint(skin);
     this.prop = scene.add.image(0, -3, 'prop-laptop').setOrigin(0.5, 1).setVisible(false);
-    this.upper = scene.add.container(0, 0, [this.body_, this.badge, this.handL, this.handR, this.head, this.hair, this.prop]);
+    // Guild costume overlays (docs/design/guild-hall.md section 3): a cloak strip behind the body,
+    // a hat above the hair, and a pair of goggles on the forehead. Invisible (and their textures
+    // untouched) for the modern theme, whose costumes are all `{}`.
+    this.cloak = scene.add.image(0, -2, CLOAK_TEXTURE).setOrigin(0.5, 1).setVisible(false);
+    this.hat = scene.add.image(0, -15, hatTextureKey('wizard')).setOrigin(0.5, 1).setVisible(false);
+    this.goggles = scene.add.image(0, -12, GOGGLES_TEXTURE).setOrigin(0.5, 0.5).setVisible(false);
+    this.upper = scene.add.container(0, 0, [
+      this.cloak,
+      this.body_,
+      this.badge,
+      this.handL,
+      this.handR,
+      this.head,
+      this.hair,
+      this.hat,
+      this.goggles,
+      this.prop,
+    ]);
     this.icon = scene.add.image(0, -19, 'icon-dots-3').setOrigin(0.5, 1).setVisible(false);
-    this.add([this.shadow, this.legs, this.upper, this.icon]);
+    this.fx = scene.add.container(0, -8);
+    this.add([this.shadow, this.legs, this.upper, this.icon, this.fx]);
 
     this.tag = crisp(
       scene.add
@@ -121,6 +148,30 @@ export class Character extends Phaser.GameObjects.Container {
     this.tag.setText(`${look.title}${desc}`);
     this.tag.setColor(hex(lighten(look.color, 0.55)));
     this.tag.setVisible(showTag);
+  }
+
+  /** Guild costume for this role (hat/cloak/staff/goggles); a no-op `{}` under the modern theme. */
+  setCostume(costume: Costume, roleColor: number) {
+    const key = `${costume.robe ?? ''}|${costume.cloak ?? ''}|${costume.hat ?? ''}|${costume.hatColor ?? ''}|${costume.staff ?? ''}|${costume.goggles ?? ''}|${roleColor}`;
+    if (key === this.costumeKey) return;
+    this.costumeKey = key;
+    this.costume = costume;
+    if (costume.robe !== undefined) this.body_.setTint(costume.robe);
+    if (costume.cloak !== undefined) this.cloak.setTexture(CLOAK_TEXTURE).setTint(costume.cloak).setVisible(true);
+    else this.cloak.setVisible(false);
+    if (costume.hat && costume.hat !== 'none') this.hat.setTexture(hatTextureKey(costume.hat)).setTint(costume.hatColor ?? roleColor).setVisible(true);
+    else this.hat.setVisible(false);
+    this.goggles.setVisible(!!costume.goggles);
+    this.costumeProp = costume.staff && costume.staff !== 'none' ? staffTextureKey(costume.staff) : null;
+  }
+
+  /** Particle effect for the current activity (docs/design/guild-hall.md "Magic activity effects"). */
+  setActivityFx(kind: 'sparkles' | 'bubbles' | 'rune' | 'channel' | 'none' | undefined, enabled: boolean) {
+    const key = `${kind ?? ''}|${enabled}`;
+    if (key === this.fxKey) return;
+    this.fxKey = key;
+    this.fx.removeAll(true);
+    this.fx.add(createActivityFx(this.scene, kind, 0, 0, enabled));
   }
 
   setActivity(activity: Activity, status: AgentStatus) {
@@ -344,6 +395,11 @@ export class Character extends Phaser.GameObjects.Container {
           icon = 'icon-check';
           break;
       }
+      // Guild costume prop (staff/wand/hammer/quill/lute/shield): a default held item for whatever
+      // activity didn't already pick a themed one, e.g. thinking, waiting, blocked or half of idle
+      // (docs/design/guild-hall.md: "hand props ... replacing the laptop when not typing" — typing
+      // already claimed `prop` above, so this only ever fills the gap).
+      if (!prop && this.costumeProp) prop = this.costumeProp;
       if (this.status === 'waiting' && !icon) icon = 'icon-question';
       if (this.status === 'blocked' && !icon) icon = 'icon-bang';
       if (now < this.waveUntil) {

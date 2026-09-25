@@ -1,15 +1,33 @@
 import * as Phaser from 'phaser';
-import { ZONES, type Agent, type Role, type Settings, type Zone } from '@tagconn/shared';
-import { buildOfficeMap, type OfficeMap, type Point } from '../map/officeMap';
-import { BASE_TEXTURE, renderMap } from '../map/renderMap';
+import { DEFAULT_LAYOUT, type Agent, type OfficeLayout, type OfficeStyle, type Role, type Settings, type Zone } from '@tagconn/shared';
+import { generateMap } from '../procgen';
+import type { GeneratedMap, Point, StairsSpot } from '../procgen/types';
 import { PathFinder } from '../pathfinding';
 import { SeatAllocator } from '../seats';
 import { Character } from '../actors/Character';
 import { generateTextures } from '../textures';
-import { prefersReducedMotion } from '../themes/fx';
+import { resolveCostume, resolveTitle } from '../lookResolver';
+import { getTheme, paintCostumeTextures, prefersReducedMotion, renderGeneratedMap, themedBubble, THEME_BASE_TEXTURE, type ThemeDefinition } from '../themes';
 import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets } from '../camera/insets';
 import { zoomAboutPoint } from '../camera/zoom';
 import { isDragMove } from '../camera/drag';
+
+/** A neighboring floor reachable by the stairs, with its display label pre-formatted by the theme. */
+export interface OfficeFloorNeighbor {
+  id: string;
+  label: string;
+}
+
+/**
+ * Where the current floor sits in the stairs order (docs/design/guild-hall.md section 6). `null`
+ * in "All floors" mode: there is no single floor to move relative to, and stairs open the picker.
+ */
+export interface OfficeFloorInfo {
+  index: number;
+  count: number;
+  above?: OfficeFloorNeighbor;
+  below?: OfficeFloorNeighbor;
+}
 
 export interface OfficeState {
   agents: Agent[];
@@ -17,20 +35,11 @@ export interface OfficeState {
   roles: Role[];
   /** Changing floors swaps the cast instantly instead of walking everyone out. */
   floorKey: string;
+  layout: OfficeLayout;
+  /** Resolved style: `layout.style` wins over `settings.office.style`. */
+  style: OfficeStyle;
+  floor: OfficeFloorInfo | null;
 }
-
-export const ZONE_LABELS: Record<Zone, string> = {
-  entrance: 'Entrance',
-  'pm-office': 'PM Office',
-  desks: 'Dev Desks',
-  'meeting-room': 'Meeting Room',
-  whiteboard: 'Whiteboard',
-  'qa-lab': 'QA Lab',
-  'review-booth': 'Review Booth',
-  'server-room': 'Server Room',
-  library: 'Library',
-  lounge: 'Lounge',
-};
 
 const parseColor = (c: string | undefined, fallback = 0x8e8e9e) => {
   const n = c && /^#[0-9a-f]{6}$/i.test(c) ? parseInt(c.slice(1), 16) : NaN;
@@ -42,21 +51,34 @@ export function visibleAgents(agents: Agent[], max: number): Agent[] {
   return [...agents].sort((a, b) => Number(b.isMain) - Number(a.isMain) || a.startedAt - b.startedAt).slice(0, Math.max(0, max));
 }
 
+interface StairsSprite {
+  spot: StairsSpot;
+  zone: Phaser.GameObjects.Zone;
+  ring: Phaser.GameObjects.Arc;
+}
+
 export class OfficeScene extends Phaser.Scene {
-  private map!: OfficeMap;
+  private map!: GeneratedMap;
+  private theme!: ThemeDefinition;
   private finder!: PathFinder;
   private seats!: SeatAllocator;
+  /** Static world art (base texture, room labels, theme decor/animation) — rebuilt on any geometry
+   *  or style change and never touched by anything else. */
   private worldLayer: Phaser.GameObjects.GameObject[] = [];
+  private stairsSprites: StairsSprite[] = [];
+  private tooltip!: Phaser.GameObjects.Text;
   private characters = new Map<string, Character>();
   private night!: Phaser.GameObjects.Rectangle;
-  private leds: { g: Phaser.GameObjects.Rectangle; rate: number; phase: number }[] = [];
-  private screens: Phaser.GameObjects.Rectangle[] = [];
   private state?: OfficeState;
-  private zonesKey = '';
+  /** `layout.id + updatedAt` — a full geometry rebuild only happens when this changes (D2: a style
+   *  switch alone re-skins the same geometry, so seats and characters never move). */
+  private layoutKey = '';
+  private appliedStyle: OfficeStyle | null = null;
   private floorKey: string | null = null;
   private userZoom = 1;
   private panned = false;
   private drag: { x: number; y: number; sx: number; sy: number; moved: boolean } | null = null;
+  private inputLocked = false;
   private themeTimer?: Phaser.Time.TimerEvent;
   /** The safe-region insets currently applied to the camera (animated toward whatever React last reported). */
   private insets: SafeInsets = { ...ZERO_INSETS };
@@ -73,11 +95,28 @@ export class OfficeScene extends Phaser.Scene {
 
   create() {
     generateTextures(this);
+    paintCostumeTextures(this);
+    this.tooltip = this.add
+      .text(0, 0, '', {
+        fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+        fontSize: '11px',
+        color: '#1c1430',
+        backgroundColor: '#f3e9d2',
+        padding: { x: 6, y: 3 },
+        resolution: 2,
+      })
+      .setOrigin(0, 1)
+      .setScrollFactor(0)
+      .setDepth(200_000)
+      .setVisible(false);
     this.cameras.main.setBackgroundColor('#15121e');
-    this.buildWorld({});
+    this.buildWorld(DEFAULT_LAYOUT, 'guild');
     this.night = this.add.rectangle(0, 0, this.worldW, this.worldH, 0x0b1030, 0).setOrigin(0).setDepth(90_000);
     this.setupCamera();
-    this.themeTimer = this.time.addEvent({ delay: 60_000, loop: true, callback: () => this.applyTheme() });
+    this.themeTimer = this.time.addEvent({ delay: 60_000, loop: true, callback: () => this.applyLighting() });
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (this.tooltip.visible) this.tooltip.setPosition(p.x + 14, p.y - 10);
+    });
     this.scale.on('resize', () => this.fitCamera());
     window.addEventListener('blur', this.endDragOnBlur);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -94,25 +133,42 @@ export class OfficeScene extends Phaser.Scene {
     return this.map.rows * this.map.tileSize;
   }
 
-  private buildWorld(zones: Record<string, unknown>) {
-    for (const o of this.worldLayer) o.destroy();
-    this.worldLayer = [];
-    this.leds = [];
-    this.screens = [];
-    this.map = buildOfficeMap(zones);
+  /** Full geometry rebuild: a new map, seats, pathfinding grid and stairs. Characters keep their
+   *  world position unless `setOfficeState` also decides to reseat them (a real layout change). */
+  private buildWorld(layout: OfficeLayout, style: OfficeStyle) {
+    this.map = generateMap(layout);
+    this.theme = getTheme(style);
+    this.appliedStyle = style;
     this.finder = new PathFinder(this.map.walkable);
     this.seats = new SeatAllocator(this.map);
-    const T = this.map.tileSize;
-    renderMap(this, this.map);
-    this.worldLayer.push(this.add.image(0, 0, BASE_TEXTURE).setOrigin(0).setDepth(-10));
+    this.renderVisuals();
+    this.buildStairsInteractive();
+    if (this.night) this.night.setSize(this.worldW, this.worldH);
+  }
 
-    for (const zone of ZONES) {
-      const r = this.map.zones[zone].rect;
+  /** Same geometry, new skin: repaint the texture, room decor and lighting only. */
+  private applySkin(style: OfficeStyle) {
+    this.theme = getTheme(style);
+    this.appliedStyle = style;
+    this.renderVisuals();
+    this.refreshStairsAvailability();
+  }
+
+  private renderVisuals() {
+    for (const o of this.worldLayer) o.destroy();
+    this.worldLayer = [];
+    const T = this.map.tileSize;
+    renderGeneratedMap(this, this.map, this.theme);
+    this.worldLayer.push(this.add.image(0, 0, THEME_BASE_TEXTURE).setOrigin(0).setDepth(-10));
+
+    for (const room of this.map.rooms) {
+      if (room.type === 'hall') continue;
+      const name = (room.name ?? this.theme.roomNames[room.type]).toUpperCase();
       const label = this.add
-        .text(r.x * T + 3, (r.y + r.h) * T - 2, ZONE_LABELS[zone].toUpperCase(), {
+        .text(room.labelAt.x * T + 3, room.labelAt.y * T - 2, name, {
           fontFamily: 'ui-monospace, Menlo, monospace',
           fontSize: '6px',
-          color: '#f3e9d2',
+          color: this.theme.palette.text,
           resolution: 4,
         })
         .setOrigin(0, 1)
@@ -122,30 +178,83 @@ export class OfficeScene extends Phaser.Scene {
       this.worldLayer.push(label);
     }
 
-    // Small animated details: rack LEDs, monitor glow, coffee steam.
-    for (const f of this.map.furniture) {
-      if (f.kind === 'rack') {
-        for (let y = f.y * T + 3; y < (f.y + f.h) * T - 3; y += 4) {
-          const colors = [0x6cf08a, 0x4ab5ff, 0xffc34a];
-          const led = this.add.rectangle(f.x * T + 4 + ((y / 4) % 3) * 3, y, 1, 1, colors[(y / 4) % 3]!).setOrigin(0).setDepth(-4);
-          this.leds.push({ g: led, rate: 1.5 + Math.random() * 4, phase: Math.random() * 10 });
-          this.worldLayer.push(led);
-        }
-      }
-      if (f.kind === 'desk') {
-        for (let i = 0; i < f.w; i++) {
-          const s = this.add.rectangle((f.x + i) * T + 4, f.y * T - 2, 8, 5, 0xbfe6ff, 0).setOrigin(0).setDepth(-4);
-          this.screens.push(s);
-          this.worldLayer.push(s);
-        }
-      }
-      if (f.kind === 'coffee') {
-        const steam = this.add.rectangle(f.x * T + 8, f.y * T + 8, 1, 3, 0xffffff, 0.5).setDepth(-4);
-        this.tweens.add({ targets: steam, y: f.y * T + 2, alpha: 0, duration: 1600, repeat: -1 });
-        this.worldLayer.push(steam);
-      }
+    const ambient = this.state?.settings.office.ambientEffects ?? true;
+    this.worldLayer.push(...this.theme.animate(this, this.map, { ambient }));
+  }
+
+  // ---------------------------------------------------------------- stairs
+
+  private buildStairsInteractive() {
+    for (const s of this.stairsSprites) {
+      s.zone.destroy();
+      s.ring.destroy();
     }
-    if (this.night) this.night.setSize(this.worldW, this.worldH);
+    this.stairsSprites = [];
+    const T = this.map.tileSize;
+    for (const spot of this.map.stairs) {
+      const cx = spot.x * T + T / 2;
+      const cy = spot.y * T + T / 2;
+      const ring = this.add
+        .circle(cx, cy, T * 0.55)
+        .setStrokeStyle(2, spot.dir === 'up' ? 0x4ff0d0 : 0xb07aff, 0.9)
+        .setDepth(spot.y * T + 3);
+      const zone = this.add.zone(cx, cy, T, T).setDepth(spot.y * T + 4).setInteractive({ cursor: 'pointer' });
+      zone.on('pointerover', () => this.hoverStairs(spot, ring));
+      zone.on('pointerout', () => this.unhoverStairs(ring));
+      zone.on('pointerup', () => {
+        if (!this.inputLocked) this.events.emit('stairs', spot.dir);
+      });
+      this.stairsSprites.push({ spot, zone, ring });
+    }
+    this.refreshStairsAvailability();
+  }
+
+  private hoverStairs(spot: StairsSpot, ring: Phaser.GameObjects.Arc) {
+    ring.setScale(1.15);
+    const floor = this.state?.floor ?? null;
+    const target = spot.dir === 'up' ? floor?.above : floor?.below;
+    const text = floor === null ? 'Open the floor picker' : target ? `${spot.dir === 'up' ? 'Up to' : 'Down to'} ${target.label}` : 'No floor this way';
+    this.tooltip.setText(text).setVisible(true);
+  }
+
+  private unhoverStairs(ring: Phaser.GameObjects.Arc) {
+    ring.setScale(1);
+    this.tooltip.setVisible(false);
+  }
+
+  /** Grey out a direction with no floor to reach; "All floors" mode leaves both lit (they open the picker). */
+  private refreshStairsAvailability() {
+    const floor = this.state?.floor ?? null;
+    for (const { spot, ring } of this.stairsSprites) {
+      const target = spot.dir === 'up' ? floor?.above : floor?.below;
+      const enabled = floor === null || !!target;
+      ring.setStrokeStyle(2, enabled ? (spot.dir === 'up' ? 0x4ff0d0 : 0xb07aff) : 0x666666, enabled ? 0.9 : 0.4);
+    }
+  }
+
+  /**
+   * The stairs transition (docs/design/guild-hall.md section 6): fade the camera out (with a
+   * slight zoom-in), resolve so the caller can swap floors, then the caller calls `finishTransition`
+   * to fade back in. Instant (no visual) under reduced motion or `ms <= 0`.
+   */
+  runTransition(ms: number): Promise<void> {
+    this.inputLocked = true;
+    if (prefersReducedMotion() || ms <= 0) return Promise.resolve();
+    const cam = this.cameras.main;
+    const half = Math.max(1, Math.floor(ms / 2));
+    const c = this.theme.palette.transition;
+    this.tweens.add({ targets: cam, zoom: cam.zoom * 1.06, duration: half, ease: 'Sine.easeIn' });
+    return new Promise((resolve) => {
+      cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => resolve());
+      cam.fadeOut(half, (c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff);
+    });
+  }
+
+  finishTransition(ms: number) {
+    this.inputLocked = false;
+    if (prefersReducedMotion() || ms <= 0) return;
+    const half = Math.max(1, Math.floor(ms / 2));
+    this.cameras.main.fadeIn(half);
   }
 
   // ---------------------------------------------------------------- camera
@@ -154,6 +263,7 @@ export class OfficeScene extends Phaser.Scene {
     const cam = this.cameras.main;
     this.fitCamera();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (this.inputLocked) return;
       this.drag = { x: p.x, y: p.y, sx: cam.scrollX, sy: cam.scrollY, moved: false };
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
@@ -175,6 +285,7 @@ export class OfficeScene extends Phaser.Scene {
       if (wasEmptyClick) this.events.emit('emptyClick');
     });
     this.input.on('wheel', (p: Phaser.Input.Pointer, _objs: unknown, _dx: number, dy: number) => {
+      if (this.inputLocked) return;
       const oldZoom = cam.zoom;
       this.userZoom = Phaser.Math.Clamp(this.userZoom * (dy > 0 ? 0.88 : 1.12), 0.4, 6);
       const newZoom = this.targetZoom();
@@ -288,27 +399,33 @@ export class OfficeScene extends Phaser.Scene {
 
   // ---------------------------------------------------------------- state
 
-  private applyTheme() {
-    const theme = this.state?.settings.office.theme ?? 'auto';
+  private applyLighting() {
+    if (!this.theme) return;
+    const mode = this.state?.settings.office.theme ?? 'auto';
     const hour = new Date().getHours();
-    const isNight = theme === 'night' || (theme === 'auto' && (hour >= 19 || hour < 7));
-    this.night.setFillStyle(0x0b1030, isNight ? 0.42 : 0);
-    for (const s of this.screens) s.setFillStyle(0xbfe6ff, isNight ? 0.35 : 0);
+    const isNight = mode === 'night' || (mode === 'auto' && (hour >= 19 || hour < 7));
+    const lighting = this.theme.lighting;
+    this.night.setFillStyle(lighting.nightTint, isNight ? lighting.nightAlpha : 0);
   }
 
   setOfficeState(state: OfficeState) {
     const prevZoom = this.state?.settings.office.zoom;
     this.state = state;
     const office = state.settings.office;
+    const effectiveStyle = state.layout.style ?? state.style;
 
-    const zonesKey = JSON.stringify(office.zones ?? {});
-    const rebuild = zonesKey !== this.zonesKey;
+    const layoutKey = `${state.layout.id}|${state.layout.updatedAt}`;
+    const rebuild = layoutKey !== this.layoutKey;
+    const reskin = !rebuild && effectiveStyle !== this.appliedStyle;
     if (rebuild) {
-      this.zonesKey = zonesKey;
-      this.buildWorld(office.zones ?? {});
+      this.layoutKey = layoutKey;
+      this.buildWorld(state.layout, effectiveStyle);
+    } else if (reskin) {
+      this.applySkin(effectiveStyle);
     }
+    this.refreshStairsAvailability();
     if (prevZoom !== office.zoom) this.fitCamera();
-    this.applyTheme();
+    this.applyLighting();
 
     const instant = this.floorKey !== state.floorKey;
     if (instant) {
@@ -324,6 +441,7 @@ export class OfficeScene extends Phaser.Scene {
       if (!ids.has(id) && !c.leaving) this.sendHome(c);
     }
 
+    const ambientForCharacters = office.ambientEffects && !prefersReducedMotion();
     for (const agent of shown) {
       let c = this.characters.get(agent.id);
       const role = state.roles.find((r) => r.name === agent.role);
@@ -359,17 +477,20 @@ export class OfficeScene extends Phaser.Scene {
           this.walk(c, seat, seat.seated);
         }
       }
+      const color = parseColor(role?.color);
       c.setLook(
         {
-          color: parseColor(role?.color),
-          title: role?.title ?? (agent.isMain ? 'PM' : agent.role),
+          color,
+          title: resolveTitle(this.theme, agent.role, role?.title ?? (agent.isMain ? 'PM' : agent.role)),
           description: agent.isMain ? undefined : agent.description,
           sprite: role?.sprite ?? 0,
         },
         true,
       );
+      c.setCostume(resolveCostume(this.theme, agent.role), color);
       c.setActivity(agent.activity, agent.status);
-      c.setBubble(agent.bubble, office.bubbleSeconds, office.showBubbles);
+      c.setBubble(themedBubble(this.theme, agent.activity, agent.bubble, agent.currentTool), office.bubbleSeconds, office.showBubbles);
+      c.setActivityFx(this.theme.activityFx?.[agent.activity], ambientForCharacters);
     }
   }
 
@@ -419,7 +540,5 @@ export class OfficeScene extends Phaser.Scene {
       }
     }
     if (this.followId) this.recenterFollow(false);
-    const t = time / 1000;
-    for (const l of this.leds) l.g.setAlpha(Math.sin(t * l.rate + l.phase) > -0.2 ? 1 : 0.15);
   }
 }
