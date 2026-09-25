@@ -1,5 +1,5 @@
 import type { ClientToServerEvents, ServerToClientEvents } from '@tagconn/shared';
-import { OFFICE_NAMESPACE } from '@tagconn/shared';
+import { DEFAULT_LAYOUT, OFFICE_NAMESPACE } from '@tagconn/shared';
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../../app.js';
@@ -53,6 +53,34 @@ describe('request gating (DNS rebinding / CSRF)', () => {
       headers: { origin: origins[0] },
     });
     expect(good.statusCode).toBe(200);
+  });
+
+  it('rejects a layout POST or PUT with a foreign Origin, accepts a configured one', async () => {
+    app = await buildTestApp();
+    const origins = app.diContainer.cradle.settings.get().server.corsOrigins;
+    // A geometry known to validate with 0 issues (DEFAULT_LAYOUT), minus the server-owned fields.
+    const { id: _id, builtin: _builtin, createdAt: _createdAt, updatedAt: _updatedAt, ...layout } = DEFAULT_LAYOUT;
+
+    const badPost = await app.inject({
+      method: 'POST',
+      url: '/api/layouts',
+      payload: layout,
+      headers: { origin: 'http://evil.example.com' },
+    });
+    expect(badPost.statusCode).toBe(403);
+    expect(badPost.json().error).toMatch(/origin/i);
+
+    const badPut = await app.inject({
+      method: 'PUT',
+      url: '/api/layouts/test-hall',
+      payload: layout,
+      headers: { origin: 'http://evil.example.com' },
+    });
+    expect(badPut.statusCode).toBe(403);
+    expect(badPut.json().error).toMatch(/origin/i);
+
+    const goodPost = await app.inject({ method: 'POST', url: '/api/layouts', payload: layout, headers: { origin: origins[0] } });
+    expect(goodPost.statusCode).toBe(201);
   });
 
   it('allows GET requests regardless of a foreign Origin (only mutating requests are gated)', async () => {

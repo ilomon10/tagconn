@@ -5,7 +5,9 @@ import { publicAgent } from '../agents/index.js';
 /** Ended sessions and finished tasks stay in the snapshot this long. */
 const RECENT_MS = 24 * 60 * 60 * 1000;
 
-type SnapshotDeps = Deps<'projectsRepository' | 'sessionsRepository' | 'agentsRepository' | 'tasksRepository' | 'eventsRepository' | 'settings'>;
+type SnapshotDeps = Deps<
+  'projectsRepository' | 'sessionsRepository' | 'agentsRepository' | 'tasksRepository' | 'eventsRepository' | 'layoutsRepository' | 'settings'
+>;
 
 /** Read model for a (re)connecting client: live floor + recent context. */
 export class SnapshotService {
@@ -29,6 +31,8 @@ export class SnapshotService {
       agents,
       tasks: d.tasksRepository.listRecent(since, pid),
       events: limit > 0 ? d.eventsRepository.list({ projectId: pid, limit }) : [],
+      // Layouts are global (M7), not per floor, so every snapshot carries the full list.
+      layouts: d.layoutsRepository.list(),
     };
   }
 }

@@ -6,7 +6,7 @@ import { schema } from '../../core/db/index.js';
 const { projects, sessions } = schema;
 type Row = typeof projects.$inferSelect;
 
-const toProject = (r: Row): Project => ({ ...r });
+const toProject = (r: Row): Project => ({ ...r, layoutId: r.layoutId ?? undefined });
 
 export class ProjectsRepository {
   constructor(private readonly deps: Deps<'db'>) {}
@@ -21,10 +21,14 @@ export class ProjectsRepository {
   }
 
   upsert(p: Project): void {
+    const layoutId = p.layoutId ?? null;
     this.deps.db
       .insert(projects)
-      .values(p)
-      .onConflictDoUpdate({ target: projects.id, set: { cwd: p.cwd, name: p.name, archived: p.archived, lastActivityAt: p.lastActivityAt } })
+      .values({ ...p, layoutId })
+      .onConflictDoUpdate({
+        target: projects.id,
+        set: { cwd: p.cwd, name: p.name, archived: p.archived, lastActivityAt: p.lastActivityAt, layoutId },
+      })
       .run();
   }
 

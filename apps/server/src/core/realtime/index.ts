@@ -76,6 +76,9 @@ export const realtimePlugin = fp(
     bus.on('event.created', (e) => toProject(e.projectId).emit('event:new', e));
     bus.on('settings.changed', ({ settings: s }) => office.emit('settings:changed', toPublicSettings(s)));
     bus.on('roles.changed', (r) => office.emit('roles:changed', r));
+    // Layouts are global (not per floor), so these go to every client, not a project room.
+    bus.on('layout.upserted', (l) => office.emit('layout:upsert', l));
+    bus.on('layout.removed', (id) => office.emit('layout:remove', id));
 
     app.addHook('preClose', async () => {
       office.disconnectSockets(true);

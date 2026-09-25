@@ -1,4 +1,4 @@
-import type { Activity, Agent, HookPayload, OfficeEvent, Project, Role, Session, Settings, Task } from '@tagconn/shared';
+import type { Activity, Agent, HookPayload, OfficeEvent, OfficeLayout, Project, Role, Session, Settings, Task } from '@tagconn/shared';
 
 /**
  * One hook as it flows through the modules. Listeners on 'hook.received' run in module registration
@@ -33,6 +33,10 @@ export interface BusEvents {
   'event.created': OfficeEvent;
   'settings.changed': { settings: Settings; changed: string[] };
   'roles.changed': Role[];
+  /** A layout was created or replaced (M7). Layouts are global: broadcast to every client. */
+  'layout.upserted': OfficeLayout;
+  /** A layout was deleted; `layout.removed` id is a `LAYOUT_ID_RE` string. */
+  'layout.removed': string;
 }
 
 type Listener<T> = (payload: T) => void;

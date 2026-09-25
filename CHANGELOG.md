@@ -9,6 +9,7 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ### Added
 - Design spec and contract for the "Magic Guild Hall": medieval guild style, office editor with procedural generation, stairs between floors (work in progress).
+- Server `layouts` module (M7 7b): CRUD for office layouts over REST (`/api/layouts`) and socket (`layouts:list|get|save|delete|assign`), a seeded read-only default layout, `PATCH /api/projects/:id { layoutId }` to assign or clear a floor's layout, deleting a layout clears it from the projects that used it, and the snapshot now carries `layouts`.
 
 ## [0.1.0] - 2026-09-25
 

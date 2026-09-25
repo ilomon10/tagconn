@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import type { Project } from '@tagconn/shared';
 import type { Deps } from '../../core/di/index.js';
 import type { HookContext } from '../../core/event-bus/index.js';
-import { notFound } from '../../core/http/index.js';
+import { HttpError, notFound } from '../../core/http/index.js';
 import type { ProjectsRepository } from './projects.repository.js';
 
 /** Don't re-broadcast a project just because lastActivityAt moved by less than this. */
@@ -21,7 +21,7 @@ export const projectIdFor = (cwd: string) =>
   `${slugify(basename(cwd))}-${createHash('sha1').update(cwd).digest('hex').slice(0, 6)}`;
 
 export class ProjectsService {
-  constructor(private readonly deps: Deps<'projectsRepository' | 'bus'>) {}
+  constructor(private readonly deps: Deps<'projectsRepository' | 'layoutsRepository' | 'bus'>) {}
 
   list(): Project[] {
     return this.deps.projectsRepository.list();
@@ -48,12 +48,25 @@ export class ProjectsService {
     if (ctx.ts - existing.lastActivityAt >= ACTIVITY_BROADCAST_MS) this.deps.bus.emit('project.upserted', updated);
   }
 
-  update(id: string, patch: { name?: string; archived?: boolean }): Project {
+  update(id: string, patch: { name?: string; archived?: boolean; layoutId?: string | null }): Project {
     const existing = this.deps.projectsRepository.get(id);
     if (!existing) throw notFound(`Project ${id}`);
-    const updated: Project = { ...existing, ...(patch.name !== undefined && { name: patch.name }), ...(patch.archived !== undefined && { archived: patch.archived }) };
+    if (patch.layoutId != null && !this.deps.layoutsRepository.get(patch.layoutId)) {
+      throw new HttpError(400, `Unknown layout "${patch.layoutId}"`);
+    }
+    const updated: Project = {
+      ...existing,
+      ...(patch.name !== undefined && { name: patch.name }),
+      ...(patch.archived !== undefined && { archived: patch.archived }),
+      ...(patch.layoutId !== undefined && { layoutId: patch.layoutId ?? undefined }),
+    };
     this.deps.projectsRepository.upsert(updated);
     this.deps.bus.emit('project.upserted', updated);
     return updated;
+  }
+
+  /** `layouts:assign` (socket): same rules as `PATCH /api/projects/:id { layoutId }`. */
+  assignLayout(projectId: string, layoutId: string | null): Project {
+    return this.update(projectId, { layoutId });
   }
 }

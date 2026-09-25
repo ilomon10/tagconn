@@ -55,16 +55,18 @@ Plan: `~/.claude/plans/let-we-brainstorming-i-elegant-abelson.md`
 - [x] Server: transcripts module (token usage per agent/session, deduped, path-contained to projectsDir) + session settings; 71 server tests  [Developer: server]
 - [x] Web: token usage in roster/drawer/top bar, "Manage floors" (rename/archive), demo usage; 41 web tests  [Developer: web]
 - [x] Tests: 57 tests for `scripts/install.ts` + `doctor.ts` (unit + sandboxed integration + real-paths guard), `pnpm test:scripts`  [Developer: infra]
-- [ ] Review + security + QA of wave 2, then rebuild docker (`pnpm office:up`)
+- [x] Security review of wave 2: 3 Med (symlink/TOCTOU escape, unbounded line buffer, unbounded tracked files), 5 Low; release.ts + install.ts clean
+- [x] Code review of wave 2: 1 High (usage update could resurrect a removed agent), 3 Low
+- [~] Fix pass: transcripts hardening (fd-based open, O_NOFOLLOW, caps, LRU, id validation, TextDecoder) + web floor-usage fix
 
 ## M7: Magic Guild Hall: themes, office editor, procedural generation, stairs  [PM plan]
 Decisions: a style ("skin") is separate from lighting (`office.style`: `modern` | `guild`). A floor is still a project;
 the stairs on every floor lead to the next or previous floor. Layouts are saved data (rooms = drawn rectangles + room type)
 and the map (walls, doors, corridors, furniture, seats) is generated from them deterministically with a seed.
 - [x] 7a. Design spec `docs/design/guild-hall.md` + contract (`layout.ts` with `validateLayout`/`DEFAULT_LAYOUT`, `office.style`=guild, floor settings, layout socket events)  [Architect]
-- [ ] 7b. Server `layouts` module: CRUD + validation, `project.layoutId`, seed default layouts, socket events  [Developer: server]  (after wave 2 server)
-- [ ] 7c. Procgen engine `apps/web/src/game/procgen/`: rooms → walls, doors, corridors, furniture, seats; BSP "surprise me" generator; tests  [Developer: web A]  (after wave 2 web)
-- [ ] 7d. Theme system `apps/web/src/game/themes/`: modern + **guild** skins, drawn in code (stone, torches, banners, runes, particles), role costumes and titles, magical activity verbs  [Developer: web B]  (parallel with 7c)
+- [x] 7b. Server `layouts` module: CRUD REST+socket, read-only seeded default, `project.layoutId` assign/clear + delete cascade, snapshot.layouts, migration 3; 84 server tests  [Developer: server]
+- [~] 7c. Procgen engine `apps/web/src/game/procgen/`: rooms → walls, doors, corridors, furniture, seats; BSP "surprise me" generator; tests  [Developer: web A]  (after wave 2 web)
+- [~] 7d. Theme system `apps/web/src/game/themes/`: modern + **guild** skins, drawn in code (stone, torches, banners, runes, particles), role costumes and titles, magical activity verbs  [Developer: web B]  (parallel with 7c)
 - [ ] 7e. Office editor UI (draw regions, pick room type, place stairs, validate, preview, save) + stairs interaction + scene integration  [Developer: web]  (after 7c + 7d)
 - [ ] 7f. Review + security + QA of M7, docker rebuild
 

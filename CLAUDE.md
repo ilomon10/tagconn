@@ -59,6 +59,14 @@ apps/server/test/fixtures/  REAL hook payloads captured from Claude Code; use th
 - Scripts in `scripts/` use erasable TS only (no enums or namespaces) so `node file.ts` runs them.
 - TS is strict with `noUncheckedIndexedAccess`. Tests use vitest.
 
+## Git, versioning, releases
+- Public repo: https://github.com/ilomon10/tagconn (MIT). Branch `main`. Conventional Commits.
+- **No Claude/AI attribution** in commit messages or PR bodies (the maintainer's explicit rule).
+- Lockstep SemVer across all packages; record user-facing changes under `## [Unreleased]` in `CHANGELOG.md`.
+  Release with `pnpm release <patch|minor|major>` (bumps, changelog, commit and tag; it never pushes), then `git push --follow-tags`
+  and `gh release create vX.Y.Z --notes-file <section>`. Planned: M7 Guild Hall → v0.2.0.
+- The PM commits after each verified wave; never commit a tree while subagents are mid-edit.
+
 ## Working style for this repo (virtual software house)
 Use the project subagents in `.claude/agents/` (analyst, architect, developer, qa-engineer,
 code-reviewer, security-engineer). The main session acts as PM. It splits work into small, file-disjoint

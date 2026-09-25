@@ -10,6 +10,8 @@ export const projects = sqliteTable('projects', {
   archived: integer('archived', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at').notNull(),
   lastActivityAt: integer('last_activity_at').notNull(),
+  /** Office layout of this floor (M7). Null = settings.office.defaultLayoutId. */
+  layoutId: text('layout_id'),
 });
 
 export const sessions = sqliteTable(
@@ -116,4 +118,18 @@ export const roles = sqliteTable('roles', {
 export const meta = sqliteTable('meta', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
+});
+
+/**
+ * Office layouts (M7). `data` holds the geometry (`width, height, seed, background, corridorWidth,
+ * rooms, style?`), parsed with `OfficeLayoutSchema` on read; `id`, `name`, `builtin` and the
+ * timestamps are their own columns so listing and the builtin check never need to parse JSON.
+ */
+export const layouts = sqliteTable('layouts', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  data: text('data', { mode: 'json' }).notNull(),
+  builtin: integer('builtin', { mode: 'boolean' }).notNull().default(false),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
 });

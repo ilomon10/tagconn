@@ -48,6 +48,13 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE agents ADD COLUMN usage TEXT;
   ALTER TABLE sessions ADD COLUMN usage TEXT;
   `,
+  /* 3: office layouts (M7) */ `
+  CREATE TABLE IF NOT EXISTS layouts (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, data TEXT NOT NULL, builtin INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  ALTER TABLE projects ADD COLUMN layout_id TEXT;
+  `,
 ];
 
 export function migrate(sqlite: Database.Database): number {

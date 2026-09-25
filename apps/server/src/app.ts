@@ -10,6 +10,7 @@ import { agentsModule } from './modules/agents/index.js';
 import { eventsModule } from './modules/events/index.js';
 import { healthModule } from './modules/health/index.js';
 import { ingestModule } from './modules/ingest/index.js';
+import { layoutsModule } from './modules/layouts/index.js';
 import { projectsModule } from './modules/projects/index.js';
 import { rolesModule } from './modules/roles/index.js';
 import { resolveTemplatesDir } from './modules/roles/roles.templates.js';
@@ -70,6 +71,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(settingsModule);
   await app.register(activityModule);
   await app.register(rolesModule);
+  await app.register(layoutsModule);
   await app.register(ingestModule);
   await app.register(projectsModule);
   await app.register(sessionsModule);

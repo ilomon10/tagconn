@@ -98,8 +98,16 @@ office: {}
   # bubbleSeconds: 6
   # zoom: 1
   # sound: false
-  # zones: {}              # optional zone rectangle overrides, in tile units:
+  # zones: {}              # deprecated since M7 (ignored by the layout renderer; kept for old
+  #                         # configs): optional zone rectangle overrides, in tile units:
   #                         # zones: { desks: { x: 0, y: 0, w: 10, h: 6 } }
+  # style: "guild"                  # modern | guild. Visual skin; a layout may override it
+  #                                  # with its own `style`.
+  # defaultLayoutId: "default"       # layout for floors without their own layoutId (and for
+  #                                  # the "All floors" view); GET/POST/PUT/DELETE /api/layouts
+  # floorOrder: "created"            # created | name | recent. Stair order between floors.
+  # floorTransitionMs: 600           # 0..3000. Stairs transition duration; 0 = instant.
+  # ambientEffects: true             # dust motes, torch flicker, sparkles (guild style)
 
 notifications: {}
   # onWaiting: true
