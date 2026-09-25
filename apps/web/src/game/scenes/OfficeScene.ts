@@ -6,6 +6,10 @@ import { PathFinder } from '../pathfinding';
 import { SeatAllocator } from '../seats';
 import { Character } from '../actors/Character';
 import { generateTextures } from '../textures';
+import { prefersReducedMotion } from '../themes/fx';
+import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets } from '../camera/insets';
+import { zoomAboutPoint } from '../camera/zoom';
+import { isDragMove } from '../camera/drag';
 
 export interface OfficeState {
   agents: Agent[];
@@ -54,6 +58,14 @@ export class OfficeScene extends Phaser.Scene {
   private panned = false;
   private drag: { x: number; y: number; sx: number; sy: number; moved: boolean } | null = null;
   private themeTimer?: Phaser.Time.TimerEvent;
+  /** The safe-region insets currently applied to the camera (animated toward whatever React last reported). */
+  private insets: SafeInsets = { ...ZERO_INSETS };
+  private insetsTween?: Phaser.Tweens.Tween;
+  /** Agent id the camera keeps centered while it moves, or null when nothing is being followed. */
+  private followId: string | null = null;
+  private endDragOnBlur = () => {
+    this.drag = null;
+  };
 
   constructor(private onReady?: (scene: OfficeScene) => void) {
     super('office');
@@ -67,7 +79,11 @@ export class OfficeScene extends Phaser.Scene {
     this.setupCamera();
     this.themeTimer = this.time.addEvent({ delay: 60_000, loop: true, callback: () => this.applyTheme() });
     this.scale.on('resize', () => this.fitCamera());
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.themeTimer?.remove());
+    window.addEventListener('blur', this.endDragOnBlur);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.themeTimer?.remove();
+      window.removeEventListener('blur', this.endDragOnBlur);
+    });
     this.onReady?.(this);
   }
 
@@ -144,22 +160,27 @@ export class OfficeScene extends Phaser.Scene {
       if (!this.drag || !p.isDown) return;
       const dx = p.x - this.drag.x;
       const dy = p.y - this.drag.y;
-      if (!this.drag.moved && Math.hypot(dx, dy) < 4) return;
+      if (!this.drag.moved && !isDragMove(dx, dy)) return;
+      if (!this.drag.moved) this.cancelFollow();
       this.drag.moved = true;
       this.panned = true;
       cam.setScroll(this.drag.sx - dx / cam.zoom, this.drag.sy - dy / cam.zoom);
       this.clampCamera();
     });
-    this.input.on('pointerup', () => {
+    this.input.on('pointerup', (_p: Phaser.Input.Pointer, hitObjects: Phaser.GameObjects.GameObject[]) => {
+      // A plain click (no drag) that hit nothing dismisses the panel; a click on a Character is
+      // handled by its own listener (see setOfficeState), which runs before this one.
+      const wasEmptyClick = !!this.drag && !this.drag.moved && hitObjects.length === 0;
       this.drag = null;
+      if (wasEmptyClick) this.events.emit('emptyClick');
     });
     this.input.on('wheel', (p: Phaser.Input.Pointer, _objs: unknown, _dx: number, dy: number) => {
-      const before = cam.getWorldPoint(p.x, p.y);
+      const oldZoom = cam.zoom;
       this.userZoom = Phaser.Math.Clamp(this.userZoom * (dy > 0 ? 0.88 : 1.12), 0.4, 6);
-      cam.setZoom(this.targetZoom());
-      const after = cam.getWorldPoint(p.x, p.y);
-      cam.scrollX += before.x - after.x;
-      cam.scrollY += before.y - after.y;
+      const newZoom = this.targetZoom();
+      cam.setZoom(newZoom);
+      const { scrollX, scrollY } = zoomAboutPoint({ pointerX: p.x, pointerY: p.y, scrollX: cam.scrollX, scrollY: cam.scrollY, oldZoom, newZoom });
+      cam.setScroll(scrollX, scrollY);
       this.panned = true;
       this.clampCamera();
     });
@@ -190,15 +211,79 @@ export class OfficeScene extends Phaser.Scene {
     this.fitCamera();
   }
 
-  /** Keep the world center reachable: never scroll the map completely out of view. */
+  /** Keep the map reachable: clamp so any tile can still be panned into the unobscured safe rect. */
   private clampCamera() {
     const cam = this.cameras.main;
-    const halfW = cam.width / cam.zoom / 2;
-    const halfH = cam.height / cam.zoom / 2;
-    const cx = Phaser.Math.Clamp(cam.scrollX + cam.width / 2, Math.min(halfW, this.worldW / 2), Math.max(this.worldW - halfW, this.worldW / 2));
-    const cy = Phaser.Math.Clamp(cam.scrollY + cam.height / 2, Math.min(halfH, this.worldH / 2), Math.max(this.worldH - halfH, this.worldH / 2));
-    cam.scrollX = cx - cam.width / 2;
-    cam.scrollY = cy - cam.height / 2;
+    const { scrollX, scrollY } = clampScrollToSafeBounds(cam.scrollX, cam.scrollY, {
+      camWidth: cam.width,
+      camHeight: cam.height,
+      zoom: cam.zoom,
+      worldW: this.worldW,
+      worldH: this.worldH,
+      insets: this.insets,
+    });
+    cam.scrollX = scrollX;
+    cam.scrollY = scrollY;
+  }
+
+  // -------------------------------------------------------------- safe region
+
+  /** Called by the host whenever a floating overlay (the agent panel, ...) resizes or closes. */
+  setSafeInsets(target: SafeInsets) {
+    this.insetsTween?.remove();
+    if (prefersReducedMotion()) {
+      this.insets = { ...target };
+      this.clampCamera();
+      if (this.followId) this.recenterFollow(true);
+      return;
+    }
+    const from = { ...this.insets };
+    this.insetsTween = this.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: 220,
+      ease: 'Sine.easeOut',
+      onUpdate: (tw) => {
+        const t = tw.getValue() ?? 1;
+        this.insets = {
+          top: Phaser.Math.Linear(from.top, target.top, t),
+          right: Phaser.Math.Linear(from.right, target.right, t),
+          bottom: Phaser.Math.Linear(from.bottom, target.bottom, t),
+          left: Phaser.Math.Linear(from.left, target.left, t),
+        };
+        this.clampCamera();
+        if (this.followId) this.recenterFollow(true);
+      },
+    });
+  }
+
+  /** Keep `agentId` centered in the safe rect while it moves; any manual drag cancels this. */
+  setFollow(agentId: string | null) {
+    this.followId = agentId;
+    if (agentId) this.recenterFollow(prefersReducedMotion());
+  }
+
+  private cancelFollow() {
+    if (!this.followId) return;
+    this.followId = null;
+    this.events.emit('followChanged', null);
+  }
+
+  private recenterFollow(instant: boolean) {
+    const c = this.followId ? this.characters.get(this.followId) : undefined;
+    if (!c) {
+      this.cancelFollow();
+      return;
+    }
+    const cam = this.cameras.main;
+    const target = centerInSafeRect(c.x, c.y - 8, cam.width, cam.height, cam.zoom, this.insets);
+    if (instant) {
+      cam.setScroll(target.scrollX, target.scrollY);
+    } else {
+      cam.scrollX = Phaser.Math.Linear(cam.scrollX, target.scrollX, 0.25);
+      cam.scrollY = Phaser.Math.Linear(cam.scrollY, target.scrollY, 0.25);
+    }
+    this.clampCamera();
   }
 
   // ---------------------------------------------------------------- state
@@ -302,11 +387,26 @@ export class OfficeScene extends Phaser.Scene {
     c.leave(this.finder.find(c.tile, this.map.spawn));
   }
 
+  /** Smoothly pan (or jump, under reduced motion) so `id` is centered in the unobscured safe rect. */
   focusAgent(id: string) {
     const c = this.characters.get(id);
     if (!c) return;
     this.panned = true;
-    this.cameras.main.pan(c.x, c.y - 8, 400, 'Sine.easeInOut', false, () => this.clampCamera());
+    const cam = this.cameras.main;
+    const target = centerInSafeRect(c.x, c.y - 8, cam.width, cam.height, cam.zoom, this.insets);
+    if (prefersReducedMotion()) {
+      cam.setScroll(target.scrollX, target.scrollY);
+      this.clampCamera();
+      return;
+    }
+    this.tweens.add({
+      targets: cam,
+      scrollX: target.scrollX,
+      scrollY: target.scrollY,
+      duration: 400,
+      ease: 'Sine.easeInOut',
+      onUpdate: () => this.clampCamera(),
+    });
   }
 
   update(time: number, delta: number) {
@@ -318,6 +418,7 @@ export class OfficeScene extends Phaser.Scene {
         this.characters.delete(id);
       }
     }
+    if (this.followId) this.recenterFollow(false);
     const t = time / 1000;
     for (const l of this.leds) l.g.setAlpha(Math.sin(t * l.rate + l.phase) > -0.2 ? 1 : 0.15);
   }

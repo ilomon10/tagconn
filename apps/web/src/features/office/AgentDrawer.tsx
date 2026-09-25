@@ -3,7 +3,7 @@ import { useOfficeStore } from '../../stores/officeStore';
 import { useNow, useRoleLookup } from '../../lib/hooks';
 import { clock, elapsed, formatTokens } from '../../lib/format';
 import { contextRatio, contextWindowFor } from '../../lib/tokens';
-import { Badge, Button, Dot } from '../../components/ui';
+import { Badge, Button, Checkbox, Dot } from '../../components/ui';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -14,7 +14,21 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function AgentDrawer({ agentId, onClose }: { agentId: string; onClose: () => void }) {
+export function AgentDrawer({
+  agentId,
+  onClose,
+  follow,
+  onFollowChange,
+  rootRef,
+}: {
+  agentId: string;
+  onClose: () => void;
+  /** Whether the camera should keep this agent centered in view while it moves. */
+  follow: boolean;
+  onFollowChange: (follow: boolean) => void;
+  /** Reports the panel's root DOM node so the host can measure it for the camera's safe insets. */
+  rootRef?: (el: HTMLElement | null) => void;
+}) {
   const agent = useOfficeStore((s) => s.agents[agentId]);
   const events = useOfficeStore((s) => s.events);
   const tasks = useOfficeStore((s) => s.tasks);
@@ -27,13 +41,22 @@ export function AgentDrawer({ agentId, onClose }: { agentId: string; onClose: ()
 
   const role = lookup(agent?.role);
   return (
-    <aside className="absolute inset-y-0 right-0 z-10 flex w-80 flex-col border-l border-ink-700 bg-ink-850/95 shadow-2xl backdrop-blur">
+    // Docked to the right on wide screens; collapses to a bottom sheet on narrow ones. Either way
+    // this is a plain edge-docked panel with its own scroll — no full-screen backdrop, so the rest
+    // of the canvas stays clickable and draggable.
+    <aside
+      ref={rootRef}
+      className="absolute inset-x-0 bottom-0 z-10 flex max-h-[70vh] flex-col rounded-t-xl border-t border-ink-700 bg-ink-850/95 shadow-2xl backdrop-blur sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:top-0 sm:bottom-0 sm:w-80 sm:max-h-none sm:rounded-none sm:border-l sm:border-t-0"
+    >
       <header className="flex items-center gap-2 border-b border-ink-700 px-3 py-2">
         <Dot color={role.color} />
         <h2 className="truncate text-sm font-semibold">{agent ? role.title : 'Agent left'}</h2>
-        <Button variant="ghost" className="ml-auto" onClick={onClose} aria-label="Close details">
-          ✕
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          {agent && <Checkbox checked={follow} onChange={onFollowChange} label="Follow" />}
+          <Button variant="ghost" onClick={onClose} aria-label="Close details">
+            ✕
+          </Button>
+        </div>
       </header>
       {!agent ? (
         <p className="p-4 text-xs text-ink-400">This agent has left the office.</p>

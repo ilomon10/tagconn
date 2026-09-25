@@ -3,6 +3,7 @@ import { OfficeGame } from '../../game/OfficeGame';
 import { onFloor, useOfficeStore } from '../../stores/officeStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useFloorAgents } from '../../lib/hooks';
+import { ZERO_INSETS, insetsFromOverlay } from '../../game/camera/insets';
 import { Roster } from './Roster';
 import { AgentDrawer } from './AgentDrawer';
 import { Button } from '../../components/ui';
@@ -33,20 +34,38 @@ function useGameBridge(game: OfficeGame | null) {
 
 export function OfficeView({ active }: { active: boolean }) {
   const host = useRef<HTMLDivElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const drawer = useRef<HTMLElement | null>(null);
   const [game, setGame] = useState<OfficeGame | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [follow, setFollow] = useState(false);
   const agents = useFloorAgents();
   const maxCharacters = useSettingsStore((s) => s.settings.office.maxCharacters);
   const connection = useOfficeStore((s) => s.connection);
   const overflow = Math.max(0, agents.length - maxCharacters);
 
+  const closePanel = () => {
+    setSelected(null);
+    setFollow(false);
+  };
+
   useEffect(() => {
     if (!host.current) return;
     const g = new OfficeGame(host.current);
-    const off = g.on('agentClick', (id) => setSelected(id));
+    const offClick = g.on('agentClick', (id) => {
+      setSelected(id);
+      setFollow(false);
+      g.focus(id);
+    });
+    const offEmpty = g.on('emptyClick', () => closePanel());
+    const offFollow = g.on('followChanged', (id) => {
+      if (id === null) setFollow(false);
+    });
     setGame(g);
     return () => {
-      off();
+      offClick();
+      offEmpty();
+      offFollow();
       g.destroy();
       setGame(null);
     };
@@ -60,14 +79,61 @@ export function OfficeView({ active }: { active: boolean }) {
     if (active) window.dispatchEvent(new Event('resize'));
   }, [active, game]);
 
+  // Report the panel's occupied edges as camera safe-insets, so the map can still be panned into
+  // the part of the canvas that's left unobscured. Re-measured on resize (including the panel
+  // collapsing to a bottom sheet on narrow screens) and cleared — with the scene animating the
+  // camera back — once the panel closes.
+  useEffect(() => {
+    if (!game) return;
+    if (!selected) {
+      game.setSafeInsets(ZERO_INSETS);
+      return;
+    }
+    const wrapEl = wrap.current;
+    const drawerEl = drawer.current;
+    if (!wrapEl || !drawerEl) return;
+    const measure = () => game.setSafeInsets(insetsFromOverlay(wrapEl.getBoundingClientRect(), drawerEl.getBoundingClientRect()));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrapEl);
+    ro.observe(drawerEl);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [game, selected]);
+
+  // Esc closes the panel, unless the user is mid-typing in a text field (a checkbox like the
+  // Follow toggle, or a button, has no text to lose, so Esc still closes from there).
+  useEffect(() => {
+    if (!selected) return;
+    const NON_TEXT_INPUT_TYPES = new Set(['checkbox', 'radio', 'button', 'submit', 'range', 'color']);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isTyping = tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !NON_TEXT_INPUT_TYPES.has((target as HTMLInputElement).type));
+      if (isTyping) return;
+      closePanel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selected]);
+
+  useEffect(() => {
+    game?.setFollow(follow ? selected : null);
+  }, [game, follow, selected]);
+
   const selectAgent = (id: string) => {
     setSelected(id);
+    setFollow(false);
     game?.focus(id);
   };
 
   return (
     <div className="flex h-full min-h-0">
-      <div className="relative min-w-0 flex-1 bg-ink-900">
+      <div ref={wrap} className="relative min-w-0 flex-1 bg-ink-900">
         <div ref={host} className="absolute inset-0" />
         <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-2">
           {overflow > 0 && (
@@ -92,7 +158,17 @@ export function OfficeView({ active }: { active: boolean }) {
             Fit
           </Button>
         </div>
-        {selected && <AgentDrawer agentId={selected} onClose={() => setSelected(null)} />}
+        {selected && (
+          <AgentDrawer
+            agentId={selected}
+            onClose={closePanel}
+            follow={follow}
+            onFollowChange={setFollow}
+            rootRef={(el) => {
+              drawer.current = el;
+            }}
+          />
+        )}
       </div>
       <Roster agents={agents} selectedId={selected} onSelect={selectAgent} />
     </div>

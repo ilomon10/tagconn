@@ -60,7 +60,7 @@ Plan: `~/.claude/plans/let-we-brainstorming-i-elegant-abelson.md`
 - [x] Fix pass: transcripts hardening (fd-based open, O_NOFOLLOW, per-read containment, caps, LRU, id validation, TextDecoder) + web floor-usage fix; 99 server tests
 
 ## Bugs / UX
-- [~] Canvas safe region: the agent panel no longer blocks the map; insets-aware camera, drag-pan always works, center selected agent in the visible area, Esc/click-away to close  [Developer: web]
+- [x] Canvas safe region: the agent panel no longer blocks the map; insets-aware camera, drag-pan always works, center selected agent in the visible area, Follow, Esc/click-away to close; 142 web tests  [Developer: web]
 
 ## M7: Magic Guild Hall: themes, office editor, procedural generation, stairs  [PM plan]
 Decisions: a style ("skin") is separate from lighting (`office.style`: `modern` | `guild`). A floor is still a project;
@@ -68,7 +68,7 @@ the stairs on every floor lead to the next or previous floor. Layouts are saved 
 and the map (walls, doors, corridors, furniture, seats) is generated from them deterministically with a seed.
 - [x] 7a. Design spec `docs/design/guild-hall.md` + contract (`layout.ts` with `validateLayout`/`DEFAULT_LAYOUT`, `office.style`=guild, floor settings, layout socket events)  [Architect]
 - [x] 7b. Server `layouts` module: CRUD REST+socket, read-only seeded default, `project.layoutId` assign/clear + delete cascade, snapshot.layouts, migration 3; 84 server tests  [Developer: server]
-- [~] 7c. Procgen engine `apps/web/src/game/procgen/`: rooms → walls, doors, corridors, furniture, seats; BSP "surprise me" generator; tests  [Developer: web A]  (after wave 2 web)
+- [x] 7c. Procgen engine (done: seeded, property-tested over 300 seeds × 4 sizes × 2 backgrounds, perf < 50 ms) `apps/web/src/game/procgen/`: rooms → walls, doors, corridors, furniture, seats; BSP "surprise me" generator; tests  [Developer: web A]  (after wave 2 web)
 - [x] 7d. Theme system (done: modern port + guild skin, costumes, fx gated by ambientEffects/reduced motion; 44 theme tests) `apps/web/src/game/themes/`: modern + **guild** skins, drawn in code (stone, torches, banners, runes, particles), role costumes and titles, magical activity verbs  [Developer: web B]  (parallel with 7c)
 - [ ] 7e. Office editor UI (draw regions, pick room type, place stairs, validate, preview, save) + stairs interaction + scene integration  [Developer: web]  (after 7c + 7d)
 - [ ] 7f. Review + security + QA of M7, docker rebuild
