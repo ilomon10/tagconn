@@ -17,3 +17,4 @@
 | 13 | 2026-09-25 | Hook token in `curl.conf` (0600) read via `curl -K`, not sourced shell | Keeps the token out of `ps` and avoids executing a config file on every tool call. |
 | 14 | 2026-09-25 | Named Docker volume `office-data` for `/data` | A host bind of `./data` is created by Docker as root when missing, so the non-root server can't open SQLite. |
 | 15 | 2026-09-25 | Scripts are `office:up` / `office:down`, not `up` / `down` | `pnpm up` is a built-in alias of `pnpm update` and never runs the script. |
+| 20 | 2026-09-25 | Web acks use `emitWithAckTimeout` (manual timer), not socket.io `.timeout().emitWithAck()` | The built-in timeout fired false timeouts through the Vite dev proxy; a denied admin event never acks, so a timeout means "not authorized". |

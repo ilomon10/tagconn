@@ -9,6 +9,7 @@ import { floorNeighbors, floorsInOrder, isModalOpen, isTypingTarget, MULTIVERSE_
 import { officeNavBus } from '../game/OfficeGame';
 import { FloorManager } from '../features/office/FloorManager';
 import { HeroPanel } from '../features/heroes/HeroPanel';
+import { AdminBadge } from '../features/auth/AdminBadge';
 import { defaultHeroFloor } from '../features/heroes/formState';
 import { useHeroPanelStore } from '../features/heroes/store';
 import { Button, Select, cx } from '../components/ui';
@@ -224,6 +225,7 @@ export function TopBar({ tab, onTab, onOpenPlanner }: { tab: Tab; onTab: (t: Tab
         <div className="ml-auto flex items-center gap-2">
           <FloorUsage />
           <NotifyButton />
+          <AdminBadge />
           <ConnectionBadge />
         </div>
       </header>

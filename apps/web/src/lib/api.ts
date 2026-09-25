@@ -1,4 +1,22 @@
-import type { Hero, HeroCreate, HeroPatch, OfficeEvent, OfficeLayout, OfficeLayoutInput, OfficeSnapshot, Project, Role, Settings, SettingsPatch } from '@tagconn/shared';
+import type {
+  AdminSessionInfo,
+  AuthStatus,
+  AuthTokenResponse,
+  BootstrapRequest,
+  Hero,
+  HeroCreate,
+  HeroPatch,
+  OfficeEvent,
+  OfficeLayout,
+  OfficeLayoutInput,
+  OfficeSnapshot,
+  PairRequest,
+  Project,
+  Role,
+  Settings,
+  SettingsPatch,
+} from '@tagconn/shared';
+import { clearStoredToken, emitAuthEvent, PAIR_TO_CHANGE_MESSAGE, readStoredToken } from './auth';
 
 export class ApiError extends Error {
   constructor(
@@ -15,16 +33,28 @@ async function request<T>(path: string, init?: RequestInit & { timeoutMs?: numbe
   try {
     const method = (init?.method ?? 'GET').toUpperCase();
     const write = method !== 'GET' && method !== 'HEAD';
+    const token = readStoredToken();
     // The server only accepts JSON bodies on writes (415 otherwise), even for body-less actions.
     const res = await fetch(path, {
       ...init,
       body: write ? (init?.body ?? '{}') : undefined,
       signal: ctrl.signal,
-      headers: { ...(write ? { 'content-type': 'application/json' } : {}), ...init?.headers },
+      headers: {
+        ...(write ? { 'content-type': 'application/json' } : {}),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
     });
     const text = await res.text();
     const body: unknown = text ? JSON.parse(text) : undefined;
     if (!res.ok) {
+      // A 401 means the presented token (if any) is no longer good — drop it and let the UI fall back
+      // to the read-only view instead of retrying with a dead token (docs/design/runner-and-helpdesk.md
+      // section 5.3, "Web" bullet). `stores/authStore.ts` turns this into `status.admin = false` + toast.
+      if (res.status === 401) {
+        clearStoredToken();
+        emitAuthEvent({ reason: 'unauthenticated', message: PAIR_TO_CHANGE_MESSAGE });
+      }
       const msg = body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : res.statusText;
       throw new ApiError(msg, res.status);
     }
@@ -72,4 +102,13 @@ export const api = {
   patchHero: (id: string, patch: HeroPatch) => request<Hero>(`/api/heroes/${encodeURIComponent(id)}`, { method: 'PATCH', body: json(patch) }),
   resetHero: (id: string) => request<Hero>(`/api/heroes/${encodeURIComponent(id)}/reset`, { method: 'POST' }),
   deleteHero: (id: string) => request<unknown>(`/api/heroes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // M8 8m admin auth (docs/design/runner-and-helpdesk.md section 5). `authStatus` is public (works with
+  // no token, or a bad/expired one — the response just says `admin: false`); the rest need an existing
+  // admin session, carried by the Authorization header `request()` attaches above.
+  authStatus: () => request<AuthStatus>('/api/auth/status'),
+  pair: (body: PairRequest) => request<AuthTokenResponse>('/api/auth/pair', { method: 'POST', body: json(body) }),
+  bootstrap: (body: BootstrapRequest = {}) => request<AuthTokenResponse>('/api/auth/bootstrap', { method: 'POST', body: json(body) }),
+  authSessions: () => request<AdminSessionInfo[]>('/api/auth/sessions'),
+  revokeSession: (id: string) => request<{ ok: true }>(`/api/auth/sessions/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
+  logout: () => request<{ ok: true }>('/api/auth/logout', { method: 'POST' }),
 };
