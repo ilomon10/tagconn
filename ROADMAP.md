@@ -49,6 +49,7 @@ Plan: `~/.claude/plans/let-we-brainstorming-i-elegant-abelson.md`
 
 ## Releases
 - [x] v0.1.0: first public release on GitHub (MIT), lockstep SemVer, `pnpm release`, CHANGELOG
+- [x] v0.2.0: Magic Guild Hall (M6 + M7)
 
 ## M6: Wave 2 (session 2)  [PM]
 - [x] Contract: `TokenUsage` on Agent/Session, `sessions.{idleAfterSec,endAfterSec}`, `transcripts.{enabled,debounceMs}`, `WHOLESALE_REPLACE_SETTINGS` in shared
@@ -72,14 +73,14 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [x] 7d. Theme system (done: modern port + guild skin, costumes, fx gated by ambientEffects/reduced motion; 44 theme tests) `apps/web/src/game/themes/`: modern + **guild** skins, drawn in code (stone, torches, banners, runes, particles), role costumes and titles, magical activity verbs  [Developer: web B]  (parallel with 7c)
 - [x] 7e-A. Office editor "Hall Planner": draw regions → pick room type, move/resize, stairs, validation, Surprise me, preview, save/assign, undo/redo (190 web tests incl. 34 new; typecheck/build green; manual playwright-cli pass)  [Developer: web A]
 - [x] 7e-B. Scene integration: generated maps + guild skin live (costumes, titles, verbs, fx), interactive stairs + floor transitions, PageUp/PageDown/Home/End, TopBar floor indicator, 3-floor demo; 190 web tests  [Developer: web B]
-- [~] 7f. Review + security + QA of M7 → fixes → docker rebuild → release v0.2.0
+- [x] 7f. Review + security + QA of M7 → fixes → docker rebuild → release v0.2.0
   - [x] Security: 0 Critical/High; 2 Med (layout ids that break the id rule are stored but can't be listed or deleted; no cap on stored layouts and a snapshot carries them all), 4 Low (defaultLayoutId "constructor" breaks the view, A* node limit, lost updates, socket arg validation)
   - [x] Code review: 1 High (floor hotkeys fire under the open editor), 1 Med (camera zoom compounds on each floor change), 1 Low (transition re-entrancy)
   - [x] QA: 7/9 pass, 0 console errors; bugs: ambientEffects toggle not live (Med), camera fit/focus centering wrong esp. zoomed in (Med/High), roster titles not themed (Low)
   - [x] Server security fixes (layout id validation + purge, maxStoredLayouts 200, defaultLayoutId existence, baseUpdatedAt 409, socket arg validation, name sanitizing); 109 server tests
-  - [~] Web fixes A (camera fit/focus math, zoom drift, transition lock, hotkeys under editor, live ambient toggle, animated TopBar floor jump)
-  - [~] Web fixes B (client layout hardening, editor baseUpdatedAt/409 dialogs, Edit floor entry, themed roster titles, procgen A* limits)
-- [~] 7g. Follow-ups: animated TopBar floor jump (fixes A), "Edit floor" entry in Manage floors (fixes B)
+  - [x] Web fixes A (camera fit/focus math, zoom drift, transition lock, hotkeys under editor, live ambient toggle, animated TopBar floor jump)
+  - [x] Web fixes B (client layout hardening, editor baseUpdatedAt/409 dialogs, Edit floor entry, themed roster titles, procgen A* limits) [Developer: web B]
+- [x] 7g. Follow-ups: animated TopBar floor jump (fixes A), "Edit floor" entry in Manage floors (fixes B, done)
 
 ## M8: Living Office UX + Multiverse + Heroes + Attribution (next, after v0.2.0 ships) → v0.3.0  [PM plan]
 User request: no stale characters, one clear PM per floor, reuse idle characters, glow on the selected character, bubbles that never overlap, and UX best practice for showing characters and the office.
