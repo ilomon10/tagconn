@@ -81,7 +81,7 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
   - [~] Web fixes B (client layout hardening, editor baseUpdatedAt/409 dialogs, Edit floor entry, themed roster titles, procgen A* limits)
 - [~] 7g. Follow-ups: animated TopBar floor jump (fixes A), "Edit floor" entry in Manage floors (fixes B)
 
-## M8: Living Office UX (next, after v0.2.0 ships) → v0.3.0  [PM plan]
+## M8: Living Office UX + Multiverse + Heroes + Attribution (next, after v0.2.0 ships) → v0.3.0  [PM plan]
 User request: no stale characters, one clear PM per floor, reuse idle characters, glow on the selected character, bubbles that never overlap, and UX best practice for showing characters and the office.
 Diagnosis (live data, 2026-09-25): subagents whose SubagentStop never arrived (killed or lost background agents) stay "active/idle" in the lounge forever
 (the sweeper only moves them to the lounge); each Claude session has its own PM, and idle or abandoned sessions only end after `sessions.endAfterSec` (30 min),
@@ -92,6 +92,9 @@ so parallel or old sessions leave extra PMs on a floor.
 - [ ] 8d. Selection glow: WebGL preFX glow (Phaser 3.60+ `preFX.addGlow`) in the role color with a pulse, plus a canvas fallback ring; the other characters dim slightly in focus mode.  [Developer: web]
 - [ ] 8e. Bubble and label declutter: collision-free bubble layout (greedy placement with stacking and leader lines), priority for the selected/newest/waiting characters, max visible bubbles, fade after `bubbleSeconds`; zoom-based level of detail (names and bubbles hidden when zoomed out, shown on hover); hover card; "waiting for you" gets a persistent badge.  [Developer: web]
 - [ ] 8f. UX review pass: a best-practice checklist (focus + context, level of detail, affordances, motion guidelines, accessibility: reduced motion, contrast, keyboard navigation of characters), optional minimap.  [Analyst/Architect → Developer]
+- [ ] 8h. **Multiverse floor** (replaces "All floors"): a special floor showing every project's characters together. Its layout is generated each time from the live projects (a central Nexus with one realm per project, joined by rift corridors), and the special "rift" style blends each project's own style per realm with a starfield/void between them. Reachable by the stairs (top floor) and from the floor picker.  [Architect → Developer: web + server contract]
+- [ ] 8i. **Named, customizable heroes**: persistent characters per project and role (name, look: skin, hair, outfit color, hat/costume variant, pronoun-free title). Subagents are assigned to heroes (this ties in with 8c's reuse). Name pools per role you can edit, and a hero editor in the GUI; stored on the server (`heroes` module).  [Architect → Developer: server + web]
+- [ ] 8j. **tagconn attribution in projects**: projects that used tagconn get a small `.tagconn/` marker (a README with the setup link and version, plus an optional `office.json` profile holding the floor name, layout and heroes), so the setup can be restored on another host. A SessionStart hook import of an existing profile, a GUI or skill "save profile to project", opt-in and on by default, never overwrites, no secrets. Security review required (writes into user repos).  [Architect → Developer: infra + server]
 - [ ] 8g. Review + security + QA → v0.3.0
 
 ## Backlog
