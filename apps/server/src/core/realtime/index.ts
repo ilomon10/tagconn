@@ -2,6 +2,7 @@ import { type ClientToServerEvents, OFFICE_NAMESPACE, rooms, type ServerToClient
 import { asValue } from 'awilix';
 import fp from 'fastify-plugin';
 import { type Namespace, Server, type Socket } from 'socket.io';
+import { registerAdminGuard } from './admin-guard.js';
 import { hostnameFromHostHeader } from '../http/host.js';
 // Deliberate module → module import: the settings module owns the hookToken masking policy, and
 // every place Settings leaves the server (REST, socket acks, and this broadcast) must use it.
@@ -66,6 +67,13 @@ export const realtimePlugin = fp(
     });
     const office: OfficeNamespace = io.of(OFFICE_NAMESPACE);
     app.diContainer.register({ io: asValue(io), office: asValue(office) });
+
+    // Admin auth gating (M8 8m): handshake + per-packet guard + 60s ADMIN_ROOM sweep. Reads
+    // `adminVerifier`/`settings` lazily off the container, so registration order versus the `auth`
+    // module (which registers `adminVerifier`) doesn't matter. See core/realtime/admin-guard.ts.
+    const adminGuard = registerAdminGuard(app, office);
+    app.diContainer.register({ adminGuard: asValue(adminGuard) });
+    app.addHook('onClose', async () => adminGuard.stop());
 
     const toProject = (projectId: string) => office.to([rooms.all, rooms.project(projectId)]);
     bus.on('project.upserted', (p) => toProject(p.id).emit('project:upsert', p));

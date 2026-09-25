@@ -1,4 +1,19 @@
-import type { Activity, Agent, Hero, HookPayload, OfficeEvent, OfficeLayout, Project, Role, Session, Settings, Task } from '@tagconn/shared';
+import type {
+  Activity,
+  Agent,
+  Hero,
+  HookPayload,
+  OfficeEvent,
+  OfficeLayout,
+  Project,
+  Role,
+  Run,
+  RunEventEnvelope,
+  RunnerStatus,
+  Session,
+  Settings,
+  Task,
+} from '@tagconn/shared';
 
 /**
  * One hook as it flows through the modules. Listeners on 'hook.received' run in module registration
@@ -41,6 +56,16 @@ export interface BusEvents {
   'hero.upserted': Hero;
   /** A hero was deleted. */
   'hero.removed': { id: string; projectId: string };
+  /** A run (quest or receptionist turn) was created or changed status (M8 8k, S2). */
+  'run.upserted': Run;
+  /** One redacted, capped `RunEvent` accepted from the verified runner it was dispatched to. */
+  'run.event': RunEventEnvelope;
+  /** A run's Claude `sessionId` became known (from `init`, or the `x-tagconn-run-id` hint). */
+  'run.linked': { runId: string; sessionId: string; projectId?: string };
+  /** A quest was assigned to a hero at start time (8i); the prompt was prefixed accordingly. */
+  'run.heroRequested': { runId: string; projectId: string; heroId: string; role: string };
+  /** The single connected runner's connection/capabilities/queue state changed. */
+  'runner.status': RunnerStatus;
 }
 
 type Listener<T> = (payload: T) => void;

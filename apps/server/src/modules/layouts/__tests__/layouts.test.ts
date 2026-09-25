@@ -4,7 +4,7 @@ import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../../app.js';
 import { schema } from '../../../core/db/index.js';
-import { buildTestApp, loadFixture } from '../../../../test/helpers.js';
+import { adminHeaders, adminSocketAuth, buildTestApp, loadFixture } from '../../../../test/helpers.js';
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -26,23 +26,24 @@ describe('layouts module', () => {
     const def = list.find((l) => l.id === DEFAULT_LAYOUT_ID);
     expect(def).toMatchObject({ id: DEFAULT_LAYOUT_ID, name: 'Classic Hall', builtin: true });
 
-    const putRes = await app.inject({ method: 'PUT', url: `/api/layouts/${DEFAULT_LAYOUT_ID}`, payload: validInput });
+    const headers = adminHeaders(app);
+    const putRes = await app.inject({ method: 'PUT', url: `/api/layouts/${DEFAULT_LAYOUT_ID}`, payload: validInput, headers });
     expect(putRes.statusCode).toBe(409);
 
-    const delRes = await app.inject({ method: 'DELETE', url: `/api/layouts/${DEFAULT_LAYOUT_ID}` });
+    const delRes = await app.inject({ method: 'DELETE', url: `/api/layouts/${DEFAULT_LAYOUT_ID}`, headers });
     expect(delRes.statusCode).toBe(409);
   });
 
   it('lists builtins first, then by name', async () => {
     app = await buildTestApp();
-    await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'Aardvark Hall' } });
+    await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'Aardvark Hall' }, headers: adminHeaders(app) });
     const list = (await app.inject({ url: '/api/layouts' })).json<OfficeLayout[]>();
     expect(list[0]?.builtin).toBe(true);
   });
 
   it('creates over REST with a generated id, 404s an unknown id', async () => {
     app = await buildTestApp();
-    const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'East Wing' } });
+    const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'East Wing' }, headers: adminHeaders(app) });
     expect(res.statusCode).toBe(201);
     const created = res.json<OfficeLayout>();
     expect(created.id).toMatch(/^east-wing-[0-9a-f]{8}$/);
@@ -57,7 +58,7 @@ describe('layouts module', () => {
 
   it('rejects an invalid layout with 400 and LayoutIssue[] details', async () => {
     app = await buildTestApp();
-    const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, rooms: [] } });
+    const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, rooms: [] }, headers: adminHeaders(app) });
     expect(res.statusCode).toBe(400);
     const body = res.json<{ error: string; statusCode: number; details: LayoutIssue[] }>();
     expect(body.statusCode).toBe(400);
@@ -67,34 +68,40 @@ describe('layouts module', () => {
 
   it('replaces over PUT (create-or-replace), keeping createdAt, and rejects a mismatched body id', async () => {
     app = await buildTestApp();
-    const first = (await app.inject({ method: 'PUT', url: '/api/layouts/my-hall', payload: { ...validInput, name: 'My Hall' } })).json<OfficeLayout>();
+    const headers = adminHeaders(app);
+    const first = (
+      await app.inject({ method: 'PUT', url: '/api/layouts/my-hall', payload: { ...validInput, name: 'My Hall' }, headers })
+    ).json<OfficeLayout>();
     expect(first.id).toBe('my-hall');
 
     await new Promise((r) => setTimeout(r, 2));
     const second = (
-      await app.inject({ method: 'PUT', url: '/api/layouts/my-hall', payload: { ...validInput, id: 'my-hall', name: 'My Hall 2' } })
+      await app.inject({ method: 'PUT', url: '/api/layouts/my-hall', payload: { ...validInput, id: 'my-hall', name: 'My Hall 2' }, headers })
     ).json<OfficeLayout>();
     expect(second.name).toBe('My Hall 2');
     expect(second.createdAt).toBe(first.createdAt);
     expect(second.updatedAt).toBeGreaterThanOrEqual(first.updatedAt);
 
-    const mismatch = await app.inject({ method: 'PUT', url: '/api/layouts/my-hall', payload: { ...validInput, id: 'other-id' } });
+    const mismatch = await app.inject({ method: 'PUT', url: '/api/layouts/my-hall', payload: { ...validInput, id: 'other-id' }, headers });
     expect(mismatch.statusCode).toBe(400);
   });
 
   it('deletes a layout and clears it from the projects that used it', async () => {
     app = await buildTestApp();
+    const headers = adminHeaders(app);
     const [start] = loadFixture();
     await app.inject({ method: 'POST', url: '/api/hooks', payload: start });
     const [project] = (await app.inject({ url: '/api/projects' })).json<Project[]>();
     expect(project).toBeDefined();
 
-    const layout = (await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'Temp Hall' } })).json<OfficeLayout>();
-    const assign = await app.inject({ method: 'PATCH', url: `/api/projects/${project!.id}`, payload: { layoutId: layout.id } });
+    const layout = (
+      await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'Temp Hall' }, headers })
+    ).json<OfficeLayout>();
+    const assign = await app.inject({ method: 'PATCH', url: `/api/projects/${project!.id}`, payload: { layoutId: layout.id }, headers });
     expect(assign.statusCode).toBe(200);
     expect(assign.json<Project>().layoutId).toBe(layout.id);
 
-    const del = await app.inject({ method: 'DELETE', url: `/api/layouts/${layout.id}` });
+    const del = await app.inject({ method: 'DELETE', url: `/api/layouts/${layout.id}`, headers });
     expect(del.statusCode).toBe(204);
     expect((await app.inject({ url: `/api/layouts/${layout.id}` })).statusCode).toBe(404);
 
@@ -104,29 +111,31 @@ describe('layouts module', () => {
 
   it('PATCH /api/projects/:id rejects an unknown layoutId with 400, and clears with null', async () => {
     app = await buildTestApp();
+    const headers = adminHeaders(app);
     const [start] = loadFixture();
     await app.inject({ method: 'POST', url: '/api/hooks', payload: start });
     const [project] = (await app.inject({ url: '/api/projects' })).json<Project[]>();
 
-    const bad = await app.inject({ method: 'PATCH', url: `/api/projects/${project!.id}`, payload: { layoutId: 'nope-nope' } });
+    const bad = await app.inject({ method: 'PATCH', url: `/api/projects/${project!.id}`, payload: { layoutId: 'nope-nope' }, headers });
     expect(bad.statusCode).toBe(400);
 
-    const ok = await app.inject({ method: 'PATCH', url: `/api/projects/${project!.id}`, payload: { layoutId: DEFAULT_LAYOUT_ID } });
+    const ok = await app.inject({ method: 'PATCH', url: `/api/projects/${project!.id}`, payload: { layoutId: DEFAULT_LAYOUT_ID }, headers });
     expect(ok.statusCode).toBe(200);
     expect(ok.json<Project>().layoutId).toBe(DEFAULT_LAYOUT_ID);
 
-    const cleared = await app.inject({ method: 'PATCH', url: `/api/projects/${project!.id}`, payload: { layoutId: null } });
+    const cleared = await app.inject({ method: 'PATCH', url: `/api/projects/${project!.id}`, payload: { layoutId: null }, headers });
     expect(cleared.statusCode).toBe(200);
     expect(cleared.json<Project>().layoutId).toBeUndefined();
   });
 
   it('rejects a PUT under an invalid or reserved URL id (400), instead of storing an unlistable row', async () => {
     app = await buildTestApp();
-    const badChars = await app.inject({ method: 'PUT', url: '/api/layouts/BAD%20ID!', payload: { ...validInput, name: 'Bad' } });
+    const headers = adminHeaders(app);
+    const badChars = await app.inject({ method: 'PUT', url: '/api/layouts/BAD%20ID!', payload: { ...validInput, name: 'Bad' }, headers });
     expect(badChars.statusCode).toBe(400);
 
     // Passes the old, looser id shape but is a reserved JS property name.
-    const reserved = await app.inject({ method: 'PUT', url: '/api/layouts/constructor', payload: { ...validInput, name: 'Bad' } });
+    const reserved = await app.inject({ method: 'PUT', url: '/api/layouts/constructor', payload: { ...validInput, name: 'Bad' }, headers });
     expect(reserved.statusCode).toBe(400);
 
     // Never got stored, so the list stays clean.
@@ -136,7 +145,7 @@ describe('layouts module', () => {
 
   it('rejects a PUT under the reserved "multiverse" id (M8 8h: the web-generated Multiverse floor)', async () => {
     app = await buildTestApp();
-    const res = await app.inject({ method: 'PUT', url: '/api/layouts/multiverse', payload: { ...validInput, name: 'Sneaky' } });
+    const res = await app.inject({ method: 'PUT', url: '/api/layouts/multiverse', payload: { ...validInput, name: 'Sneaky' }, headers: adminHeaders(app) });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatch(/reserved/i);
     const list = (await app.inject({ url: '/api/layouts' })).json<OfficeLayout[]>();
@@ -159,32 +168,37 @@ describe('layouts module', () => {
   it('enforces office.maxStoredLayouts with a 409 on create', async () => {
     app = await buildTestApp({ settings: { office: { maxStoredLayouts: 1 } } });
     // The seeded builtin already counts against the cap.
-    const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'One Too Many' } });
+    const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'One Too Many' }, headers: adminHeaders(app) });
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toMatch(/maxStoredLayouts/);
   });
 
   it('rejects settings.office.defaultLayoutId that is not an existing layout, and reserved names', async () => {
     app = await buildTestApp();
-    const unknown = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { defaultLayoutId: 'nope-nope' } } });
+    const headers = adminHeaders(app);
+    const unknown = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { defaultLayoutId: 'nope-nope' } }, headers });
     expect(unknown.statusCode).toBe(400);
 
-    const reserved = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { defaultLayoutId: 'constructor' } } });
+    const reserved = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { defaultLayoutId: 'constructor' } }, headers });
     expect(reserved.statusCode).toBe(400);
 
-    const ok = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { defaultLayoutId: DEFAULT_LAYOUT_ID } } });
+    const ok = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { defaultLayoutId: DEFAULT_LAYOUT_ID } }, headers });
     expect(ok.statusCode).toBe(200);
   });
 
   it('PUT with baseUpdatedAt 409s on a lost update or a deleted layout, and is backward compatible without it', async () => {
     app = await buildTestApp();
-    const created = (await app.inject({ method: 'PUT', url: '/api/layouts/concurrent-hall', payload: { ...validInput, name: 'V1' } })).json<OfficeLayout>();
+    const headers = adminHeaders(app);
+    const created = (
+      await app.inject({ method: 'PUT', url: '/api/layouts/concurrent-hall', payload: { ...validInput, name: 'V1' }, headers })
+    ).json<OfficeLayout>();
 
     // Stale baseUpdatedAt (someone else saved first, or the client is just out of date).
     const stale = await app.inject({
       method: 'PUT',
       url: '/api/layouts/concurrent-hall',
       payload: { ...validInput, name: 'V2', baseUpdatedAt: created.updatedAt - 1 },
+      headers,
     });
     expect(stale.statusCode).toBe(409);
 
@@ -193,20 +207,22 @@ describe('layouts module', () => {
       method: 'PUT',
       url: '/api/layouts/concurrent-hall',
       payload: { ...validInput, name: 'V2', baseUpdatedAt: created.updatedAt },
+      headers,
     });
     expect(fresh.statusCode).toBe(200);
 
     // Deleted-then-resurrected: baseUpdatedAt against a gone layout 409s instead of recreating it.
-    await app.inject({ method: 'DELETE', url: '/api/layouts/concurrent-hall' });
+    await app.inject({ method: 'DELETE', url: '/api/layouts/concurrent-hall', headers });
     const resurrect = await app.inject({
       method: 'PUT',
       url: '/api/layouts/concurrent-hall',
       payload: { ...validInput, name: 'V3', baseUpdatedAt: fresh.json<OfficeLayout>().updatedAt },
+      headers,
     });
     expect(resurrect.statusCode).toBe(409);
 
     // Without baseUpdatedAt, the old create-or-replace (recreate) behavior still works.
-    const recreated = await app.inject({ method: 'PUT', url: '/api/layouts/concurrent-hall', payload: { ...validInput, name: 'V4' } });
+    const recreated = await app.inject({ method: 'PUT', url: '/api/layouts/concurrent-hall', payload: { ...validInput, name: 'V4' }, headers });
     expect(recreated.statusCode).toBe(200);
   });
 
@@ -240,7 +256,11 @@ describe('layouts module', () => {
     await app!.listen({ host: '127.0.0.1', port: 0 });
     const address = app!.server.address();
     if (!address || typeof address === 'string') throw new Error('no address');
-    const client: ClientSocket = connect(`http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`, { transports: ['websocket'], forceNew: true });
+    const client: ClientSocket = connect(`http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`, {
+      transports: ['websocket'],
+      forceNew: true,
+      auth: adminSocketAuth(app!),
+    });
     await new Promise<void>((resolve, reject) => {
       client.on('connect', () => resolve());
       client.on('connect_error', reject);
@@ -296,12 +316,15 @@ describe('layouts module', () => {
     socket = await connectSocket();
     await new Promise<{ ok: boolean }>((resolve) => socket!.emit('office:subscribe', '*', resolve));
 
+    const headers = adminHeaders(app);
     const upsert = new Promise<OfficeLayout>((resolve) => socket!.on('layout:upsert', resolve));
-    const created = (await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'Broadcast Hall' } })).json<OfficeLayout>();
+    const created = (
+      await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'Broadcast Hall' }, headers })
+    ).json<OfficeLayout>();
     expect((await upsert).id).toBe(created.id);
 
     const removed = new Promise<string>((resolve) => socket!.on('layout:remove', resolve));
-    await app.inject({ method: 'DELETE', url: `/api/layouts/${created.id}` });
+    await app.inject({ method: 'DELETE', url: `/api/layouts/${created.id}`, headers });
     expect(await removed).toBe(created.id);
   });
 });

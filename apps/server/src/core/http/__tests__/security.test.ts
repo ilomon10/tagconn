@@ -1,9 +1,11 @@
 import type { ClientToServerEvents, ServerToClientEvents } from '@tagconn/shared';
 import { DEFAULT_LAYOUT, OFFICE_NAMESPACE } from '@tagconn/shared';
+import Fastify from 'fastify';
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../../app.js';
-import { buildTestApp } from '../../../../test/helpers.js';
+import { adminHeaders, buildTestApp } from '../../../../test/helpers.js';
+import { registerAdminAccess } from '../admin.js';
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -50,7 +52,7 @@ describe('request gating (DNS rebinding / CSRF)', () => {
       method: 'PATCH',
       url: '/api/settings',
       payload: { office: { zoom: 2 } },
-      headers: { origin: origins[0] },
+      headers: { origin: origins[0], ...adminHeaders(app) },
     });
     expect(good.statusCode).toBe(200);
   });
@@ -79,7 +81,7 @@ describe('request gating (DNS rebinding / CSRF)', () => {
     expect(badPut.statusCode).toBe(403);
     expect(badPut.json().error).toMatch(/origin/i);
 
-    const goodPost = await app.inject({ method: 'POST', url: '/api/layouts', payload: layout, headers: { origin: origins[0] } });
+    const goodPost = await app.inject({ method: 'POST', url: '/api/layouts', payload: layout, headers: { origin: origins[0], ...adminHeaders(app) } });
     expect(goodPost.statusCode).toBe(201);
   });
 
@@ -148,7 +150,7 @@ describe('request gating (DNS rebinding / CSRF)', () => {
       method: 'POST',
       url: '/api/heroes',
       payload: { projectId: 'p1', role: 'developer' },
-      headers: { origin: origins[0] },
+      headers: { origin: origins[0], ...adminHeaders(app) },
     });
     expect(goodPost.statusCode).toBe(404); // Origin accepted; project unknown is the next gate down.
   });
@@ -156,18 +158,19 @@ describe('request gating (DNS rebinding / CSRF)', () => {
   it('rejects a malformed hero id with 400, before any DB access (M8 hardening)', async () => {
     app = await buildTestApp();
     expect((await app.inject({ url: '/api/heroes' })).statusCode).toBe(200);
+    const headers = adminHeaders(app);
 
-    const badPatch = await app.inject({ method: 'PATCH', url: '/api/heroes/not-a-hero-id', payload: { name: 'X' } });
+    const badPatch = await app.inject({ method: 'PATCH', url: '/api/heroes/not-a-hero-id', payload: { name: 'X' }, headers });
     expect(badPatch.statusCode).toBe(400);
 
     const badReset = await app.inject({
       method: 'POST',
       url: '/api/heroes/not-a-hero-id/reset',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...headers },
     });
     expect(badReset.statusCode).toBe(400);
 
-    const badDelete = await app.inject({ method: 'DELETE', url: '/api/heroes/not-a-hero-id' });
+    const badDelete = await app.inject({ method: 'DELETE', url: '/api/heroes/not-a-hero-id', headers });
     expect(badDelete.statusCode).toBe(400);
   });
 
@@ -190,7 +193,7 @@ describe('request gating (DNS rebinding / CSRF)', () => {
 
   it('allows requests with no Origin header at all (non-browser clients, e.g. the hook)', async () => {
     app = await buildTestApp();
-    const res = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { zoom: 2 } } });
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { zoom: 2 } }, headers: adminHeaders(app) });
     expect(res.statusCode).toBe(200);
   });
 
@@ -207,7 +210,11 @@ describe('request gating (DNS rebinding / CSRF)', () => {
 
   it('accepts an empty body as long as content-type is application/json (no-payload POSTs)', async () => {
     app = await buildTestApp();
-    const reset = await app.inject({ method: 'POST', url: '/api/settings/reset', headers: { 'content-type': 'application/json' } });
+    const reset = await app.inject({
+      method: 'POST',
+      url: '/api/settings/reset',
+      headers: { 'content-type': 'application/json', ...adminHeaders(app) },
+    });
     expect(reset.statusCode).toBe(200);
   });
 
@@ -237,5 +244,52 @@ describe('request gating (DNS rebinding / CSRF)', () => {
       socket?.on('connect_error', () => resolve('connect_error'));
     });
     expect(goodOutcome).toBe('connect');
+  });
+
+  it('rejects a foreign-Origin socket.io handshake even with a valid admin token (M8 8m §5.4 #2)', async () => {
+    app = await buildTestApp();
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('no address');
+    const base = `http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`;
+
+    socket = connect(base, {
+      transports: ['websocket'],
+      forceNew: true,
+      extraHeaders: { Origin: 'http://evil.example.com' },
+      auth: { adminToken: 'tca_does-not-matter-the-origin-check-runs-first' },
+    });
+    const outcome = await new Promise<string>((resolve) => {
+      socket?.on('connect', () => resolve('connect'));
+      socket?.on('connect_error', () => resolve('connect_error'));
+    });
+    expect(outcome).toBe('connect_error');
+  });
+
+  // M8 8m (docs/design/runner-and-helpdesk.md §5.3/§5.4 #1): every /api/* route must declare
+  // `config.access`, or the server refuses to boot. A bare Fastify instance (no DI needed: the
+  // onRoute hook never touches the container) keeps this test fast and isolated from the real app.
+  it('fails to boot when a route is registered without config.access', async () => {
+    const bare = Fastify();
+    registerAdminAccess(bare);
+    // The onRoute hook throws synchronously, right when the route is added (not deferred to .ready()).
+    expect(() => bare.get('/api/broken', async () => ({ ok: true }))).toThrow(/missing config\.access/);
+    await bare.close();
+  });
+
+  it('boots fine when every /api/* route declares a valid config.access', async () => {
+    const bare = Fastify();
+    registerAdminAccess(bare);
+    bare.get('/api/fine', { config: { access: 'public' } }, async () => ({ ok: true }));
+    await bare.ready();
+    await bare.close();
+  });
+
+  it('never caches /api/auth/* responses (Cache-Control: no-store)', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({ url: '/api/auth/status' });
+    expect(res.headers['cache-control']).toBe('no-store');
+    // Sanity: an ordinary public route is unaffected.
+    expect((await app.inject({ url: '/api/health' })).headers['cache-control']).toBeUndefined();
   });
 });

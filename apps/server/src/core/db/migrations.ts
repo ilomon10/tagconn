@@ -68,6 +68,33 @@ export const MIGRATIONS: string[] = [
   // M8 slots (final order; insert your SQL string at your slot, keep this order):
   //   5: auth (S1)  6: runs (S2)  7: receptionist (S3)  8: attribution (S4)
   // Define new drizzle tables inside your module (e.g. modules/runs/runs.tables.ts), not in core/db/schema.ts.
+  /* 5: admin auth sessions (M8 8m, S1) */ `
+  CREATE TABLE IF NOT EXISTS admin_sessions (
+    id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, label TEXT, user_agent TEXT,
+    created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS admin_sessions_expires_idx ON admin_sessions (expires_at);
+  `,
+  /* 6: runner runs + run events (M8 8k, S2) */ `
+  CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, project_id TEXT, conversation_id TEXT, thread_id TEXT NOT NULL,
+    parent_run_id TEXT, hero_id TEXT, status TEXT NOT NULL, end_reason TEXT, prompt TEXT NOT NULL,
+    permission_mode TEXT NOT NULL, model TEXT NOT NULL, session_id TEXT, resume_session_id TEXT,
+    created_by TEXT NOT NULL, runner_id TEXT, created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER,
+    exit_code INTEGER, error TEXT, result TEXT, event_count INTEGER NOT NULL DEFAULT 0, truncated INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS runs_project_idx ON runs (project_id, created_at);
+  CREATE INDEX IF NOT EXISTS runs_thread_idx ON runs (thread_id);
+  CREATE INDEX IF NOT EXISTS runs_status_idx ON runs (status);
+  CREATE INDEX IF NOT EXISTS runs_conversation_idx ON runs (conversation_id);
+  CREATE INDEX IF NOT EXISTS runs_runner_idx ON runs (runner_id, status);
+  CREATE TABLE IF NOT EXISTS run_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, seq INTEGER NOT NULL, ts INTEGER NOT NULL, event TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS run_events_run_seq_idx ON run_events (run_id, seq);
+  CREATE INDEX IF NOT EXISTS run_events_run_idx ON run_events (run_id, id);
+  `,
+  // slot 7 (receptionist, S3) and slot 8 (attribution, S4): inserted here by those tasks.
 ];
 
 export function migrate(sqlite: Database.Database): number {

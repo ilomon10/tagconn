@@ -2,9 +2,11 @@ import cors from '@fastify/cors';
 import type { FastifyError } from 'fastify';
 import fp from 'fastify-plugin';
 import { hasZodFastifySchemaValidationErrors, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { registerAdminAccess } from './admin.js';
 import { HttpError } from './errors.js';
 import { hostnameFromHostHeader } from './host.js';
 
+export * from './admin.js';
 export * from './auth.js';
 export * from './errors.js';
 export * from './host.js';
@@ -69,6 +71,10 @@ export const httpPlugin = fp(
         }
       }
     });
+
+    // Admin auth gating (M8 8m): registered after the hook above, so Host/Origin/content-type
+    // checks always run first regardless of a route's access level. See core/http/admin.ts.
+    registerAdminAccess(app);
 
     app.setErrorHandler((err: FastifyError | HttpError, req, reply) => {
       if (hasZodFastifySchemaValidationErrors(err)) {

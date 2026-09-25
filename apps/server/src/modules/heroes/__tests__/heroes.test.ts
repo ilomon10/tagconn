@@ -4,7 +4,7 @@ import { MAIN_ROLE, OFFICE_NAMESPACE } from '@tagconn/shared';
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { App } from '../../../app.js';
-import { buildTestApp, makeTempDir } from '../../../../test/helpers.js';
+import { adminHeaders, adminSocketAuth, buildTestApp, makeTempDir } from '../../../../test/helpers.js';
 import { mainAgentId } from '../../agents/index.js';
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -231,23 +231,24 @@ describe('heroes module (M8 8i)', () => {
 
   it('REST CRUD: create (201, 404 unknown project, 409 caps), patch (409 stale baseUpdatedAt, 404), reset, delete (409 bound, 204)', async () => {
     app = await buildTestApp({ settings: { heroes: { maxPerRole: 1 } } });
+    const headers = adminHeaders(app);
     await app.inject({ method: 'POST', url: '/api/hooks', payload: hook({ hook_event_name: 'SessionStart', cwd: CWD }) });
     await app.inject({ method: 'POST', url: '/api/hooks', payload: hook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }) });
     const pid = await projectId(app);
 
-    const unknownProject = await app.inject({ method: 'POST', url: '/api/heroes', payload: { projectId: 'nope', role: 'analyst' } });
+    const unknownProject = await app.inject({ method: 'POST', url: '/api/heroes', payload: { projectId: 'nope', role: 'analyst' }, headers });
     expect(unknownProject.statusCode).toBe(404);
 
-    const created = await app.inject({ method: 'POST', url: '/api/heroes', payload: { projectId: pid, role: 'analyst' } });
+    const created = await app.inject({ method: 'POST', url: '/api/heroes', payload: { projectId: pid, role: 'analyst' }, headers });
     expect(created.statusCode).toBe(201);
     const hero = created.json<Hero>();
     expect(hero).toMatchObject({ projectId: pid, role: 'analyst', slot: 0, boundAgentId: null });
 
-    const capped = await app.inject({ method: 'POST', url: '/api/heroes', payload: { projectId: pid, role: 'analyst' } });
+    const capped = await app.inject({ method: 'POST', url: '/api/heroes', payload: { projectId: pid, role: 'analyst' }, headers });
     expect(capped.statusCode).toBe(409);
     expect(capped.json().error).toMatch(/maxPerRole/);
 
-    const patched = await app.inject({ method: 'PATCH', url: `/api/heroes/${hero.id}`, payload: { name: 'Custom Name' } });
+    const patched = await app.inject({ method: 'PATCH', url: `/api/heroes/${hero.id}`, payload: { name: 'Custom Name' }, headers });
     expect(patched.statusCode).toBe(200);
     expect(patched.json<Hero>()).toMatchObject({ name: 'Custom Name', customized: true });
 
@@ -255,43 +256,52 @@ describe('heroes module (M8 8i)', () => {
       method: 'PATCH',
       url: `/api/heroes/${hero.id}`,
       payload: { name: 'Too Late', baseUpdatedAt: hero.updatedAt },
+      headers,
     });
     expect(stale.statusCode).toBe(409);
 
-    expect((await app.inject({ method: 'PATCH', url: '/api/heroes/h-deadbeef', payload: { name: 'X' } })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'PATCH', url: '/api/heroes/h-deadbeef', payload: { name: 'X' }, headers })).statusCode).toBe(404);
 
     const reset = await app.inject({
       method: 'POST',
       url: `/api/heroes/${hero.id}/reset`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...headers },
     });
     expect(reset.statusCode).toBe(200);
     expect(reset.json<Hero>()).toMatchObject({ name: hero.name, customized: false });
 
     expect(
       (
-        await app.inject({ method: 'POST', url: '/api/heroes/h-deadbeef/reset', headers: { 'content-type': 'application/json' } })
+        await app.inject({
+          method: 'POST',
+          url: '/api/heroes/h-deadbeef/reset',
+          headers: { 'content-type': 'application/json', ...headers },
+        })
       ).statusCode,
     ).toBe(404);
 
     // The GM hero is bound to a live agent: delete is rejected.
     const heroes = (await app.inject({ url: `/api/heroes?projectId=${pid}` })).json<Hero[]>();
     const gm = heroes.find((h) => h.role === MAIN_ROLE)!;
-    const boundDelete = await app.inject({ method: 'DELETE', url: `/api/heroes/${gm.id}` });
+    const boundDelete = await app.inject({ method: 'DELETE', url: `/api/heroes/${gm.id}`, headers });
     expect(boundDelete.statusCode).toBe(409);
 
-    const goodDelete = await app.inject({ method: 'DELETE', url: `/api/heroes/${hero.id}` });
+    const goodDelete = await app.inject({ method: 'DELETE', url: `/api/heroes/${hero.id}`, headers });
     expect(goodDelete.statusCode).toBe(204);
     expect((await app.inject({ url: `/api/heroes?projectId=${pid}` })).json<Hero[]>().some((h) => h.id === hero.id)).toBe(false);
 
-    expect((await app.inject({ method: 'DELETE', url: '/api/heroes/h-deadbeef' })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url: '/api/heroes/h-deadbeef', headers })).statusCode).toBe(404);
   });
 
   async function connectSocket(): Promise<ClientSocket> {
     await app!.listen({ host: '127.0.0.1', port: 0 });
     const address = app!.server.address();
     if (!address || typeof address === 'string') throw new Error('no address');
-    const client: ClientSocket = connect(`http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`, { transports: ['websocket'], forceNew: true });
+    const client: ClientSocket = connect(`http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`, {
+      transports: ['websocket'],
+      forceNew: true,
+      auth: adminSocketAuth(app!),
+    });
     await new Promise<void>((resolve, reject) => {
       client.on('connect', () => resolve());
       client.on('connect_error', reject);

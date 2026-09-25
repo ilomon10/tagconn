@@ -6,7 +6,7 @@ import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../../app.js';
 import { loadConfig } from '../../../core/config/index.js';
-import { buildTestApp, makeTempDir } from '../../../../test/helpers.js';
+import { adminHeaders, adminSocketAuth, buildTestApp, makeTempDir } from '../../../../test/helpers.js';
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -56,7 +56,7 @@ describe('settings REST', () => {
     const changes: string[][] = [];
     app.diContainer.cradle.bus.on('settings.changed', ({ changed }) => changes.push(changed));
 
-    const res = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { agents: { idleAfterSec: 5 } } });
+    const res = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { agents: { idleAfterSec: 5 } }, headers: adminHeaders(app) });
     expect(res.statusCode).toBe(200);
     const body = res.json<{ settings: Settings; restartRequired: string[] }>();
     // Every currently-listed RESTART_REQUIRED_SETTINGS key also falls under GUI_IMMUTABLE_SETTINGS
@@ -66,24 +66,30 @@ describe('settings REST', () => {
     expect(body.settings.agents.doneLingerSec).toBe(20); // untouched siblings keep their value
     expect(changes).toEqual([['agents.idleAfterSec']]);
 
-    const second = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { zoom: 2 } } });
+    const second = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { zoom: 2 } }, headers: adminHeaders(app) });
     expect(second.json()).toMatchObject({ restartRequired: [], settings: { agents: { idleAfterSec: 5 }, office: { zoom: 2 } } });
 
     const got = (await app.inject({ url: '/api/settings' })).json<Settings>();
     expect(got.office.zoom).toBe(2);
 
-    const reset = await app.inject({ method: 'POST', url: '/api/settings/reset', headers: { 'content-type': 'application/json' } });
+    const reset = await app.inject({
+      method: 'POST',
+      url: '/api/settings/reset',
+      headers: { 'content-type': 'application/json', ...adminHeaders(app) },
+    });
     expect(reset.json()).toMatchObject({ restartRequired: [], settings: { agents: { idleAfterSec: 90 }, office: { zoom: 1 } } });
   });
 
   it('rejects invalid patches without changing anything', async () => {
     app = await buildTestApp();
-    const bad = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { agents: { idleAfterSec: 'x' } } });
+    const headers = adminHeaders(app);
+    const bad = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { agents: { idleAfterSec: 'x' } }, headers });
     expect(bad.statusCode).toBe(400);
     const badRegex = await app.inject({
       method: 'PATCH',
       url: '/api/settings',
       payload: { activity: { rules: [{ tool: '(', activity: 'typing' }] } },
+      headers,
     });
     expect(badRegex.statusCode).toBe(400);
     expect(badRegex.json().error).toMatch(/activity\.rules\[0\]\.tool/);
@@ -96,6 +102,7 @@ describe('settings REST', () => {
       method: 'PATCH',
       url: '/api/settings',
       payload: { ingest: { redactPatterns: ['(a+)+$'] } },
+      headers: adminHeaders(app),
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatch(/unsafe regex/i);
@@ -103,12 +110,13 @@ describe('settings REST', () => {
 
   it('rejects a patch touching any GUI-immutable setting, listing the offending keys', async () => {
     app = await buildTestApp();
+    const headers = adminHeaders(app);
     for (const payload of [
       { paths: { agentsDir: '/tmp/evil' } },
       { server: { hookToken: 'sneaky' } },
       { runner: { permissionMode: 'bypassPermissions' } },
     ]) {
-      const res = await app.inject({ method: 'PATCH', url: '/api/settings', payload });
+      const res = await app.inject({ method: 'PATCH', url: '/api/settings', payload, headers });
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
       expect(res.json().error).toMatch(/immutable/i);
     }
@@ -148,7 +156,11 @@ describe('settings REST', () => {
     await app.listen({ host: '127.0.0.1', port: 0 });
     const address = app.server.address();
     if (!address || typeof address === 'string') throw new Error('no address');
-    const socket: ClientSocket = connect(`http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`, { transports: ['websocket'], forceNew: true });
+    const socket: ClientSocket = connect(`http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`, {
+      transports: ['websocket'],
+      forceNew: true,
+      auth: adminSocketAuth(app),
+    });
     try {
       await new Promise<void>((resolve, reject) => {
         socket.on('connect', () => resolve());
@@ -169,7 +181,7 @@ describe('settings REST', () => {
   it('persists runtime overrides in the database across restarts', async () => {
     const dbPath = join(makeTempDir(), 'office.db');
     app = await buildTestApp({ dbPath });
-    await app.inject({ method: 'PATCH', url: '/api/settings', payload: { storage: { eventRetentionDays: 3 } } });
+    await app.inject({ method: 'PATCH', url: '/api/settings', payload: { storage: { eventRetentionDays: 3 } }, headers: adminHeaders(app) });
     await app.close();
     app = await buildTestApp({ dbPath });
     expect(app.diContainer.cradle.settings.get().storage.eventRetentionDays).toBe(3);
@@ -177,9 +189,10 @@ describe('settings REST', () => {
 
   it('null in a patch reverts a key to the lower layer', async () => {
     app = await buildTestApp({ settings: { office: { zoom: 1.5 } } });
-    await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { zoom: 3 } } });
+    const headers = adminHeaders(app);
+    await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { zoom: 3 } }, headers });
     expect(app.diContainer.cradle.settings.get().office.zoom).toBe(3);
-    await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { zoom: null } } });
+    await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { zoom: null } }, headers });
     expect(app.diContainer.cradle.settings.get().office.zoom).toBe(1.5);
   });
 });

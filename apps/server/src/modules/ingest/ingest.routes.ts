@@ -9,6 +9,7 @@ export const ingestRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     '/api/hooks',
     {
+      config: { access: 'hook' },
       schema: { body: HookPayloadSchema },
       // Hooks are high-volume; skip per-request info logs.
       logLevel: 'warn',

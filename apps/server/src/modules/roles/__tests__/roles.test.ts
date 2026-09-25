@@ -4,7 +4,7 @@ import type { Role } from '@tagconn/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../../app.js';
 import { isSafeAgentsDir, MANAGED_MARKER, renderAgentFile, syncRolesToDir } from '../roles.sync.js';
-import { buildTestApp, makeTempDir } from '../../../../test/helpers.js';
+import { adminHeaders, buildTestApp, makeTempDir } from '../../../../test/helpers.js';
 
 const DEVELOPER_ROLE: Role = {
   name: 'developer',
@@ -46,7 +46,11 @@ describe('roles', () => {
 
   it('syncs enabled roles with Claude-only frontmatter and the managed marker', async () => {
     const { app, agentsDir } = await setup();
-    const res = await app.inject({ method: 'POST', url: '/api/roles/sync', headers: { 'content-type': 'application/json' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/roles/sync',
+      headers: { 'content-type': 'application/json', ...adminHeaders(app) },
+    });
     expect(res.statusCode).toBe(200);
     const files = readdirSync(agentsDir).sort();
     expect(files).toContain('developer.md');
@@ -60,6 +64,7 @@ describe('roles', () => {
 
   it('writes on save, removes only managed files, and never touches user files', async () => {
     const { app, agentsDir } = await setup();
+    const headers = adminHeaders(app);
     const userFile = join(agentsDir, 'my-own.md');
     writeFileSync(userFile, '---\nname: my-own\n---\nmine\n');
     const clash = join(agentsDir, 'writer.md');
@@ -68,7 +73,7 @@ describe('roles', () => {
     writeFileSync(stale, `---\nname: old-role\n---\nx\n\n${MANAGED_MARKER}\n`);
 
     const role = { title: 'Data Scientist', description: 'Analyses data', prompt: 'You analyse data.', tools: ['Read', 'Bash'], zone: 'library' };
-    const saved = await app.inject({ method: 'PUT', url: '/api/roles/data-scientist', payload: role });
+    const saved = await app.inject({ method: 'PUT', url: '/api/roles/data-scientist', payload: role, headers });
     expect(saved.statusCode).toBe(200);
     const file = readFileSync(join(agentsDir, 'data-scientist.md'), 'utf8');
     expect(file).toContain('tools: Read, Bash');
@@ -76,32 +81,35 @@ describe('roles', () => {
     expect(existsSync(stale)).toBe(false); // managed but no longer a role
     expect(readFileSync(userFile, 'utf8')).toContain('mine');
 
-    const writer = await app.inject({ method: 'PUT', url: '/api/roles/writer', payload: { ...role, title: 'Writer' } });
+    const writer = await app.inject({ method: 'PUT', url: '/api/roles/writer', payload: { ...role, title: 'Writer' }, headers });
     expect(writer.statusCode).toBe(200);
     expect(readFileSync(clash, 'utf8')).toContain('user owned'); // unmanaged → skipped
-    const sync = (await app.inject({ method: 'POST', url: '/api/roles/sync', headers: { 'content-type': 'application/json' } })).json();
+    const sync = (
+      await app.inject({ method: 'POST', url: '/api/roles/sync', headers: { 'content-type': 'application/json', ...headers } })
+    ).json();
     expect(sync.skipped).toEqual(['writer.md']);
 
     // Disabling a role removes its managed file; deleting works too.
-    await app.inject({ method: 'PUT', url: '/api/roles/data-scientist', payload: { ...role, enabled: false } });
+    await app.inject({ method: 'PUT', url: '/api/roles/data-scientist', payload: { ...role, enabled: false }, headers });
     expect(existsSync(join(agentsDir, 'data-scientist.md'))).toBe(false);
-    expect((await app.inject({ method: 'DELETE', url: '/api/roles/developer' })).statusCode).toBe(204);
+    expect((await app.inject({ method: 'DELETE', url: '/api/roles/developer', headers })).statusCode).toBe(204);
     expect(existsSync(join(agentsDir, 'developer.md'))).toBe(false);
     expect(existsSync(userFile)).toBe(true);
   });
 
   it('rejects unsafe or invalid names and protects the main role', async () => {
     const { app, agentsDir } = await setup();
+    const headers = adminHeaders(app);
     const role = { title: 'X', description: 'x', prompt: 'x' };
     for (const name of ['..%2F..%2Fetc', 'a.b', '.hidden', 'Upper', 'x']) {
-      const res = await app.inject({ method: 'PUT', url: `/api/roles/${name}`, payload: role });
+      const res = await app.inject({ method: 'PUT', url: `/api/roles/${name}`, payload: role, headers });
       expect(res.statusCode, name).toBe(400);
     }
     expect(() => app.diContainer.cradle.rolesService.save('../evil', role)).toThrow(/Invalid role name/);
-    const mismatch = await app.inject({ method: 'PUT', url: '/api/roles/good-name', payload: { ...role, name: 'other' } });
+    const mismatch = await app.inject({ method: 'PUT', url: '/api/roles/good-name', payload: { ...role, name: 'other' }, headers });
     expect(mismatch.statusCode).toBe(400);
-    expect((await app.inject({ method: 'DELETE', url: '/api/roles/pm' })).statusCode).toBe(400);
-    expect((await app.inject({ method: 'DELETE', url: '/api/roles/nope-nope' })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url: '/api/roles/pm', headers })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'DELETE', url: '/api/roles/nope-nope', headers })).statusCode).toBe(404);
     expect(readdirSync(agentsDir).every((f) => /^[a-z][a-z0-9-]+\.md$/.test(f))).toBe(true);
   });
 
@@ -117,7 +125,11 @@ describe('roles', () => {
     expect(isSafeAgentsDir(claudeDir, claudeDir)).toBe(false); // same dir as ~/.claude
     const restApp = await buildTestApp({ settings: { paths: { claudeDir, agentsDir: claudeDir } } });
     try {
-      const res = await restApp.inject({ method: 'POST', url: '/api/roles/sync', headers: { 'content-type': 'application/json' } });
+      const res = await restApp.inject({
+        method: 'POST',
+        url: '/api/roles/sync',
+        headers: { 'content-type': 'application/json', ...adminHeaders(restApp) },
+      });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ written: [], removed: [], skipped: [] });
     } finally {
