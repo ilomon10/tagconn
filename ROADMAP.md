@@ -81,6 +81,19 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
   - [~] Web fixes B (client layout hardening, editor baseUpdatedAt/409 dialogs, Edit floor entry, themed roster titles, procgen A* limits)
 - [~] 7g. Follow-ups: animated TopBar floor jump (fixes A), "Edit floor" entry in Manage floors (fixes B)
 
+## M8: Living Office UX (next, after v0.2.0 ships) → v0.3.0  [PM plan]
+User request: no stale characters, one clear PM per floor, reuse idle characters, glow on the selected character, bubbles that never overlap, and UX best practice for showing characters and the office.
+Diagnosis (live data, 2026-09-25): subagents whose SubagentStop never arrived (killed or lost background agents) stay "active/idle" in the lounge forever
+(the sweeper only moves them to the lounge); each Claude session has its own PM, and idle or abandoned sessions only end after `sessions.endAfterSec` (30 min),
+so parallel or old sessions leave extra PMs on a floor.
+- [ ] 8a. Server lifecycle: `agents.staleAfterSec` (default 900). A subagent with no events past it is marked `done` (reason `stale`) and leaves the floor; it comes back if a later event arrives. The main agent of an idle session leaves the floor after `sessions.pmIdleLeaveSec`. Recovery at restart; tests with a replay of lost SubagentStop.  [Developer: server]
+- [ ] 8b. One PM per floor: the floor's "Guild Master" is the main agent of the most recently active session; other live sessions show as smaller "Deputy" characters with a session badge (or collapse into a count chip). Configurable `office.pmMode: single | per-session`.  [Architect → Developer: web]
+- [ ] 8c. Character pool / reuse: when a subagent spawns and an idle character of the same role is on the floor, that character takes the new quest (walks from the tavern to the new zone) instead of a new sprite spawning; idle characters leave (walk out) after `office.idleLeaveSec`. Presentation-only mapping of agent → actor in the web.  [Developer: web]
+- [ ] 8d. Selection glow: WebGL preFX glow (Phaser 3.60+ `preFX.addGlow`) in the role color with a pulse, plus a canvas fallback ring; the other characters dim slightly in focus mode.  [Developer: web]
+- [ ] 8e. Bubble and label declutter: collision-free bubble layout (greedy placement with stacking and leader lines), priority for the selected/newest/waiting characters, max visible bubbles, fade after `bubbleSeconds`; zoom-based level of detail (names and bubbles hidden when zoomed out, shown on hover); hover card; "waiting for you" gets a persistent badge.  [Developer: web]
+- [ ] 8f. UX review pass: a best-practice checklist (focus + context, level of detail, affordances, motion guidelines, accessibility: reduced motion, contrast, keyboard navigation of characters), optional minimap.  [Analyst/Architect → Developer]
+- [ ] 8g. Review + security + QA → v0.3.0
+
 ## Backlog
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 
