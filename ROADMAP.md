@@ -75,10 +75,11 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [~] 7f. Review + security + QA of M7 → fixes → docker rebuild → release v0.2.0
   - [x] Security: 0 Critical/High; 2 Med (layout ids that break the id rule are stored but can't be listed or deleted; no cap on stored layouts and a snapshot carries them all), 4 Low (defaultLayoutId "constructor" breaks the view, A* node limit, lost updates, socket arg validation)
   - [x] Code review: 1 High (floor hotkeys fire under the open editor), 1 Med (camera zoom compounds on each floor change), 1 Low (transition re-entrancy)
-  - [~] QA
+  - [x] QA: 7/9 pass, 0 console errors; bugs: ambientEffects toggle not live (Med), camera fit/focus centering wrong esp. zoomed in (Med/High), roster titles not themed (Low)
   - [x] Server security fixes (layout id validation + purge, maxStoredLayouts 200, defaultLayoutId existence, baseUpdatedAt 409, socket arg validation, name sanitizing); 109 server tests
-  - [ ] Web fixes (review + QA findings + client-side hardening) and 7g follow-ups
-- [ ] 7g. Follow-ups: animated TopBar floor jump, "Edit floor" entry in Manage floors
+  - [~] Web fixes A (camera fit/focus math, zoom drift, transition lock, hotkeys under editor, live ambient toggle, animated TopBar floor jump)
+  - [~] Web fixes B (client layout hardening, editor baseUpdatedAt/409 dialogs, Edit floor entry, themed roster titles, procgen A* limits)
+- [~] 7g. Follow-ups: animated TopBar floor jump (fixes A), "Edit floor" entry in Manage floors (fixes B)
 
 ## Backlog
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
