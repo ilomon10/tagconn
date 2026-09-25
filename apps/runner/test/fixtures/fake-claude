@@ -1,0 +1,5 @@
+#!/bin/sh
+# Executable wrapper so tests can use this as `claudePath` directly (argv[0] must be a single
+# executable, not "node script.mjs"). Resolves the sibling .mjs relative to this script's own path.
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec node "$dir/fake-claude.mjs" "$@"
