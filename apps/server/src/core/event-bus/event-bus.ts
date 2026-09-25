@@ -1,4 +1,4 @@
-import type { Activity, Agent, HookPayload, OfficeEvent, OfficeLayout, Project, Role, Session, Settings, Task } from '@tagconn/shared';
+import type { Activity, Agent, Hero, HookPayload, OfficeEvent, OfficeLayout, Project, Role, Session, Settings, Task } from '@tagconn/shared';
 
 /**
  * One hook as it flows through the modules. Listeners on 'hook.received' run in module registration
@@ -37,6 +37,10 @@ export interface BusEvents {
   'layout.upserted': OfficeLayout;
   /** A layout was deleted; `layout.removed` id is a `LAYOUT_ID_RE` string. */
   'layout.removed': string;
+  /** A hero was created, bound, released, edited or reset (M8 8i). */
+  'hero.upserted': Hero;
+  /** A hero was deleted. */
+  'hero.removed': { id: string; projectId: string };
 }
 
 type Listener<T> = (payload: T) => void;

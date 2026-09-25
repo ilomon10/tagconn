@@ -16,5 +16,5 @@ export const snapshotModule = fp(
     registerSnapshotSocket(app.diContainer.cradle);
     await app.register(snapshotRoutes);
   },
-  { name: 'snapshot', dependencies: ['core-di', 'core-http', 'core-realtime', 'projects', 'sessions', 'agents', 'tasks', 'events', 'layouts'] },
+  { name: 'snapshot', dependencies: ['core-di', 'core-http', 'core-realtime', 'projects', 'sessions', 'agents', 'tasks', 'events', 'layouts', 'heroes'] },
 );

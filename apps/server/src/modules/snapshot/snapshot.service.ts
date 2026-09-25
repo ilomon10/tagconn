@@ -6,7 +6,14 @@ import { publicAgent } from '../agents/index.js';
 const RECENT_MS = 24 * 60 * 60 * 1000;
 
 type SnapshotDeps = Deps<
-  'projectsRepository' | 'sessionsRepository' | 'agentsRepository' | 'tasksRepository' | 'eventsRepository' | 'layoutsRepository' | 'settings'
+  | 'projectsRepository'
+  | 'sessionsRepository'
+  | 'agentsRepository'
+  | 'tasksRepository'
+  | 'eventsRepository'
+  | 'layoutsRepository'
+  | 'heroesRepository'
+  | 'settings'
 >;
 
 /** Read model for a (re)connecting client: live floor + recent context. */
@@ -35,6 +42,8 @@ export class SnapshotService {
       // by `office.maxStoredLayouts` (enforced on create), so this stays small by construction
       // rather than being filtered down to referenced layouts here.
       layouts: d.layoutsRepository.list(),
+      // Heroes of the subscribed floor(s) (M8 8i); '*' (pid undefined) returns every project's heroes.
+      heroes: d.heroesRepository.list(pid),
     };
   }
 }

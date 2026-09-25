@@ -113,6 +113,64 @@ describe('request gating (DNS rebinding / CSRF)', () => {
     expect(res.json().error).toMatch(/host/i);
   });
 
+  it('rejects a hero POST, PATCH or DELETE with a foreign Origin, accepts a configured one (M8 hardening)', async () => {
+    app = await buildTestApp();
+    const origins = app.diContainer.cradle.settings.get().server.corsOrigins;
+
+    const badPost = await app.inject({
+      method: 'POST',
+      url: '/api/heroes',
+      payload: { projectId: 'p1', role: 'developer' },
+      headers: { origin: 'http://evil.example.com' },
+    });
+    expect(badPost.statusCode).toBe(403);
+    expect(badPost.json().error).toMatch(/origin/i);
+
+    const badPatch = await app.inject({
+      method: 'PATCH',
+      url: '/api/heroes/h-00000000',
+      payload: { name: 'Evil' },
+      headers: { origin: 'http://evil.example.com' },
+    });
+    expect(badPatch.statusCode).toBe(403);
+    expect(badPatch.json().error).toMatch(/origin/i);
+
+    const badDelete = await app.inject({
+      method: 'DELETE',
+      url: '/api/heroes/h-00000000',
+      headers: { origin: 'http://evil.example.com' },
+    });
+    expect(badDelete.statusCode).toBe(403);
+    expect(badDelete.json().error).toMatch(/origin/i);
+
+    // A known project must exist for the create to get past the Origin gate and 404 on the project.
+    const goodPost = await app.inject({
+      method: 'POST',
+      url: '/api/heroes',
+      payload: { projectId: 'p1', role: 'developer' },
+      headers: { origin: origins[0] },
+    });
+    expect(goodPost.statusCode).toBe(404); // Origin accepted; project unknown is the next gate down.
+  });
+
+  it('rejects a malformed hero id with 400, before any DB access (M8 hardening)', async () => {
+    app = await buildTestApp();
+    expect((await app.inject({ url: '/api/heroes' })).statusCode).toBe(200);
+
+    const badPatch = await app.inject({ method: 'PATCH', url: '/api/heroes/not-a-hero-id', payload: { name: 'X' } });
+    expect(badPatch.statusCode).toBe(400);
+
+    const badReset = await app.inject({
+      method: 'POST',
+      url: '/api/heroes/not-a-hero-id/reset',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(badReset.statusCode).toBe(400);
+
+    const badDelete = await app.inject({ method: 'DELETE', url: '/api/heroes/not-a-hero-id' });
+    expect(badDelete.statusCode).toBe(400);
+  });
+
   it('rejects a text/plain POST /api/layouts (415, M7 hardening)', async () => {
     app = await buildTestApp();
     const res = await app.inject({

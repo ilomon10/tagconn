@@ -55,6 +55,16 @@ export const MIGRATIONS: string[] = [
   );
   ALTER TABLE projects ADD COLUMN layout_id TEXT;
   `,
+  /* 4: named heroes (M8 8i) */ `
+  CREATE TABLE IF NOT EXISTS heroes (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, role TEXT NOT NULL, slot INTEGER NOT NULL,
+    name TEXT NOT NULL, title TEXT, appearance TEXT NOT NULL, customized INTEGER NOT NULL DEFAULT 0,
+    bound_agent_id TEXT, bound_at INTEGER, released_at INTEGER,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS heroes_project_role_slot_idx ON heroes (project_id, role, slot);
+  CREATE INDEX IF NOT EXISTS heroes_bound_agent_idx ON heroes (bound_agent_id);
+  `,
 ];
 
 export function migrate(sqlite: Database.Database): number {

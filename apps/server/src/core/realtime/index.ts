@@ -79,6 +79,8 @@ export const realtimePlugin = fp(
     // Layouts are global (not per floor), so these go to every client, not a project room.
     bus.on('layout.upserted', (l) => office.emit('layout:upsert', l));
     bus.on('layout.removed', (id) => office.emit('layout:remove', id));
+    bus.on('hero.upserted', (h) => toProject(h.projectId).emit('hero:upsert', h));
+    bus.on('hero.removed', ({ id, projectId }) => toProject(projectId).emit('hero:remove', id));
 
     app.addHook('preClose', async () => {
       office.disconnectSockets(true);

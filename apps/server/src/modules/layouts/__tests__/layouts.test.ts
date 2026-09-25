@@ -134,6 +134,15 @@ describe('layouts module', () => {
     expect(list.some((l) => l.id === 'constructor')).toBe(false);
   });
 
+  it('rejects a PUT under the reserved "multiverse" id (M8 8h: the web-generated Multiverse floor)', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({ method: 'PUT', url: '/api/layouts/multiverse', payload: { ...validInput, name: 'Sneaky' } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/reserved/i);
+    const list = (await app.inject({ url: '/api/layouts' })).json<OfficeLayout[]>();
+    expect(list.some((l) => l.id === 'multiverse')).toBe(false);
+  });
+
   it('purges stored rows with an invalid id on boot (old bug cleanup), leaving valid rows alone', async () => {
     app = await buildTestApp();
     const { db, layoutsRepository } = app.diContainer.cradle;

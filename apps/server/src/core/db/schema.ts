@@ -1,5 +1,5 @@
-import type { TokenUsage } from '@tagconn/shared';
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import type { HeroAppearance, TokenUsage } from '@tagconn/shared';
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 // Keep in sync with migrations.ts (runtime DDL; drizzle-kit is not needed at runtime).
 
@@ -133,3 +133,32 @@ export const layouts = sqliteTable('layouts', {
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });
+
+/**
+ * Named, persistent hero identities per (project, role, slot) (M8 8i). `boundAgentId`/`boundAt`/
+ * `releasedAt` track the current or last live agent wearing this look; `heroes_bound_agent_idx`
+ * backs the heroes module's boot-time seed of bound-and-unreleased heroes. See
+ * docs/design/living-office.md section 3.
+ */
+export const heroes = sqliteTable(
+  'heroes',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull(),
+    role: text('role').notNull(),
+    slot: integer('slot').notNull(),
+    name: text('name').notNull(),
+    title: text('title'),
+    appearance: text('appearance', { mode: 'json' }).notNull().$type<HeroAppearance>(),
+    customized: integer('customized', { mode: 'boolean' }).notNull().default(false),
+    boundAgentId: text('bound_agent_id'),
+    boundAt: integer('bound_at'),
+    releasedAt: integer('released_at'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('heroes_project_role_slot_idx').on(t.projectId, t.role, t.slot),
+    index('heroes_bound_agent_idx').on(t.boundAgentId),
+  ],
+);

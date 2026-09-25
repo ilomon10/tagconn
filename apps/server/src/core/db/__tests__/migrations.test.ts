@@ -32,4 +32,39 @@ describe('migrate', () => {
     expect(migrate(sqlite)).toBe(MIGRATIONS.length);
     sqlite.close();
   });
+
+  it('upgrades an existing pre-M8 DB (migrations 1-3 only) with the heroes table', () => {
+    // Simulate a DB from before the heroes module: migrations 1-3 have run (so `layouts` and
+    // `projects.layout_id` already exist), with real data in it, and no `heroes` table yet.
+    const sqlite = new Database(':memory:');
+    for (const sql of MIGRATIONS.slice(0, 3)) sqlite.exec(sql);
+    sqlite.pragma('user_version = 3');
+    sqlite.exec(
+      `INSERT INTO projects (id, cwd, name, archived, created_at, last_activity_at) VALUES ('p1', '/tmp/p1', 'p1', 0, 1, 1)`,
+    );
+    expect(sqlite.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='heroes'`).get()).toBeUndefined();
+
+    const version = migrate(sqlite);
+    expect(version).toBe(MIGRATIONS.length);
+    expect(sqlite.pragma('user_version', { simple: true })).toBe(MIGRATIONS.length);
+
+    // The pre-existing row survives, and the new table exists, usable and enforces its unique index.
+    const project = sqlite.prepare(`SELECT * FROM projects WHERE id = 'p1'`).get() as { id: string };
+    expect(project).toMatchObject({ id: 'p1' });
+    sqlite.exec(
+      `INSERT INTO heroes (id, project_id, role, slot, name, appearance, customized, created_at, updated_at)
+       VALUES ('h-aaaaaaaa', 'p1', 'pm', 0, 'Aldric', '{}', 0, 1, 1)`,
+    );
+    expect(sqlite.prepare(`SELECT id FROM heroes WHERE id = 'h-aaaaaaaa'`).get()).toEqual({ id: 'h-aaaaaaaa' });
+    expect(() =>
+      sqlite.exec(
+        `INSERT INTO heroes (id, project_id, role, slot, name, appearance, customized, created_at, updated_at)
+         VALUES ('h-bbbbbbbb', 'p1', 'pm', 0, 'Seraphine', '{}', 0, 1, 1)`,
+      ),
+    ).toThrow();
+
+    // Running migrate again is a no-op (idempotent).
+    expect(migrate(sqlite)).toBe(MIGRATIONS.length);
+    sqlite.close();
+  });
 });

@@ -9,6 +9,7 @@ import { activityModule } from './modules/activity/index.js';
 import { agentsModule } from './modules/agents/index.js';
 import { eventsModule } from './modules/events/index.js';
 import { healthModule } from './modules/health/index.js';
+import { heroesModule } from './modules/heroes/index.js';
 import { ingestModule } from './modules/ingest/index.js';
 import { layoutsModule } from './modules/layouts/index.js';
 import { projectsModule } from './modules/projects/index.js';
@@ -76,6 +77,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(projectsModule);
   await app.register(sessionsModule);
   await app.register(agentsModule);
+  await app.register(heroesModule);
   await app.register(transcriptsModule);
   await app.register(tasksModule);
   await app.register(eventsModule);

@@ -5,6 +5,7 @@ import {
   hasLayoutErrors,
   LAYOUT_ID_RE,
   type LayoutIssue,
+  MULTIVERSE_LAYOUT_ID,
   type OfficeLayout,
   type OfficeLayoutInput,
   OfficeLayoutInputSchema,
@@ -78,6 +79,8 @@ export class LayoutsService {
   /** Create (id unused so far) or replace (id already stored, must not be builtin). */
   replace(id: string, rawInput: OfficeLayoutInput): OfficeLayout {
     if (!LAYOUT_ID_RE.test(id)) throw new HttpError(400, `Invalid layout id "${id}"`);
+    // Reserved for the web-generated Multiverse floor (M8 8h); never a storable layout.
+    if (id === MULTIVERSE_LAYOUT_ID) throw new HttpError(400, `Layout id "${id}" is reserved`);
     const { baseUpdatedAt, ...input } = OfficeLayoutInputSchema.parse(rawInput);
     if (input.id !== undefined && input.id !== id) throw new HttpError(400, 'Layout id in body does not match the URL');
     const existing = this.repo.get(id);

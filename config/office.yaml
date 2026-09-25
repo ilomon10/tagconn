@@ -85,6 +85,19 @@ agents: {}
   #   Explore: analyst
   #   Plan: architect
 
+heroes: {}
+  # Named, persistent hero identities bound to live agents (M8 8i). Off = anonymous
+  # characters (pre-M8 look). See docs/design/living-office.md section 3.
+  # enabled: true
+  # maxPerRole: 6          # heroes per (project, role); further subagents draw anonymously
+  # maxPerProject: 40
+  # reuseIdleAfterSec: 600 # a new subagent may take over a live subagent's hero once it has
+  #                         # been idle this long; 0 = never take over a live agent's hero
+  # namePools:              # role (or "default") -> names for new heroes; replaced wholesale
+  #   pm: [Aldric, Seraphine, ...]           # see DEFAULT_HERO_NAME_POOLS in
+  #   developer: [Brom, Tamsin, ...]         # packages/shared/src/heroes.ts for the full
+  #   default: [Rook, Ember, ...]            # shipped list (one pool per built-in role)
+
 activity: {}
   # rules: []   # see DEFAULT_ACTIVITY_RULES in packages/shared/src/settings.ts for
   #             # the full default list (tool/input regex -> activity/zone/bubble).
@@ -103,11 +116,22 @@ office: {}
   #                         # zones: { desks: { x: 0, y: 0, w: 10, h: 6 } }
   # style: "guild"                  # modern | guild. Visual skin; a layout may override it
   #                                  # with its own `style`.
-  # defaultLayoutId: "default"       # layout for floors without their own layoutId (and for
-  #                                  # the "All floors" view); GET/POST/PUT/DELETE /api/layouts
+  # defaultLayoutId: "default"       # layout for floors without their own layoutId;
+  #                                  # GET/POST/PUT/DELETE /api/layouts
   # floorOrder: "created"            # created | name | recent. Stair order between floors.
   # floorTransitionMs: 600           # 0..3000. Stairs transition duration; 0 = instant.
   # ambientEffects: true             # dust motes, torch flicker, sparkles (guild style)
+  # pmMode: "single"                 # single | per-session (M8 8b). single: one Guild Master
+  #                                  # sprite per floor + a session count chip; per-session:
+  #                                  # today's behaviour (one sprite per main session).
+  # pmSwitchCooldownSec: 15          # min seconds before the Guild Master switches sessions
+  #                                  # (a session that needs you switches at once)
+  # idleLeaveSec: 300                # seconds a hero with no live agent rests in the tavern
+  #                                  # before walking out (M8 8c); 0 = leave at once
+  # multiverseMaxRealms: 12          # realms drawn on the Multiverse floor (M8 8h); extra
+  #                                  # projects group into one "Other realms" realm
+  # multiverseMaxCharacters: 60      # character cap on the Multiverse floor, split fairly
+  #                                  # across realms (Guild Masters first)
 
 notifications: {}
   # onWaiting: true
