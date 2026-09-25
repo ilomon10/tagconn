@@ -3,6 +3,7 @@ import {
   DEFAULT_LAYOUT,
   DEFAULT_LAYOUT_ID,
   hasLayoutErrors,
+  LAYOUT_ID_RE,
   type LayoutIssue,
   type OfficeLayout,
   type OfficeLayoutInput,
@@ -26,16 +27,16 @@ export class LayoutValidationError extends HttpError {
 }
 
 /** Same slugify as projects (lowercase, non-alnum runs collapse to one dash), capped so the
- * `-xxxx` suffix always fits inside `LAYOUT_ID_RE`'s 64 character limit. */
+ * `-xxxxxxxx` suffix always fits inside `LAYOUT_ID_RE`'s 64 character limit. */
 const slugify = (s: string) =>
   s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 58) || 'layout';
+    .slice(0, 55) || 'layout';
 
 export class LayoutsService {
-  constructor(private readonly deps: Deps<'layoutsRepository' | 'projectsRepository' | 'bus' | 'logger'>) {}
+  constructor(private readonly deps: Deps<'layoutsRepository' | 'projectsRepository' | 'bus' | 'logger' | 'settings'>) {}
 
   private get repo(): LayoutsRepository {
     return this.deps.layoutsRepository;
@@ -51,8 +52,10 @@ export class LayoutsService {
     return layout;
   }
 
-  /** Boot-time: always overwrite the builtin default with the shipped `DEFAULT_LAYOUT`, keeping its `createdAt`. */
+  /** Boot-time: purges rows an old bug could have stored under an invalid id, then always
+   * overwrites the builtin default with the shipped `DEFAULT_LAYOUT`, keeping its `createdAt`. */
   seedDefault(now = Date.now()): void {
+    this.repo.purgeInvalidIds();
     const existing = this.repo.get(DEFAULT_LAYOUT_ID);
     this.repo.upsert({ ...DEFAULT_LAYOUT, createdAt: existing?.createdAt ?? now, updatedAt: now });
   }
@@ -60,7 +63,9 @@ export class LayoutsService {
   /** Fills in field defaults (`background`, `corridorWidth`) before geometry validation and storage;
    * safe to call again even when the REST/socket boundary already parsed the same schema. */
   create(rawInput: OfficeLayoutInput): OfficeLayout {
-    const input = OfficeLayoutInputSchema.parse(rawInput);
+    const { baseUpdatedAt: _baseUpdatedAt, ...input } = OfficeLayoutInputSchema.parse(rawInput);
+    const max = this.deps.settings.get().office.maxStoredLayouts;
+    if (this.repo.count() >= max) throw new HttpError(409, `Cannot create layout: at most ${max} layouts may be stored (office.maxStoredLayouts)`);
     const issues = validateLayout(input);
     if (hasLayoutErrors(issues)) throw new LayoutValidationError(issues);
     const now = Date.now();
@@ -72,10 +77,15 @@ export class LayoutsService {
 
   /** Create (id unused so far) or replace (id already stored, must not be builtin). */
   replace(id: string, rawInput: OfficeLayoutInput): OfficeLayout {
-    const input = OfficeLayoutInputSchema.parse(rawInput);
+    if (!LAYOUT_ID_RE.test(id)) throw new HttpError(400, `Invalid layout id "${id}"`);
+    const { baseUpdatedAt, ...input } = OfficeLayoutInputSchema.parse(rawInput);
     if (input.id !== undefined && input.id !== id) throw new HttpError(400, 'Layout id in body does not match the URL');
     const existing = this.repo.get(id);
     if (existing?.builtin) throw new HttpError(409, `Layout "${id}" is builtin and read-only; duplicate it to edit`);
+    if (baseUpdatedAt !== undefined) {
+      if (!existing) throw new HttpError(409, `Layout "${id}" no longer exists (it was likely deleted by someone else)`);
+      if (existing.updatedAt !== baseUpdatedAt) throw new HttpError(409, `Layout "${id}" was changed since you loaded it`);
+    }
     const issues = validateLayout(input);
     if (hasLayoutErrors(issues)) throw new LayoutValidationError(issues);
     const now = Date.now();
@@ -103,7 +113,7 @@ export class LayoutsService {
   private freshId(name: string): string {
     const base = slugify(name);
     for (let i = 0; i < 20; i++) {
-      const id = `${base}-${randomBytes(2).toString('hex')}`;
+      const id = `${base}-${randomBytes(4).toString('hex')}`;
       if (!this.repo.get(id)) return id;
     }
     throw new HttpError(500, 'Could not generate a unique layout id');

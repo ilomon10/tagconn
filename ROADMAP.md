@@ -73,6 +73,11 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [x] 7e-A. Office editor "Hall Planner": draw regions → pick room type, move/resize, stairs, validation, Surprise me, preview, save/assign, undo/redo (190 web tests incl. 34 new; typecheck/build green; manual playwright-cli pass)  [Developer: web A]
 - [x] 7e-B. Scene integration: generated maps + guild skin live (costumes, titles, verbs, fx), interactive stairs + floor transitions, PageUp/PageDown/Home/End, TopBar floor indicator, 3-floor demo; 190 web tests  [Developer: web B]
 - [~] 7f. Review + security + QA of M7 → fixes → docker rebuild → release v0.2.0
+  - [x] Security: 0 Critical/High; 2 Med (layout ids that break the id rule are stored but can't be listed or deleted; no cap on stored layouts and a snapshot carries them all), 4 Low (defaultLayoutId "constructor" breaks the view, A* node limit, lost updates, socket arg validation)
+  - [x] Code review: 1 High (floor hotkeys fire under the open editor), 1 Med (camera zoom compounds on each floor change), 1 Low (transition re-entrancy)
+  - [~] QA
+  - [x] Server security fixes (layout id validation + purge, maxStoredLayouts 200, defaultLayoutId existence, baseUpdatedAt 409, socket arg validation, name sanitizing); 109 server tests
+  - [ ] Web fixes (review + QA findings + client-side hardening) and 7g follow-ups
 - [ ] 7g. Follow-ups: animated TopBar floor jump, "Edit floor" entry in Manage floors
 
 ## Backlog

@@ -1,6 +1,6 @@
 import { OfficeLayoutInputSchema, type OfficeLayoutInput } from '@tagconn/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
-import { LayoutParamsSchema } from './layouts.schema.js';
+import { LayoutParamsSchema, LayoutPutParamsSchema } from './layouts.schema.js';
 
 export const layoutsRoutes: FastifyPluginAsyncZod = async (app) => {
   const { layoutsService } = app.diContainer.cradle;
@@ -15,7 +15,7 @@ export const layoutsRoutes: FastifyPluginAsyncZod = async (app) => {
     return layout;
   });
 
-  app.put('/api/layouts/:id', { schema: { params: LayoutParamsSchema, body: OfficeLayoutInputSchema } }, async (req) =>
+  app.put('/api/layouts/:id', { schema: { params: LayoutPutParamsSchema, body: OfficeLayoutInputSchema } }, async (req) =>
     layoutsService.replace(req.params.id, req.body as OfficeLayoutInput),
   );
 

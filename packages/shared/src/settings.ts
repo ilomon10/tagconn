@@ -144,6 +144,12 @@ export const SettingsSchema = z.object({
       floorTransitionMs: z.number().int().min(0).max(3000).default(600),
       /** Ambient particles and magic effects (torch flicker, sparkles, motes). Off = static art. */
       ambientEffects: z.boolean().default(true),
+      /**
+       * Cap on stored layouts (builtins don't count); `POST /api/layouts` (and `layouts:save`
+       * without an id) 409s past this. Kept under `office` rather than a new top-level `layouts`
+       * section, since a new section would need a web `SECTION_LABELS` entry too.
+       */
+      maxStoredLayouts: z.number().int().min(1).default(200),
     })
     .prefault({}),
   notifications: z

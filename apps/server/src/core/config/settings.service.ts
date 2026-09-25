@@ -65,6 +65,9 @@ export interface SettingsUpdateResult {
 export const needsRestart = (key: string) =>
   RESTART_REQUIRED_SETTINGS.some((r) => key === r || key.startsWith(`${r}.`));
 
+/** A cross-module check registered with `SettingsService.addValidator`; throw `HttpError` to reject. */
+export type SettingsValidator = (settings: Settings) => void;
+
 /** Rejects regexes that would otherwise blow up later in activity mapping or redaction. */
 function assertValidRegexes(s: Settings): void {
   const check = (source: string, where: string, flags = '') => {
@@ -85,6 +88,11 @@ function assertValidRegexes(s: Settings): void {
 export class SettingsService {
   private overrides: PlainObject = {};
   private current: Settings;
+  /** Registered by other modules (e.g. `layouts`, to check `office.defaultLayoutId` against its
+   * repository) so core/config never imports another module back. Only run from `update()`/`reset()`
+   * (never the constructor's initial load), so a module registering one during its own boot can't
+   * retroactively invalidate whatever was already computed and crash startup. */
+  private validators: SettingsValidator[] = [];
 
   /**
    * @param layered defaults → YAML → env → boot overrides, unvalidated (DB overrides merge onto this).
@@ -117,6 +125,10 @@ export class SettingsService {
     return structuredClone(this.overrides);
   }
 
+  addValidator(validator: SettingsValidator): void {
+    this.validators.push(validator);
+  }
+
   update(patch: SettingsPatch): SettingsUpdateResult {
     if (!isPlainObject(patch)) throw new HttpError(400, 'Settings patch must be an object');
     assertNoImmutablePaths(patch as PlainObject);
@@ -129,6 +141,7 @@ export class SettingsService {
 
   private apply(nextOverrides: PlainObject): SettingsUpdateResult {
     const next = this.compute(nextOverrides);
+    for (const validate of this.validators) validate(next);
     const changed = diffKeys(this.current, next);
     this.store.save(nextOverrides);
     this.overrides = nextOverrides;

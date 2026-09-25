@@ -83,6 +83,47 @@ describe('request gating (DNS rebinding / CSRF)', () => {
     expect(goodPost.statusCode).toBe(201);
   });
 
+  it('rejects a layout DELETE with a foreign Origin (M7 hardening)', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/api/layouts/some-layout',
+      headers: { origin: 'http://evil.example.com' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/origin/i);
+  });
+
+  it('rejects a PATCH /api/projects/:id { layoutId } with a foreign Origin (M7 hardening)', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/projects/some-project',
+      payload: { layoutId: 'default' },
+      headers: { origin: 'http://evil.example.com' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/origin/i);
+  });
+
+  it('rejects a foreign Host on /api/layouts (M7 hardening)', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({ url: '/api/layouts', headers: { host: 'evil.example.com' } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toMatch(/host/i);
+  });
+
+  it('rejects a text/plain POST /api/layouts (415, M7 hardening)', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/layouts',
+      headers: { 'content-type': 'text/plain' },
+      payload: '{}',
+    });
+    expect(res.statusCode).toBe(415);
+  });
+
   it('allows GET requests regardless of a foreign Origin (only mutating requests are gated)', async () => {
     app = await buildTestApp();
     const res = await app.inject({ url: '/api/health', headers: { origin: 'http://evil.example.com' } });

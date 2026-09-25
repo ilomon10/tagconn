@@ -1,4 +1,4 @@
-import { OfficeLayoutSchema, type OfficeLayout } from '@tagconn/shared';
+import { LAYOUT_ID_RE, OfficeLayoutSchema, type OfficeLayout } from '@tagconn/shared';
 import { asc, desc, eq } from 'drizzle-orm';
 import type { Deps } from '../../core/di/index.js';
 import { schema } from '../../core/db/index.js';
@@ -56,5 +56,23 @@ export class LayoutsRepository {
 
   delete(id: string): boolean {
     return this.deps.db.delete(layouts).where(eq(layouts.id, id)).run().changes > 0;
+  }
+
+  /** Number of stored layouts (builtins included), for enforcing `office.maxStoredLayouts`. */
+  count(): number {
+    return this.deps.db.select({ id: layouts.id }).from(layouts).all().length;
+  }
+
+  /**
+   * Startup hygiene: a row whose id fails `LAYOUT_ID_RE` (e.g. written before the PUT route
+   * validated its URL param) also fails `OfficeLayoutSchema` on read, so `toLayout` skips it
+   * everywhere - it can never be listed, fetched or deleted through the API. Purge it instead.
+   */
+  purgeInvalidIds(): void {
+    for (const row of this.deps.db.select({ id: layouts.id }).from(layouts).all()) {
+      if (LAYOUT_ID_RE.test(row.id)) continue;
+      this.deps.logger.warn({ id: row.id }, 'purging stored layout with an invalid id');
+      this.deps.db.delete(layouts).where(eq(layouts.id, row.id)).run();
+    }
   }
 }

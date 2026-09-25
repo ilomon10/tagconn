@@ -90,8 +90,21 @@ export const LAYOUT_LIMITS = {
 
 // ------------------------------------------------------------------ schemas
 
-export const LAYOUT_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** Excludes `__proto__`/`constructor`/`prototype`: reserved JS property names that would otherwise
+ * be accepted as a layout id and could poison plain-object property lookups elsewhere. */
+export const LAYOUT_ID_RE = /^(?!__proto__$|constructor$|prototype$)[a-z0-9][a-z0-9-]{0,63}$/;
 export const ROOM_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
+
+/** Strips control characters and Unicode bidi-override/isolate marks (U+202A-U+202E, U+2066-U+2069)
+ * from user-entered names, so a saved layout/room name can't spoof direction or hide characters
+ * in the UI (e.g. an RTL-override trick). */
+const stripControlAndBidi = (s: string): string => s.replace(/[\p{Cc}‪-‮⁦-⁩]/gu, '');
+
+/** Trimmed, control/bidi-stripped display name, re-validated for length after stripping. */
+const NameSchema = z
+  .string()
+  .transform(stripControlAndBidi)
+  .pipe(z.string().trim().min(1).max(LAYOUT_LIMITS.maxNameLength));
 
 /**
  * A drawn room. (x, y, w, h) is the FOOTPRINT in tiles, including the wall ring for walled rooms.
@@ -105,7 +118,7 @@ export const LayoutRoomSchema = z.object({
   w: z.number().int().min(1),
   h: z.number().int().min(1),
   /** Display name override, e.g. "East Wing Workshop". Defaults to the style's zone name. */
-  name: z.string().trim().min(1).max(LAYOUT_LIMITS.maxNameLength).optional(),
+  name: NameSchema.optional(),
   /** Override the per-type wall default (`DEFAULT_WALLED_ROOM_TYPES`). */
   walled: z.boolean().optional(),
 });
@@ -119,7 +132,7 @@ export type LayoutBackground = (typeof LAYOUT_BACKGROUNDS)[number];
 export const OfficeLayoutInputSchema = z.object({
   /** Omit to let the server generate one (create). */
   id: z.string().regex(LAYOUT_ID_RE).optional(),
-  name: z.string().trim().min(1).max(LAYOUT_LIMITS.maxNameLength),
+  name: NameSchema,
   width: z.number().int().min(LAYOUT_LIMITS.minWidth).max(LAYOUT_LIMITS.maxWidth),
   height: z.number().int().min(LAYOUT_LIMITS.minHeight).max(LAYOUT_LIMITS.maxHeight),
   /** uint32 seed for furniture variation, corridor tie-breaks and decoration. */
@@ -134,10 +147,17 @@ export const OfficeLayoutInputSchema = z.object({
   rooms: z.array(LayoutRoomSchema).max(LAYOUT_LIMITS.maxRooms),
   /** Per-layout skin override; falls back to `settings.office.style`. */
   style: z.enum(OFFICE_STYLES).optional(),
+  /**
+   * Optimistic concurrency (M7 hardening). When set on a PUT, the server 409s if the stored
+   * `updatedAt` no longer matches (someone else saved first) or the layout was deleted meanwhile,
+   * instead of silently resurrecting it under the same id. Omit to keep the old create-or-replace
+   * behavior (backward compatible).
+   */
+  baseUpdatedAt: z.number().optional(),
 });
 export type OfficeLayoutInput = z.input<typeof OfficeLayoutInputSchema>;
 
-export const OfficeLayoutSchema = OfficeLayoutInputSchema.extend({
+export const OfficeLayoutSchema = OfficeLayoutInputSchema.omit({ baseUpdatedAt: true }).extend({
   id: z.string().regex(LAYOUT_ID_RE),
   /** Seeded by the server; read-only (duplicate to edit), cannot be deleted. */
   builtin: z.boolean().default(false),

@@ -31,7 +31,9 @@ export class SnapshotService {
       agents,
       tasks: d.tasksRepository.listRecent(since, pid),
       events: limit > 0 ? d.eventsRepository.list({ projectId: pid, limit }) : [],
-      // Layouts are global (M7), not per floor, so every snapshot carries the full list.
+      // Layouts are global (M7), not per floor, so every snapshot carries the full list; bounded
+      // by `office.maxStoredLayouts` (enforced on create), so this stays small by construction
+      // rather than being filtered down to referenced layouts here.
       layouts: d.layoutsRepository.list(),
     };
   }

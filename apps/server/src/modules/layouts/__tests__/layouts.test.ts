@@ -3,6 +3,7 @@ import { DEFAULT_LAYOUT, DEFAULT_LAYOUT_ID, OFFICE_NAMESPACE } from '@tagconn/sh
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../../app.js';
+import { schema } from '../../../core/db/index.js';
 import { buildTestApp, loadFixture } from '../../../../test/helpers.js';
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -44,7 +45,7 @@ describe('layouts module', () => {
     const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'East Wing' } });
     expect(res.statusCode).toBe(201);
     const created = res.json<OfficeLayout>();
-    expect(created.id).toMatch(/^east-wing-[0-9a-f]{4}$/);
+    expect(created.id).toMatch(/^east-wing-[0-9a-f]{8}$/);
     expect(created.builtin).toBe(false);
 
     const got = await app.inject({ url: `/api/layouts/${created.id}` });
@@ -117,6 +118,107 @@ describe('layouts module', () => {
     const cleared = await app.inject({ method: 'PATCH', url: `/api/projects/${project!.id}`, payload: { layoutId: null } });
     expect(cleared.statusCode).toBe(200);
     expect(cleared.json<Project>().layoutId).toBeUndefined();
+  });
+
+  it('rejects a PUT under an invalid or reserved URL id (400), instead of storing an unlistable row', async () => {
+    app = await buildTestApp();
+    const badChars = await app.inject({ method: 'PUT', url: '/api/layouts/BAD%20ID!', payload: { ...validInput, name: 'Bad' } });
+    expect(badChars.statusCode).toBe(400);
+
+    // Passes the old, looser id shape but is a reserved JS property name.
+    const reserved = await app.inject({ method: 'PUT', url: '/api/layouts/constructor', payload: { ...validInput, name: 'Bad' } });
+    expect(reserved.statusCode).toBe(400);
+
+    // Never got stored, so the list stays clean.
+    const list = (await app.inject({ url: '/api/layouts' })).json<OfficeLayout[]>();
+    expect(list.some((l) => l.id === 'constructor')).toBe(false);
+  });
+
+  it('purges stored rows with an invalid id on boot (old bug cleanup), leaving valid rows alone', async () => {
+    app = await buildTestApp();
+    const { db, layoutsRepository } = app.diContainer.cradle;
+    // Simulate a row written before the PUT route validated its URL param.
+    db.insert(schema.layouts).values({ id: 'BAD ID!', name: 'Junk', data: { ...validInput }, builtin: false, createdAt: 1, updatedAt: 1 }).run();
+    expect(db.select().from(schema.layouts).all().some((r) => r.id === 'BAD ID!')).toBe(true);
+
+    layoutsRepository.purgeInvalidIds();
+
+    expect(db.select().from(schema.layouts).all().some((r) => r.id === 'BAD ID!')).toBe(false);
+    expect(db.select().from(schema.layouts).all().some((r) => r.id === DEFAULT_LAYOUT_ID)).toBe(true);
+  });
+
+  it('enforces office.maxStoredLayouts with a 409 on create', async () => {
+    app = await buildTestApp({ settings: { office: { maxStoredLayouts: 1 } } });
+    // The seeded builtin already counts against the cap.
+    const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: { ...validInput, name: 'One Too Many' } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatch(/maxStoredLayouts/);
+  });
+
+  it('rejects settings.office.defaultLayoutId that is not an existing layout, and reserved names', async () => {
+    app = await buildTestApp();
+    const unknown = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { defaultLayoutId: 'nope-nope' } } });
+    expect(unknown.statusCode).toBe(400);
+
+    const reserved = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { defaultLayoutId: 'constructor' } } });
+    expect(reserved.statusCode).toBe(400);
+
+    const ok = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { office: { defaultLayoutId: DEFAULT_LAYOUT_ID } } });
+    expect(ok.statusCode).toBe(200);
+  });
+
+  it('PUT with baseUpdatedAt 409s on a lost update or a deleted layout, and is backward compatible without it', async () => {
+    app = await buildTestApp();
+    const created = (await app.inject({ method: 'PUT', url: '/api/layouts/concurrent-hall', payload: { ...validInput, name: 'V1' } })).json<OfficeLayout>();
+
+    // Stale baseUpdatedAt (someone else saved first, or the client is just out of date).
+    const stale = await app.inject({
+      method: 'PUT',
+      url: '/api/layouts/concurrent-hall',
+      payload: { ...validInput, name: 'V2', baseUpdatedAt: created.updatedAt - 1 },
+    });
+    expect(stale.statusCode).toBe(409);
+
+    // Matching baseUpdatedAt succeeds.
+    const fresh = await app.inject({
+      method: 'PUT',
+      url: '/api/layouts/concurrent-hall',
+      payload: { ...validInput, name: 'V2', baseUpdatedAt: created.updatedAt },
+    });
+    expect(fresh.statusCode).toBe(200);
+
+    // Deleted-then-resurrected: baseUpdatedAt against a gone layout 409s instead of recreating it.
+    await app.inject({ method: 'DELETE', url: '/api/layouts/concurrent-hall' });
+    const resurrect = await app.inject({
+      method: 'PUT',
+      url: '/api/layouts/concurrent-hall',
+      payload: { ...validInput, name: 'V3', baseUpdatedAt: fresh.json<OfficeLayout>().updatedAt },
+    });
+    expect(resurrect.statusCode).toBe(409);
+
+    // Without baseUpdatedAt, the old create-or-replace (recreate) behavior still works.
+    const recreated = await app.inject({ method: 'PUT', url: '/api/layouts/concurrent-hall', payload: { ...validInput, name: 'V4' } });
+    expect(recreated.statusCode).toBe(200);
+  });
+
+  it('socket layouts:get/delete validate the id and never leak internals in the ack error', async () => {
+    app = await buildTestApp();
+    socket = await connectSocket();
+
+    // Deliberately malformed, as a hostile/buggy client could send at runtime (the typed client can't).
+    const badGet = await new Promise<{ ok: boolean; error?: string }>((resolve) =>
+      socket!.emit('layouts:get', { not: 'a string' } as unknown as string, resolve),
+    );
+    expect(badGet.ok).toBe(false);
+
+    const badDelete = await new Promise<{ ok: boolean; error?: string }>((resolve) =>
+      socket!.emit('layouts:delete', 12345 as unknown as string, resolve),
+    );
+    expect(badDelete.ok).toBe(false);
+
+    const notFound = await new Promise<{ ok: boolean; error?: string }>((resolve) => socket!.emit('layouts:get', 'does-not-exist', resolve));
+    expect(notFound.ok).toBe(false);
+    expect(notFound.error).toMatch(/not found/i);
   });
 
   it('snapshot includes layouts', async () => {
