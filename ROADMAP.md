@@ -86,12 +86,12 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [x] Design A `docs/design/living-office.md` (8b, 8c, 8h, 8i) + `heroes.ts`, `multiverse.ts`  [Architect A]
 - [x] Design B `docs/design/runner-and-helpdesk.md` (8j, 8k, 8l, 8m) + `runner.ts`, `receptionist.ts`, `auth.ts`, `attribution.ts`  [Architect B]
 - [x] SC1 security design review: approve with 10 required changes (mutual HMAC runner auth, exact --tools/--restricted Receptionist, bwrap redesign, CLI-trust gate + host quest policy, fail-closed gating, docs-only add-dir, CSP, WebFetch allowlist, mode mapping, import never touches roles)  [Security]
-- [~] Design B revision per SC1  [Architect B]
+- [x] Design B revision per SC1 (rev 2; 10 items TBD by SC3)  [Architect B]
 - [~] SC3 empirical CLI verification (real CLI, sandboxed, haiku)  [QA]
 - [x] Contract patch A (heroes, pm mode, multiverse) applied  [PM]
 - [ ] Contract patch B (runner/auth/receptionist/attribution) after the SC1 revision + SC3  [PM]
-- [~] Wave A1: H1 server heroes · W2 web hero data · W3 cast resolver · W4 hero look/preview · W6 multiverse plan + rift theme
-- [ ] Wave A2: W5 hero editor UI · W7a scene integration · W7b React bridge + floors
+- [~] Wave A1: H1 server heroes [~] · W2 web hero data [x] · W3 cast resolver [x] · W4 hero look/preview [x] · W6 multiverse plan + rift theme [x]
+- [~] Wave A2: W5 hero editor UI [~] · W7a scene integration [~] · W7b React bridge + floors [~]
 User request: no stale characters, one clear PM per floor, reuse idle characters, glow on the selected character, bubbles that never overlap, and UX best practice for showing characters and the office.
 Diagnosis (live data, 2026-09-25): subagents whose SubagentStop never arrived (killed or lost background agents) stay "active/idle" in the lounge forever
 (the sweeper only moves them to the lounge); each Claude session has its own PM, and idle or abandoned sessions only end after `sessions.endAfterSec` (30 min),
