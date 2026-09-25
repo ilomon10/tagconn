@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { TokenUsage } from '@tagconn/shared';
-import { contextRatio, contextWindowFor, sumUsage, totalTokens } from './tokens';
+import type { Agent, TokenUsage } from '@tagconn/shared';
+import { contextRatio, contextWindowFor, sumFloorUsage, sumUsage, totalTokens } from './tokens';
 
 const usage = (over: Partial<TokenUsage> = {}): TokenUsage => ({
   inputTokens: 100,
@@ -47,26 +47,49 @@ describe('totalTokens', () => {
   });
 });
 
-describe('sumUsage', () => {
-  it('sums numeric fields and ignores missing entries', () => {
-    const sum = sumUsage([usage(), undefined, usage({ inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, messages: 1, contextTokens: 10 })]);
+const agent = (over: Partial<Pick<Agent, 'isMain' | 'usage'>> = {}): Pick<Agent, 'isMain' | 'usage'> => ({ isMain: false, usage: usage(), ...over });
+
+describe('sumUsage (one session: main agent + its subagents)', () => {
+  it('sums the four counted fields across every agent, but takes contextTokens/model from the main agent only', () => {
+    const main = agent({ isMain: true, usage: usage({ contextTokens: 175, model: 'claude-opus-5' }) });
+    const sub = agent({ isMain: false, usage: usage({ inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, messages: 1, contextTokens: 999_999, model: 'claude-haiku-4' }) });
+    const sum = sumUsage([main, sub]);
     expect(sum).toEqual({
       inputTokens: 110,
       outputTokens: 200,
       cacheReadTokens: 50,
       cacheCreationTokens: 25,
       messages: 4,
-      contextTokens: 185,
-      model: undefined,
+      contextTokens: 175, // the main agent's, never the subagent's 999_999
+      model: 'claude-opus-5',
+    });
+  });
+
+  it('ignores agents with no usage yet', () => {
+    const sum = sumUsage([agent({ isMain: true, usage: undefined }), agent({ isMain: false, usage: usage() })]);
+    expect(sum).toMatchObject({ inputTokens: 100, contextTokens: 0, model: undefined });
+  });
+
+  it('returns zeroed usage (contextTokens 0, no model) for an empty list or no main agent', () => {
+    expect(sumUsage([])).toEqual({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, messages: 0, contextTokens: 0, model: undefined });
+    expect(sumUsage([agent({ isMain: false })]).contextTokens).toBe(0);
+  });
+});
+
+describe('sumFloorUsage (independent sessions on a floor)', () => {
+  it('sums the four counted fields across sessions, but takes contextTokens as the largest single session, never their sum', () => {
+    const sum = sumFloorUsage([usage({ contextTokens: 175 }), undefined, usage({ inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, messages: 1, contextTokens: 900_000 })]);
+    expect(sum).toEqual({
+      inputTokens: 110,
+      outputTokens: 200,
+      cacheReadTokens: 50,
+      cacheCreationTokens: 25,
+      messages: 4,
+      contextTokens: 900_000, // the larger of the two sessions', not 175 + 900_000
     });
   });
 
   it('returns zeroed usage for an empty list', () => {
-    expect(sumUsage([])).toEqual({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, messages: 0, contextTokens: 0 });
-  });
-
-  it('keeps the first defined model', () => {
-    const sum = sumUsage([usage({ model: undefined }), usage({ model: 'claude-sonnet-5' }), usage({ model: 'claude-haiku-4' })]);
-    expect(sum.model).toBe('claude-sonnet-5');
+    expect(sumFloorUsage([])).toEqual({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, messages: 0, contextTokens: 0 });
   });
 });

@@ -10,6 +10,15 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 ### Added
 - Design spec and contract for the "Magic Guild Hall": medieval guild style, office editor with procedural generation, stairs between floors (work in progress).
 - Server `layouts` module (M7 7b): CRUD for office layouts over REST (`/api/layouts`) and socket (`layouts:list|get|save|delete|assign`), a seeded read-only default layout, `PATCH /api/projects/:id { layoutId }` to assign or clear a floor's layout, deleting a layout clears it from the projects that used it, and the snapshot now carries `layouts`.
+- `transcripts.{maxLineBytes,maxFileBytes,maxTrackedFiles}` settings to bound the wave-2 hardening below.
+
+### Security
+- `transcripts` module: transcript reads now re-validate that the file's real, symlink-free path stays under `projectsDir` on *every* read (not just when the path was first registered), closing a TOCTOU window where a tracked path could be swapped for a symlink after tracking started; reads also reject a symlinked leaf outright (`O_NOFOLLOW`) and a FIFO planted at a tracked path (`O_NONBLOCK` + `fstat` instead of stat-then-open). A symlinked `projectsDir` itself now works correctly (both sides are realpath'd).
+- `transcripts`: a partial (unterminated) transcript line is now capped at `transcripts.maxLineBytes` instead of buffering forever (memory DoS), and a file stops being read past `transcripts.maxFileBytes`. The number of concurrently tracked transcript files is capped at `transcripts.maxTrackedFiles` with LRU eviction, and tracking now requires a live agent/session row and the file to already exist. `session_id`/`agent_id` are validated against a strict id shape before any path is built from them, and tracked files are keyed by `sessionId:agentId` with a same-session check before applying usage, so one session's hook can no longer overwrite another session's agent usage (or a removed agent's).
+
+### Fixed
+- `transcripts`: `applyAgentUsage` no longer emits `agent:upsert` (or re-tracks a file) for an agent that's already off the floor (`removed`); a multi-byte UTF-8 character split across two transcript reads now decodes correctly via a per-file streaming decoder instead of occasionally producing a replacement character; numeric usage counts are clamped and `model` is sanitized/truncated.
+- Web: the floor-usage badge no longer sums `contextTokens` across independent sessions (which was a meaningless number); it now shows the largest single session's context, with a tooltip that says so. `sumUsage` (one session's main + subagents) is unchanged in semantics but now matches the server exactly, taking `contextTokens`/`model` from the main agent only. "Manage floors": pressing Escape in a floor's rename field now blurs it too, instead of leaving it focused with the reverted name.
 
 ## [0.1.0] - 2026-09-25
 

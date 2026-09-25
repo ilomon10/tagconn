@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Project } from '@tagconn/shared';
 import { useOfficeStore, visibleProjects } from '../../stores/officeStore';
 import { patchProject } from '../../lib/commands';
@@ -8,11 +8,20 @@ function FloorRow({ project }: { project: Project }) {
   const [name, setName] = useState(project.name);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Escape blurs the input to give clear "cancelled" feedback, but blur fires onBlur (rename)
+  // synchronously, before the setName(project.name) reset above it has been re-rendered — so rename()
+  // would otherwise still see the stale, pre-Escape text and save it. This flag makes that one blur a
+  // no-op instead.
+  const cancelledRef = useRef(false);
 
   // Adopt renames that land from elsewhere (another tab, or the server) while this input is idle.
   useEffect(() => setName(project.name), [project.name]);
 
   const rename = async () => {
+    if (cancelledRef.current) {
+      cancelledRef.current = false;
+      return;
+    }
     const trimmed = name.trim();
     if (!trimmed || trimmed === project.name) {
       setName(project.name);
@@ -53,7 +62,11 @@ function FloorRow({ project }: { project: Project }) {
           onBlur={rename}
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.currentTarget.blur();
-            if (e.key === 'Escape') setName(project.name);
+            if (e.key === 'Escape') {
+              cancelledRef.current = true;
+              setName(project.name);
+              e.currentTarget.blur();
+            }
           }}
         />
         {project.archived && <Badge className="shrink-0 bg-ink-700 text-ink-400">archived</Badge>}

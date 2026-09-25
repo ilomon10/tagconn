@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import type { Agent, TokenUsage } from '@tagconn/shared';
 import type { Deps } from '../../core/di/index.js';
 import type { HookContext } from '../../core/event-bus/index.js';
@@ -5,9 +6,16 @@ import { mainAgentId, publicAgent } from '../agents/index.js';
 import { createReadState, readTranscriptUsage, type TranscriptReadState } from './transcripts.parser.js';
 import { resolveHookTranscriptPath, subagentTranscriptPath } from './transcripts.paths.js';
 
+/** Claude Code's own session/agent ids; also the shape we build filesystem paths out of, so anything
+ *  that doesn't match this is rejected before it ever reaches a `join()`. */
+const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
 interface TrackedFile {
-  path: string;
+  /** The agentsRepository row id this file's usage belongs to ('main:<sessionId>' or Claude's agent_id). */
+  agentId: string;
+  /** The session this file was tracked under; usage is only ever applied if the agent still agrees. */
   sessionId: string;
+  path: string;
   state: TranscriptReadState;
   timer?: NodeJS.Timeout;
 }
@@ -44,11 +52,16 @@ function sumUsage(agents: Pick<Agent, 'isMain' | 'usage'>[]): TokenUsage | undef
  * subagent, if any) and schedules a debounced re-read of them. Hooks fire on effectively every turn
  * (PreToolUse/PostToolUse bracket each tool call), so this catches new usage within `debounceMs` of it
  * landing without a second file-watching subsystem, extra inotify/FD usage, or watcher-vs-poll edge
- * cases (e.g. events missed across a Docker bind mount) to reason about. SubagentStop/SessionEnd force
- * one final synchronous read before we stop tracking a file, so nothing is lost to a pending debounce.
+ * cases (e.g. events missed across a Docker bind mount) to reason about. SubagentStop forces one final
+ * synchronous read before we stop tracking a file; SessionEnd defers its final reads (see
+ * `finalizeSession`) so a burst of session-end hooks never blocks the request that triggered them.
+ *
+ * Tracked files are keyed by `${sessionId}:${agentId}` (not `agentId` alone): Claude's `agent_id` has no
+ * uniqueness guarantee across sessions, and `applyAgentUsage` additionally refuses to apply usage unless
+ * the agent row's own `sessionId` still agrees, so a hook claiming someone else's `agent_id` under a
+ * different session can never overwrite that agent's real usage.
  */
 export class TranscriptsService {
-  /** Keyed by agentId: 'main:<sessionId>' for the main session, otherwise Claude's agent_id. */
   private readonly files = new Map<string, TrackedFile>();
 
   constructor(private readonly deps: TranscriptsDeps) {}
@@ -63,89 +76,154 @@ export class TranscriptsService {
     this.stop();
   }
 
+  /** Bus `agent.removed`: stop tracking that agent's file(s), across any session. */
+  untrackAgent(agentId: string): void {
+    for (const key of [...this.files.keys()]) {
+      if (this.files.get(key)?.agentId === agentId) this.untrack(key);
+    }
+  }
+
+  /**
+   * Bus `session.upserted` (status 'ended') and the SessionEnd hook both converge here. Whichever
+   * fires first does the real work (final read + untrack for every file of this session); the other is
+   * a safe no-op, since by then nothing is left tracked for the session. Called via `setImmediate` from
+   * both call sites so it never runs synchronously on the request that triggered it.
+   */
+  finalizeSession(sessionId: string): void {
+    for (const key of [...this.files.keys()]) {
+      const f = this.files.get(key);
+      if (!f || f.sessionId !== sessionId) continue;
+      this.readNow(key);
+      this.untrack(key);
+    }
+  }
+
   onHook(ctx: HookContext): void {
     if (!this.deps.settings.get().transcripts.enabled) return;
     const p = ctx.payload;
+    if (!ID_RE.test(ctx.sessionId)) return; // not a shape we'll ever build a safe path out of
     const projectsDir = this.deps.settings.get().paths.projectsDir;
     const mainId = mainAgentId(ctx.sessionId);
+    const mainKey = this.key(ctx.sessionId, mainId);
 
     const mainPath = resolveHookTranscriptPath(p.transcript_path, projectsDir);
     if (mainPath) this.ensure(mainId, ctx.sessionId, mainPath);
 
-    let subId: string | undefined;
-    if (p.agent_id) {
-      subId = p.agent_id;
+    let subKey: string | undefined;
+    if (p.agent_id && ID_RE.test(p.agent_id)) {
       const subPath =
         resolveHookTranscriptPath(p.agent_transcript_path, projectsDir) ??
         (mainPath ? subagentTranscriptPath(mainPath, ctx.sessionId, p.agent_id, projectsDir) : undefined);
-      if (subPath) this.ensure(subId, ctx.sessionId, subPath);
+      if (subPath) this.ensure(p.agent_id, ctx.sessionId, subPath);
+      subKey = this.key(ctx.sessionId, p.agent_id);
     }
 
-    if (subId) {
+    if (subKey) {
       if (p.hook_event_name === 'SubagentStop') {
-        this.readNow(subId);
-        this.untrack(subId);
-      } else if (this.files.has(subId)) {
-        this.schedule(subId);
+        this.readNow(subKey);
+        this.untrack(subKey);
+      } else if (this.files.has(subKey)) {
+        this.schedule(subKey);
       }
     }
 
     if (p.hook_event_name === 'SessionEnd') {
-      // Final read for every file still tracked for this session (main + any subagent that never
-      // got its own SubagentStop, e.g. a crashed/killed CLI), then stop tracking all of them.
-      for (const id of [...this.files.keys()]) {
-        if (this.files.get(id)?.sessionId !== ctx.sessionId) continue;
-        this.readNow(id);
-        this.untrack(id);
-      }
-    } else if (this.files.has(mainId)) {
-      this.schedule(mainId);
+      // Off the request path: a burst of SessionEnd hooks (main + every still-tracked subagent) must
+      // never block the HTTP response on synchronous transcript reads.
+      setImmediate(() => this.finalizeSession(ctx.sessionId));
+    } else if (this.files.has(mainKey)) {
+      this.schedule(mainKey);
     }
   }
 
+  private key(sessionId: string, agentId: string): string {
+    return `${sessionId}:${agentId}`;
+  }
+
+  /** Only tracks a file when there's a live agent/session row for it and the file actually exists yet;
+   *  never (re-)tracks a file for an agent that's already off the floor (`removed`). */
   private ensure(agentId: string, sessionId: string, path: string): void {
-    const existing = this.files.get(agentId);
-    if (existing && existing.path === path) return; // same file already tracked: keep offset/dedupe state
+    if (!existsSync(path)) return;
+    if (!this.deps.sessionsRepository.get(sessionId)) return;
+    const agent = this.deps.agentsRepository.get(agentId);
+    if (!agent || agent.removed) return;
+
+    const key = this.key(sessionId, agentId);
+    const existing = this.files.get(key);
+    if (existing && existing.path === path) {
+      this.touch(key); // same file already tracked: keep offset/dedupe state, just bump LRU order
+      return;
+    }
     clearTimeout(existing?.timer);
-    this.files.set(agentId, { path, sessionId, state: createReadState() });
+    this.files.set(key, { agentId, sessionId, path, state: createReadState() });
+    this.evictLeastRecentlyUsed();
   }
 
-  private untrack(agentId: string): void {
-    clearTimeout(this.files.get(agentId)?.timer);
-    this.files.delete(agentId);
+  private untrack(key: string): void {
+    clearTimeout(this.files.get(key)?.timer);
+    this.files.delete(key);
   }
 
-  private schedule(agentId: string): void {
-    const f = this.files.get(agentId);
+  /** Bumps `key` to most-recently-used (Map iteration order doubles as LRU order). */
+  private touch(key: string): void {
+    const f = this.files.get(key);
+    if (!f) return;
+    this.files.delete(key);
+    this.files.set(key, f);
+  }
+
+  /** Caps the number of concurrently tracked files: an attacker who controls `agent_id` must not be
+   *  able to grow this map without bound (each entry holds an open read cursor + per-message usage). */
+  private evictLeastRecentlyUsed(): void {
+    const cap = this.deps.settings.get().transcripts.maxTrackedFiles;
+    while (this.files.size > cap) {
+      const oldest = this.files.keys().next().value;
+      if (oldest === undefined) break;
+      this.deps.logger.warn({ key: oldest, cap }, 'transcripts: maxTrackedFiles exceeded, evicting least-recently-used file');
+      this.untrack(oldest);
+    }
+  }
+
+  private schedule(key: string): void {
+    const f = this.files.get(key);
     if (!f) return;
     clearTimeout(f.timer);
     const ms = this.deps.settings.get().transcripts.debounceMs;
     f.timer = setTimeout(() => {
       f.timer = undefined;
-      this.readNow(agentId);
+      this.readNow(key);
     }, ms);
     f.timer.unref();
   }
 
-  private readNow(agentId: string): void {
-    const f = this.files.get(agentId);
+  private readNow(key: string): void {
+    const f = this.files.get(key);
     if (!f) return;
     clearTimeout(f.timer);
     f.timer = undefined;
+    const { maxLineBytes, maxFileBytes } = this.deps.settings.get().transcripts;
+    const projectsDir = this.deps.settings.get().paths.projectsDir;
     let usage: TokenUsage | undefined;
     try {
-      usage = readTranscriptUsage(f.path, f.state);
+      usage = readTranscriptUsage(f.path, f.state, projectsDir, { maxLineBytes, maxFileBytes }, () =>
+        this.deps.logger.warn({ path: f.path, maxFileBytes }, 'transcripts: file exceeds maxFileBytes, no longer reading new bytes'),
+      );
     } catch (err) {
       this.deps.logger.warn({ err, path: f.path }, 'failed to read transcript');
       return;
     }
-    if (this.applyAgentUsage(agentId, usage)) this.recomputeSessionUsage(f.sessionId);
+    if (this.applyAgentUsage(f.agentId, f.sessionId, usage)) this.recomputeSessionUsage(f.sessionId);
   }
 
-  /** Returns true when the agent's usage actually changed (so the caller knows to recompute the session). */
-  private applyAgentUsage(agentId: string, usage: TokenUsage | undefined): boolean {
+  /**
+   * Returns true when the agent's usage actually changed (so the caller knows to recompute the
+   * session). Refuses for an agent that's no longer on the floor (`removed`) and for one whose *true*
+   * owning session (its own `sessionId`) doesn't match the session this file was tracked under — the
+   * cross-session hijack guard described on the class doc.
+   */
+  private applyAgentUsage(agentId: string, sessionId: string, usage: TokenUsage | undefined): boolean {
     const agent = this.deps.agentsRepository.get(agentId);
-    if (!agent || equalUsage(agent.usage, usage)) return false;
+    if (!agent || agent.removed || agent.sessionId !== sessionId || equalUsage(agent.usage, usage)) return false;
     this.deps.agentsRepository.updateUsage(agentId, usage);
     this.deps.bus.emit('agent.upserted', publicAgent({ ...agent, usage }));
     return true;

@@ -102,6 +102,20 @@ export const SettingsSchema = z.object({
       enabled: z.boolean().default(true),
       /** Coalesce re-reads of a changing transcript file. */
       debounceMs: z.number().int().min(100).default(1500),
+      /** A single transcript line (partial or not) longer than this is dropped, not buffered forever. */
+      maxLineBytes: z
+        .number()
+        .int()
+        .min(1024)
+        .default(1024 * 1024),
+      /** Stop tracking new bytes past this many per file (guards against an unbounded/adversarial transcript). */
+      maxFileBytes: z
+        .number()
+        .int()
+        .min(1024 * 1024)
+        .default(256 * 1024 * 1024),
+      /** Cap on concurrently tracked transcript files (LRU-evicted beyond this). */
+      maxTrackedFiles: z.number().int().min(1).default(256),
     })
     .prefault({}),
   activity: z.object({ rules: z.array(ActivityRuleSchema).default(DEFAULT_ACTIVITY_RULES) }).prefault({}),

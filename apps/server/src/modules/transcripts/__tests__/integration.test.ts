@@ -127,6 +127,9 @@ describe('transcripts: reads token usage from JSONL and mirrors it onto agent/se
     await post({ session_id: SESSION, cwd: CWD, hook_event_name: 'Stop', transcript_path: hostMainPath } as HookPayload);
     await post({ session_id: SESSION, cwd: CWD, hook_event_name: 'SessionEnd', transcript_path: hostMainPath } as HookPayload);
 
+    // SessionEnd's final read is deferred off the request path (setImmediate), so give it a tick.
+    await wait(20);
+
     // SessionEnd also forces a final synchronous read (of the main transcript here) before untracking.
     snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
     expect(snap.agents.find((a) => a.id === `main:${SESSION}`)?.usage).toMatchObject({ inputTokens: 14, outputTokens: 26, messages: 2 });

@@ -3,7 +3,7 @@ import { ALL_FLOORS, onFloor, useOfficeStore, visibleProjects, type ConnectionSt
 import { enterDemo, exitDemo, startLive } from '../lib/connection';
 import { notificationsSupported, requestNotificationPermission } from '../lib/notify';
 import { formatTokens } from '../lib/format';
-import { sumUsage, totalTokens } from '../lib/tokens';
+import { sumFloorUsage, totalTokens } from '../lib/tokens';
 import { FloorManager } from '../features/office/FloorManager';
 import { Button, Select, cx } from '../components/ui';
 
@@ -58,13 +58,15 @@ function FloorUsage() {
   const selected = useOfficeStore((s) => s.selectedProjectId);
   const usage = useMemo(() => {
     const active = Object.values(sessions).filter((s) => s.status === 'active' && onFloor(selected, s.projectId));
-    return sumUsage(active.map((s) => s.usage));
+    // Sessions are independent conversations: input/output/cache/messages add up across them, but
+    // contextTokens does not — see sumFloorUsage.
+    return sumFloorUsage(active.map((s) => s.usage));
   }, [sessions, selected]);
   if (usage.messages === 0) return null;
   return (
     <span
       className="hidden items-center gap-1 rounded-full bg-ink-800 px-2.5 py-1 text-[11px] text-ink-400 sm:flex"
-      title={`${formatTokens(usage.contextTokens)} context tokens · ${usage.messages} messages this floor`}
+      title={`${formatTokens(usage.contextTokens)} context tokens in the fullest session · ${usage.messages} messages this floor`}
     >
       {formatTokens(totalTokens(usage))} tok
     </span>

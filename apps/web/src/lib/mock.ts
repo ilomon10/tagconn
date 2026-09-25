@@ -86,7 +86,7 @@ function makeHelpers(ctx: Ctx) {
     const session = office().sessions[a.sessionId];
     if (session) {
       const mates = Object.values(office().agents).filter((x) => x.sessionId === a.sessionId);
-      office().upsertSession({ ...session, usage: sumUsage(mates.map((x) => x.usage)) });
+      office().upsertSession({ ...session, usage: sumUsage(mates) });
     }
   };
 

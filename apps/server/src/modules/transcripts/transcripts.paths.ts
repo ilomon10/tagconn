@@ -19,9 +19,12 @@ function mapHostPath(reportedPath: string, projectsDir: string): string | undefi
 }
 
 /**
- * True when `path` (with `..` collapsed, and `projectsDir` resolved through any symlink) resolves
- * inside `projectsDir`. Returns the resolved absolute path, or undefined if it escapes/doesn't apply.
- * This is the one security boundary for transcript reads: never read outside `projectsDir`.
+ * True when `path` (with `..` collapsed) resolves inside `projectsDir`. Returns the resolved absolute
+ * path, or undefined if it escapes/doesn't apply. Both sides are realpath'd when possible, so a
+ * symlinked `projectsDir` (or a candidate reached through one) still matches correctly. This is only
+ * the registration-time gate (decides whether a path is worth tracking at all); the actual read path
+ * (`readTranscriptUsage`) re-validates the real, symlink-free path on every read, which is the one
+ * security boundary that matters against a path swapped out from under an already-tracked file.
  */
 function withinProjectsDir(path: string, projectsDir: string): string | undefined {
   let root: string;
@@ -30,7 +33,13 @@ function withinProjectsDir(path: string, projectsDir: string): string | undefine
   } catch {
     return undefined; // projectsDir doesn't exist (yet): nothing can be safely read
   }
-  const resolved = resolve(path);
+  let resolved = resolve(path);
+  try {
+    resolved = realpathSync(resolved); // best-effort: resolves symlinks when the candidate already exists
+  } catch {
+    // Candidate doesn't exist yet (e.g. a subagent transcript not created yet): keep the lexical path,
+    // still checked against `root` below.
+  }
   if (resolved !== root && !resolved.startsWith(root + sep)) return undefined;
   return resolved;
 }

@@ -22,6 +22,13 @@ export const transcriptsModule = fp(
     bus.on('settings.changed', ({ changed }) => {
       if (changed.includes('transcripts.enabled') && !settings.get().transcripts.enabled) transcriptsService.disable();
     });
+    // Backstop for sessions/agents that never got an explicit SessionEnd/SubagentStop (e.g. a
+    // crashed/killed CLI): the sessions/agents sweepers eventually mark them ended/removed from a
+    // timer, not a hook, so this is the only place that stops tracking their files.
+    bus.on('agent.removed', ({ id }) => transcriptsService.untrackAgent(id));
+    bus.on('session.upserted', (s) => {
+      if (s.status === 'ended') setImmediate(() => transcriptsService.finalizeSession(s.id));
+    });
     app.addHook('onClose', async () => transcriptsService.stop());
   },
   { name: 'transcripts', dependencies: ['core-di', 'agents', 'sessions'] },
