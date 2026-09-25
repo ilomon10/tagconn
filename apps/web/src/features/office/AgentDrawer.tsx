@@ -1,5 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
 import { useOfficeStore } from '../../stores/officeStore';
+import { useHeroStore } from '../../stores/heroStore';
+import { useHeroPanelStore } from '../heroes/store';
 import { useNow, useRoleLookup } from '../../lib/hooks';
 import { clock, elapsed, formatTokens } from '../../lib/format';
 import { contextRatio, contextWindowFor } from '../../lib/tokens';
@@ -34,10 +36,15 @@ export function AgentDrawer({
   const tasks = useOfficeStore((s) => s.tasks);
   const session = useOfficeStore((s) => (agent ? s.sessions[agent.sessionId] : undefined));
   const project = useOfficeStore((s) => (agent ? s.projects[agent.projectId] : undefined));
+  const heroes = useHeroStore((s) => s.heroes);
+  const openHeroEditor = useHeroPanelStore((s) => s.openHeroEditor);
   const lookup = useRoleLookup();
   const now = useNow();
   const recent = useMemo(() => events.filter((e) => e.agentId === agentId).slice(-12).reverse(), [events, agentId]);
   const myTasks = useMemo(() => Object.values(tasks).filter((t) => t.assigneeAgentId === agentId), [tasks, agentId]);
+  // M8 8i: the hero (persistent named character, docs/design/living-office.md) currently bound to
+  // this agent, if any — heroes are broadcast to every client, so a plain scan of the store is cheap.
+  const hero = useMemo(() => Object.values(heroes).find((h) => h.boundAgentId === agentId), [heroes, agentId]);
 
   const role = lookup(agent?.role);
   return (
@@ -63,6 +70,19 @@ export function AgentDrawer({
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
           <dl className="divide-y divide-ink-700/60">
+            {hero && (
+              <Row label="Hero">
+                <div className="flex items-center gap-2">
+                  <Badge>
+                    {hero.name}
+                    {hero.title ? ` · ${hero.title}` : ''}
+                  </Badge>
+                  <Button variant="ghost" className="ml-auto shrink-0" onClick={() => openHeroEditor(hero)}>
+                    Edit hero
+                  </Button>
+                </div>
+              </Row>
+            )}
             {agent.description && <Row label="Task">{agent.description}</Row>}
             <Row label="Status">
               <Badge>{agent.status}</Badge> <Badge>{agent.activity}</Badge>

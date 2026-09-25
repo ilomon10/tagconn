@@ -1,13 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ALL_FLOORS, onFloor, useOfficeStore, visibleProjects, type ConnectionState } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { enterDemo, exitDemo, startLive } from '../lib/connection';
 import { notificationsSupported, requestNotificationPermission } from '../lib/notify';
 import { formatTokens } from '../lib/format';
 import { sumFloorUsage, totalTokens } from '../lib/tokens';
-import { floorNeighbors, floorsInOrder } from '../lib/floors';
+import { floorNeighbors, floorsInOrder, isModalOpen, isTypingTarget } from '../lib/floors';
 import { officeNavBus } from '../game/OfficeGame';
 import { FloorManager } from '../features/office/FloorManager';
+import { HeroPanel } from '../features/heroes/HeroPanel';
+import { defaultHeroFloor } from '../features/heroes/formState';
+import { useHeroPanelStore } from '../features/heroes/store';
 import { Button, Select, cx } from '../components/ui';
 
 export type Tab = 'office' | 'board' | 'log' | 'roles' | 'settings';
@@ -138,6 +141,41 @@ function ConnectionBadge() {
   );
 }
 
+/**
+ * Opens the Heroes editor (docs/design/living-office.md section 3.4) on the current floor, or the
+ * first floor in stairs order for the Multiverse. The `H` hotkey mirrors the same guards every other
+ * floor hotkey uses (`lib/floors.ts`): ignored while typing, and while any modal — including the
+ * Heroes panel itself — is already open.
+ */
+function HeroesButton() {
+  const projects = useOfficeStore((s) => s.projects);
+  const selected = useOfficeStore((s) => s.selectedProjectId);
+  const floorOrder = useSettingsStore((s) => s.settings.office.floorOrder);
+  const openHeroes = useHeroPanelStore((s) => s.openHeroes);
+
+  const open = () => {
+    const floor = defaultHeroFloor(projects, selected, floorOrder);
+    if (floor) openHeroes(floor);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'h' || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTypingTarget(e.target) || isModalOpen()) return;
+      open();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, selected, floorOrder]);
+
+  return (
+    <Button variant="ghost" onClick={open} disabled={!defaultHeroFloor(projects, selected, floorOrder)} title="Named characters for this floor (H)">
+      Heroes
+    </Button>
+  );
+}
+
 function NotifyButton() {
   const [perm, setPerm] = useState(() => (notificationsSupported() ? Notification.permission : 'denied'));
   if (!notificationsSupported() || perm !== 'default') return null;
@@ -157,33 +195,40 @@ function NotifyButton() {
 
 export function TopBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
   return (
-    <header className="flex h-12 shrink-0 items-center gap-4 border-b border-ink-700 bg-ink-900 px-4">
-      <div className="flex items-center gap-2">
-        <span className="grid size-6 place-items-center rounded bg-cozy text-[11px] font-black text-ink-950">tc</span>
-        <span className="font-pixel text-sm font-semibold tracking-tight text-ink-100">tagconn</span>
-      </div>
-      <FloorSelect />
-      <FloorIndicator />
-      <nav className="flex items-center gap-0.5 rounded-lg bg-ink-850 p-0.5">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => onTab(t.id)}
-            className={cx(
-              'rounded-md px-3 py-1 text-xs transition',
-              tab === t.id ? 'bg-ink-600 text-ink-100 shadow' : 'text-ink-400 hover:text-ink-100',
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
-      <div className="ml-auto flex items-center gap-2">
-        <FloorUsage />
-        <NotifyButton />
-        <ConnectionBadge />
-      </div>
-    </header>
+    <>
+      <header className="flex h-12 shrink-0 items-center gap-4 border-b border-ink-700 bg-ink-900 px-4">
+        <div className="flex items-center gap-2">
+          <span className="grid size-6 place-items-center rounded bg-cozy text-[11px] font-black text-ink-950">tc</span>
+          <span className="font-pixel text-sm font-semibold tracking-tight text-ink-100">tagconn</span>
+        </div>
+        <FloorSelect />
+        <FloorIndicator />
+        <nav className="flex items-center gap-0.5 rounded-lg bg-ink-850 p-0.5">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onTab(t.id)}
+              className={cx(
+                'rounded-md px-3 py-1 text-xs transition',
+                tab === t.id ? 'bg-ink-600 text-ink-100 shadow' : 'text-ink-400 hover:text-ink-100',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+        <HeroesButton />
+        <div className="ml-auto flex items-center gap-2">
+          <FloorUsage />
+          <NotifyButton />
+          <ConnectionBadge />
+        </div>
+      </header>
+      {/* Mounted here (rather than App.tsx) because TopBar is always present regardless of the active
+          tab, and the panel is opened from three subtrees that share no closer common parent — see
+          `features/heroes/store.ts`. */}
+      <HeroPanel />
+    </>
   );
 }

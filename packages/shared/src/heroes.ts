@@ -170,7 +170,7 @@ export const DEFAULT_HERO_NAME_POOLS: HeroNamePools = {
   'qa-engineer': ['Hazel', 'Alaric', 'Brewin', 'Saffi', 'Tansy', 'Mortimer', 'Juniper', 'Cobb'],
   'code-reviewer': ['Ambrose', 'Wren', 'Ottilie', 'Ferris', 'Mabel', 'Silas', 'Verity', 'Jory'],
   'security-engineer': ['Aldous', 'Brienne', 'Cedric', 'Gwendolyn', 'Roderick', 'Ysolt', 'Tristan', 'Hale'],
-  devops: ['Thorgrim', 'Anvil', 'Greta', 'Bram', 'Sigrun', 'Durin', 'Kettle', 'Ingrid'],
+  'devops-engineer': ['Thorgrim', 'Anvil', 'Greta', 'Bram', 'Sigrun', 'Durin', 'Kettle', 'Ingrid'],
   'tech-writer': ['Lyra', 'Emrys', 'Calliope', 'Finnian', 'Rosalind', 'Taliesin', 'Oriel', 'Bardolph'],
   [HERO_DEFAULT_POOL_KEY]: ['Rook', 'Ember', 'Ash', 'Briar', 'Colm', 'Dara', 'Esk', 'Fable', 'Gale', 'Heath'],
 };

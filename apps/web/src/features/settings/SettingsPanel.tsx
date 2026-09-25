@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { HOOK_EVENTS, MASKED_SECRET, SettingsSchema, type ActivityRule, type Settings } from '@tagconn/shared';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useOfficeStore } from '../../stores/officeStore';
 import { resetSettings, updateSettings } from '../../lib/commands';
 import { diffSettings, isGuiImmutable, isRestartRequired, patchKeys, restartKeysIn } from '../../lib/settingsPatch';
 import type { Rect } from '../../game/map/officeMap';
+import { defaultHeroFloor } from '../heroes/formState';
+import { useHeroPanelStore } from '../heroes/store';
 import { Badge, Button, Checkbox, Field, Input, Panel, Select, Textarea } from '../../components/ui';
-import { ENUM_OPTIONS, KEY_HINTS, NUMBER_STEP, SECTION_LABELS, humanize } from './meta';
+import { ENUM_OPTIONS, HIDDEN_SETTINGS, KEY_HINTS, NUMBER_STEP, SECTION_LABELS, humanize } from './meta';
 import { RulesTable } from './RulesTable';
 import { KeyValueEditor, ZoneRectsEditor } from './RecordEditors';
+
+const HIDDEN_KEYS: ReadonlySet<string> = new Set(HIDDEN_SETTINGS);
 
 type Section = keyof Settings;
 type Setter = (section: Section, key: string, value: unknown) => void;
@@ -83,6 +88,22 @@ function LeafControl({ section, k, value, set, roles }: { section: Section; k: s
 
 const WIDE = new Set(['ingest.enabledEvents', 'ingest.redactPatterns', 'agents.typeToRole', 'office.zones', 'server.corsOrigins', 'runner.allowedProjectDirs']);
 
+/** Opens the Heroes panel's "Name pools" tab (docs/design/living-office.md section 3.4): the
+ *  generic per-key form skips `heroes.namePools` (`HIDDEN_SETTINGS`) in favor of that dedicated
+ *  editor, which handles the per-role textareas and validation `LeafControl`'s JSON fallback can't. */
+function EditNamePoolsButton() {
+  const projects = useOfficeStore((s) => s.projects);
+  const selected = useOfficeStore((s) => s.selectedProjectId);
+  const floorOrder = useSettingsStore((s) => s.settings.office.floorOrder);
+  const openHeroes = useHeroPanelStore((s) => s.openHeroes);
+  const floor = defaultHeroFloor(projects, selected, floorOrder);
+  return (
+    <Button variant="ghost" disabled={!floor} onClick={() => floor && openHeroes(floor, 'pools')} title="heroes.namePools has its own editor — see the Heroes panel">
+      Edit name pools…
+    </Button>
+  );
+}
+
 function SectionPanel({ section, values, base, set, roles }: { section: Section; values: Record<string, unknown>; base: Record<string, unknown>; set: Setter; roles: string[] }) {
   const meta = SECTION_LABELS[section];
   const body: ReactNode =
@@ -90,7 +111,9 @@ function SectionPanel({ section, values, base, set, roles }: { section: Section;
       <RulesTable rules={values.rules as ActivityRule[]} onChange={(r) => set('activity', 'rules', r)} />
     ) : (
       <div className="grid grid-cols-2 gap-x-4 gap-y-3 xl:grid-cols-3">
-        {Object.entries(values).map(([k, v]) => {
+        {Object.entries(values)
+          .filter(([k]) => !HIDDEN_KEYS.has(`${section}.${k}`))
+          .map(([k, v]) => {
           const path = `${section}.${k}`;
           const dirty = JSON.stringify(v) !== JSON.stringify(base[k]);
           return (
@@ -118,7 +141,15 @@ function SectionPanel({ section, values, base, set, roles }: { section: Section;
       </div>
     );
   return (
-    <Panel title={meta.title} actions={<span className="text-[10px] text-ink-400">{meta.hint}</span>}>
+    <Panel
+      title={meta.title}
+      actions={
+        <>
+          <span className="text-[10px] text-ink-400">{meta.hint}</span>
+          {section === 'heroes' && <EditNamePoolsButton />}
+        </>
+      }
+    >
       <div className="p-3">{body}</div>
     </Panel>
   );
