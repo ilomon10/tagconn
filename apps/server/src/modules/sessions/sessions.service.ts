@@ -12,7 +12,7 @@ const SWEEP_MS = 5_000;
 export class SessionsService {
   private sweeper?: NodeJS.Timeout;
 
-  constructor(private readonly deps: Deps<'sessionsRepository' | 'agentsRepository' | 'settings' | 'bus'>) {}
+  constructor(private readonly deps: Deps<'sessionsRepository' | 'agentsRepository' | 'agentsService' | 'settings' | 'bus'>) {}
 
   start(): void {
     this.sweep();
@@ -82,6 +82,9 @@ export class SessionsService {
       endedIds.add(s.id);
       repo.setStatus(s.id, 'ended', now);
       this.deps.bus.emit('session.upserted', { ...s, status: 'ended', endedAt: now });
+      // Crashed/killed CLI: no SessionEnd hook ever came, so its agents (PM included) never went
+      // through the hook-driven SessionEnd path. Finish them the same way, so none linger forever.
+      this.deps.agentsService.finishSessionAgents(s.id, now);
     }
 
     for (const s of repo.staleSince(idleCutoff)) {

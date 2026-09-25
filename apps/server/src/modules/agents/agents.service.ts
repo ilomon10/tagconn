@@ -288,15 +288,66 @@ export class AgentsService {
     this.removalTimers.delete(id);
     const a = this.deps.agentsRepository.get(id);
     if (!a || a.removed || a.status !== 'done') return;
+    this.markRemoved(a);
+  }
+
+  /**
+   * Takes an agent off the live floor without touching its status/activity — used for a PM that's
+   * gone quiet (still 'active'/'waiting', not 'done'). It reappears (removed: false) the moment the
+   * top of `onHook` sees a later event for its id, same mechanism as a resumed done/removed agent.
+   */
+  private markRemoved(a: AgentRecord): void {
     this.deps.agentsRepository.upsert({ ...a, removed: true });
-    this.deps.bus.emit('agent.removed', { id, projectId: a.projectId });
+    this.deps.bus.emit('agent.removed', { id: a.id, projectId: a.projectId });
+  }
+
+  /**
+   * A session ended by the sweep (crashed/killed CLI, no SessionEnd hook ever arrived): finish its
+   * still-live agents the same way the SessionEnd hook path does, so its PM (and any subagents) don't
+   * linger on the floor forever. A no-op for a session the SessionEnd hook already finished.
+   */
+  finishSessionAgents(sessionId: string, ts: number): void {
+    for (const a of this.deps.agentsRepository.bySession(sessionId)) {
+      // Already removed (e.g. a PM that left earlier via pmIdleLeaveSec): leave it be. Re-upserting it
+      // here would broadcast 'agent:upsert' for an id the web already dropped via 'agent:remove',
+      // resurrecting it on the floor with no matching remove event to follow.
+      if (a.removed || a.status === 'done') continue;
+      const done = { ...a, updatedAt: ts };
+      this.finish(done, ts, 'Bye');
+      this.save(done);
+    }
   }
 
   sweep(now = Date.now()): void {
     try {
-      const { idleAfterSec, doneLingerSec } = this.deps.settings.get().agents;
+      const { idleAfterSec, doneLingerSec, staleAfterSec } = this.deps.settings.get().agents;
+      const { pmIdleLeaveSec } = this.deps.settings.get().sessions;
       for (const a of this.deps.agentsRepository.staleActive(now - idleAfterSec * 1000)) {
-        this.save({ ...a, activity: 'idle', zone: 'lounge', bubble: undefined, currentTool: undefined, updatedAt: now });
+        // Cosmetic only: don't bump updatedAt here, it must keep meaning "last real hook event" for
+        // staleAfterSec/pmIdleLeaveSec below (and for sessions' own "no live agents" check) — this
+        // transition itself isn't one, and its own `ne(activity, 'idle')` filter already keeps it from
+        // re-matching on the next tick without needing a fresh timestamp.
+        this.save({ ...a, activity: 'idle', zone: 'lounge', bubble: undefined, currentTool: undefined });
+      }
+      // Lost SubagentStop: no shared Agent field for "why it ended" without touching packages/shared's
+      // domain.ts (out of scope here), so the reason is surfaced via the existing `bubble` text plus
+      // this log line, not a new persisted field. Tasks are left untouched (still 'doing'): unlike a
+      // real SessionEnd, a late event can still bring this agent back to life, and re-failing/reviving
+      // its task on every flap would be worse than leaving it as-is until either a real event resumes
+      // it or the session itself ends.
+      for (const a of this.deps.agentsRepository.staleSubagents(now - staleAfterSec * 1000)) {
+        this.deps.logger.info({ agentId: a.id, sessionId: a.sessionId }, 'agent stale (no events past staleAfterSec); marking done');
+        const done = { ...a, updatedAt: now };
+        this.finish(done, now, 'Stale (no activity)');
+        this.save(done);
+      }
+      // A PM leaves only once its whole session has gone quiet (no other live agent either) — a PM
+      // legitimately "waiting on N agents" must stay visible for as long as those agents are live.
+      for (const a of this.deps.agentsRepository.idleMains(now - pmIdleLeaveSec * 1000)) {
+        const hasLiveWork = this.deps.agentsRepository
+          .bySession(a.sessionId)
+          .some((o) => o.id !== a.id && !o.removed && o.status !== 'done');
+        if (!hasLiveWork) this.markRemoved(a);
       }
       for (const a of this.deps.agentsRepository.doneBefore(now - doneLingerSec * 1000)) {
         if (!this.removalTimers.has(a.id)) this.remove(a.id);

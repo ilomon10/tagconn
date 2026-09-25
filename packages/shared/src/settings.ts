@@ -84,6 +84,12 @@ export const SettingsSchema = z.object({
       doneLingerSec: z.number().min(0).default(20),
       /** Seconds without events before an active agent is shown idle in the lounge. */
       idleAfterSec: z.number().min(1).default(90),
+      /**
+       * Seconds without events before a live subagent (main excluded) is presumed lost — its
+       * SubagentStop was killed or never sent — and marked `done`, then removed via the usual
+       * `doneLingerSec` linger. A later hook event for the same agent_id un-marks and re-adds it.
+       */
+      staleAfterSec: z.number().min(1).default(900),
       /** Map Claude agent_type → role name when they differ. */
       typeToRole: z.record(z.string(), z.string()).default({ 'general-purpose': 'developer', Explore: 'analyst', Plan: 'architect' }),
     })
@@ -94,6 +100,12 @@ export const SettingsSchema = z.object({
       idleAfterSec: z.number().min(1).default(90),
       /** Seconds without events (and no live subagents) before a session is ended (covers crashed CLIs). */
       endAfterSec: z.number().min(10).default(1800),
+      /**
+       * Seconds a session's main agent (PM) can go without an event, with no other live agents of
+       * that session on the floor either, before it leaves (removed, not ended). It reappears on the
+       * session's next hook event.
+       */
+      pmIdleLeaveSec: z.number().min(1).default(600),
     })
     .prefault({}),
   transcripts: z
@@ -150,6 +162,12 @@ export const SettingsSchema = z.object({
        * section, since a new section would need a web `SECTION_LABELS` entry too.
        */
       maxStoredLayouts: z.number().int().min(1).default(200),
+      /** How much non-selected characters dim while another is selected (drawer open); 0 disables focus mode. */
+      focusDim: z.number().min(0).max(1).default(0.35),
+      /** Cap on simultaneously visible speech bubbles; lower-priority ones collapse to a small "…" badge (M8 8e). */
+      maxBubbles: z.number().int().min(1).default(6),
+      /** Camera zoom below which name tags and bubbles hide except for the selected or waiting/blocked characters (shown again on hover). */
+      labelMinZoom: z.number().min(0).max(4).default(0.8),
     })
     .prefault({}),
   notifications: z

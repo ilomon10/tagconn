@@ -2,6 +2,7 @@ import type { HookPayload, OfficeSnapshot } from '@tagconn/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../../app.js';
 import { buildTestApp } from '../../../../test/helpers.js';
+import { mainAgentId } from '../../agents/index.js';
 
 const SESSION = 'sweep-session';
 const CWD = '/tmp/sweep-project';
@@ -55,5 +56,24 @@ describe('session idle/ended sweep', () => {
     app.diContainer.cradle.sessionsService.sweep(Date.now());
     const snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
     expect(snap.sessions.find((s) => s.id === SESSION)?.status).toBe('active');
+  });
+
+  it('removes a crashed session\'s main agent from the floor too (no SessionEnd hook ever arrives)', async () => {
+    app = await buildTestApp({ settings: { sessions: { endAfterSec: 200 }, agents: { doneLingerSec: 0 } } });
+    const removed: string[] = [];
+    app.diContainer.cradle.bus.on('agent.removed', ({ id }) => removed.push(id));
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: { session_id: SESSION, cwd: CWD, hook_event_name: 'SessionStart' } as HookPayload,
+    });
+
+    app.diContainer.cradle.sessionsService.sweep(Date.now() + 10 * 60 * 1000);
+    await new Promise((r) => setTimeout(r, 20)); // doneLingerSec: 0 removal timer, scheduled by the finish
+
+    const snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
+    expect(snap.sessions.find((s) => s.id === SESSION)?.status).toBe('ended');
+    expect(removed).toContain(mainAgentId(SESSION));
+    expect(snap.agents.find((a) => a.id === mainAgentId(SESSION))).toBeUndefined();
   });
 });

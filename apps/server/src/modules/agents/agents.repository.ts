@@ -96,6 +96,26 @@ export class AgentsRepository {
       .map(toAgent);
   }
 
+  /** Live, not-yet-done subagents with no update since `cutoff` (SubagentStop was lost/killed). */
+  staleSubagents(cutoff: number): AgentRecord[] {
+    return this.deps.db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.removed, false), eq(agents.isMain, false), ne(agents.status, 'done'), lt(agents.updatedAt, cutoff)))
+      .all()
+      .map(toAgent);
+  }
+
+  /** Live main agents (any status but done) with no update since `cutoff` (candidate PMs to leave). */
+  idleMains(cutoff: number): AgentRecord[] {
+    return this.deps.db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.removed, false), eq(agents.isMain, true), ne(agents.status, 'done'), lt(agents.updatedAt, cutoff)))
+      .all()
+      .map(toAgent);
+  }
+
   /** Retention: agents already off the floor (removed) that finished before `cutoff`. */
   deleteRemovedBefore(cutoff: number): number {
     return this.deps.db
