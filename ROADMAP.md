@@ -70,7 +70,8 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [x] 7b. Server `layouts` module: CRUD REST+socket, read-only seeded default, `project.layoutId` assign/clear + delete cascade, snapshot.layouts, migration 3; 84 server tests  [Developer: server]
 - [x] 7c. Procgen engine (done: seeded, property-tested over 300 seeds × 4 sizes × 2 backgrounds, perf < 50 ms) `apps/web/src/game/procgen/`: rooms → walls, doors, corridors, furniture, seats; BSP "surprise me" generator; tests  [Developer: web A]  (after wave 2 web)
 - [x] 7d. Theme system (done: modern port + guild skin, costumes, fx gated by ambientEffects/reduced motion; 44 theme tests) `apps/web/src/game/themes/`: modern + **guild** skins, drawn in code (stone, torches, banners, runes, particles), role costumes and titles, magical activity verbs  [Developer: web B]  (parallel with 7c)
-- [ ] 7e. Office editor UI (draw regions, pick room type, place stairs, validate, preview, save) + stairs interaction + scene integration  [Developer: web]  (after 7c + 7d)
+- [~] 7e-A. Office editor "Hall Planner": draw regions → pick room type, move/resize, stairs, validation, Surprise me, preview, save/assign, undo/redo  [Developer: web A]
+- [~] 7e-B. Scene integration: generated maps + guild skin live (costumes, titles, verbs, fx), interactive stairs + floor transitions, PageUp/PageDown, 3-floor demo  [Developer: web B]
 - [ ] 7f. Review + security + QA of M7, docker rebuild
 
 ## Backlog
