@@ -79,6 +79,8 @@ export function resolveZone(zone: Zone, available: ReadonlySet<RoomType>): Zone 
 // ------------------------------------------------------------------ limits
 
 export const LAYOUT_LIMITS = {
+  maxDoorsPerRoom: 8,
+  maxSeatsPerRoom: 64,
   minWidth: 16,
   maxWidth: 128,
   minHeight: 12,
@@ -110,6 +112,34 @@ const NameSchema = z
  * A drawn room. (x, y, w, h) is the FOOTPRINT in tiles, including the wall ring for walled rooms.
  * Walled rooms may share a 1-tile wall with each other or with the outer wall.
  */
+/** How full a room is furnished (M8 8n). `packed` fills every free tile that keeps paths open. */
+export const FURNISH_DENSITIES = ['sparse', 'normal', 'dense', 'packed'] as const;
+export type FurnishDensity = (typeof FURNISH_DENSITIES)[number];
+
+export const RoomFurnishSchema = z.object({
+  density: z.enum(FURNISH_DENSITIES).optional(),
+  /** Target number of seats/workstations (desks, lab benches, racks, tables…; meaning depends on the room type). */
+  seats: z.number().int().min(0).max(LAYOUT_LIMITS.maxSeatsPerRoom).optional(),
+  /** Decoration amount, 0 = none … 1 = lavish (plants, rugs, lamps, crates, banners…). */
+  decor: z.number().min(0).max(1).optional(),
+  /** Minimum walkway width between furniture rows, in tiles. */
+  aisle: z.number().int().min(1).max(3).optional(),
+  /** Re-roll this room's arrangement without changing the layout seed. */
+  seed: z.number().int().min(0).max(0xffffffff).optional(),
+});
+export type RoomFurnish = z.infer<typeof RoomFurnishSchema>;
+
+export const DOOR_SIDES = ['n', 's', 'e', 'w'] as const;
+export type DoorSide = (typeof DOOR_SIDES)[number];
+
+/** A door on a room's wall ring: `offset` tiles from the side's start (north/south: from x; east/west: from y). */
+export const DoorSpecSchema = z.object({
+  side: z.enum(DOOR_SIDES),
+  offset: z.number().int().min(1),
+  width: z.number().int().min(1).max(3).default(1),
+});
+export type DoorSpec = z.infer<typeof DoorSpecSchema>;
+
 export const LayoutRoomSchema = z.object({
   id: z.string().regex(ROOM_ID_RE),
   type: z.enum(ROOM_TYPES),
@@ -121,6 +151,13 @@ export const LayoutRoomSchema = z.object({
   name: NameSchema.optional(),
   /** Override the per-type wall default (`DEFAULT_WALLED_ROOM_TYPES`). */
   walled: z.boolean().optional(),
+  /** Furnishing controls (M8 8n). Omitted fields fall back to the layout's `furnishDefaults`, then built-ins. */
+  furnish: RoomFurnishSchema.optional(),
+  /**
+   * Explicit doors on this room's wall ring (walled rooms only). Omitted = automatic doors;
+   * `[]` = no doors (the room is sealed — the reachability check will flag it).
+   */
+  doors: z.array(DoorSpecSchema).max(LAYOUT_LIMITS.maxDoorsPerRoom).optional(),
 });
 export type LayoutRoom = z.infer<typeof LayoutRoomSchema>;
 
@@ -145,6 +182,8 @@ export const OfficeLayoutInputSchema = z.object({
   /** Corridor width in tiles when `background` is `void`. */
   corridorWidth: z.number().int().min(1).max(3).default(2),
   rooms: z.array(LayoutRoomSchema).max(LAYOUT_LIMITS.maxRooms),
+  /** Layout-wide furnishing defaults (M8 8n); each room's `furnish` overrides them. */
+  furnishDefaults: RoomFurnishSchema.omit({ seed: true, seats: true }).optional(),
   /** Per-layout skin override; falls back to `settings.office.style`. */
   style: z.enum(OFFICE_STYLES).optional(),
   /**
@@ -189,6 +228,9 @@ export const LAYOUT_ISSUE_CODES = [
   // Generation (reported by the web procgen, never by the server)
   'no-door',
   'unreachable-room',
+  'door-invalid',
+  'door-overlap',
+  'room-sealed',
   'unreachable-seat',
 ] as const;
 export type LayoutIssueCode = (typeof LAYOUT_ISSUE_CODES)[number];
@@ -295,6 +337,33 @@ export function validateLayout(layout: LayoutGeometry): LayoutIssue[] {
     const detail = missing.map((z) => `${z} → ${resolveZone(z, present)}`).join(', ');
     warn('zone-missing', `No room for: ${detail}.`);
   }
+  // Doors (M8 8n): only on walled rooms, inside the side excluding corners, no overlaps on a side.
+  for (const r of rooms) {
+    if (!r.doors) continue;
+    const name = r.name ?? r.type;
+    if (!isRoomWalled(r)) {
+      if (r.doors.length > 0) err('door-invalid', `${name}: doors only apply to walled rooms.`, [r.id]);
+      continue;
+    }
+    if (r.doors.length === 0 && r.type !== 'entrance') {
+      warn('room-sealed', `${name} has no doors; nobody can reach it.`, [r.id]);
+    }
+    const spans: Record<DoorSide, [number, number][]> = { n: [], s: [], e: [], w: [] };
+    for (const d of r.doors) {
+      const len = d.side === 'n' || d.side === 's' ? r.w : r.h;
+      const width = d.width ?? 1;
+      if (d.offset < 1 || d.offset + width > len - 1) {
+        err('door-invalid', `${name}: a ${d.side.toUpperCase()} door must stay between the corners.`, [r.id]);
+        continue;
+      }
+      const span: [number, number] = [d.offset, d.offset + width - 1];
+      if (spans[d.side].some(([a, b]) => span[0] <= b && a <= span[1])) {
+        err('door-overlap', `${name}: two doors overlap on the ${d.side.toUpperCase()} side.`, [r.id]);
+      }
+      spans[d.side].push(span);
+    }
+  }
+
   return issues;
 }
 
