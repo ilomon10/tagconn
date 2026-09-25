@@ -23,6 +23,8 @@
     "office:install": "node scripts/install.ts",
     "office:uninstall": "node scripts/install.ts --uninstall",
     "office:doctor": "node scripts/doctor.ts",
+    "office:pair": "node scripts/pair.ts",
+    "office:runner": "node apps/runner/src/main.ts",
     "office:up": "docker compose up -d --build",
     "office:down": "docker compose down",
     "release": "node scripts/release.ts"

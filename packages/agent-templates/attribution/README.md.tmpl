@@ -1,0 +1,39 @@
+# .tagconn
+
+This directory was created by [tagconn](https://github.com/ilomon10/tagconn), a local tool that
+shows Claude Code sessions as characters in a 2D office. You opted in to this at install time
+(`pnpm office:install`), and it was written once, automatically, by the tagconn hook the first time
+you opened this repo with Claude Code.
+
+**It holds no secrets and no host-specific paths.** It is safe to commit.
+
+## What's in here
+
+- `README.md` (this file).
+- `office.json` (optional): a portable "office profile" for this project - the floor's name and
+  visual style, its room layout, and any named heroes (by role, not by any host-specific data). It
+  is only ever written by an explicit "Save office profile" action in the tagconn UI, or by the
+  `/tagconn-save` skill - never automatically.
+
+## Restore
+
+If someone else clones this repo and runs tagconn with attribution import on (the default), tagconn
+offers to recreate this floor - its name, style, layout and heroes - from `office.json`. Nothing is
+ever applied without asking first.
+
+## Save
+
+To capture (or update) the current floor as `office.json`, use tagconn's "Save office profile to
+project" action, or run the `/tagconn-save` skill from a Claude Code session in this repo.
+
+## Opt out
+
+If you'd rather tagconn stop touching this repo, delete this directory and replace it with an empty
+**file** (not a directory) named `.tagconn`:
+
+```sh
+rm -rf .tagconn && touch .tagconn
+```
+
+The hook always skips a repo where `.tagconn` already exists in any form (file, directory or
+symlink), so this permanently opts the repo out.

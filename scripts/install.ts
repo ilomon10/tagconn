@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // tagconn installer: wires Claude Code hooks + role subagents + skills into
-// ~/.claude (or a project-local .claude), and writes local hook config.
+// ~/.claude (or a project-local .claude), and writes local hook config, the
+// M8 runner's local config, and the (opt-in) attribution files.
 //
 // Node 24 runs this directly (type stripping) — erasable TS syntax only,
-// node: builtins only, no npm dependencies.
+// node: builtins only, no npm dependencies. This is why the tiny constants
+// and regexes below are copied from packages/shared rather than imported.
 //
 // Usage:
 //   node scripts/install.ts [--dry-run] [--claude-dir <path>] [--config-dir <path>]
 //                            [--url <server url>] [--no-agents] [--no-skills]
 //                            [--project <dir>] [--repo-env-file <path>]
+//                            [--attribution yes|no] [--allow-dir <path>]...
 //   node scripts/install.ts --uninstall [...same flags]
 
 import { randomBytes } from 'node:crypto';
@@ -35,6 +38,10 @@ const SKILL_MARKER = '.tagconn-managed';
 // Hook token: 16-128 lowercase hex chars (matches the 24-byte hex tokens this
 // installer generates, but accepts any hex secret of reasonable length).
 const TOKEN_RE = /^[0-9a-f]{16,128}$/;
+// Runner token (packages/shared/src/runner.ts RUNNER_TOKEN_RE): 32-128
+// lowercase hex chars. Wider than the hook token because it is also used as
+// an HMAC key (see docs/design/runner-and-helpdesk.md §2.2/§5.2).
+const RUNNER_TOKEN_RE = /^[0-9a-f]{32,128}$/;
 // Role template `name` frontmatter: used to build a filesystem path, so keep
 // it to a safe slug (lowercase, digits, dashes; 2-41 chars).
 const ROLE_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
@@ -42,6 +49,11 @@ const ROLE_NAME_RE = /^[a-z][a-z0-9-]{1,40}$/;
 /** Validates a hook token: 16-128 lowercase hex chars (see TOKEN_RE). */
 export function isValidToken(token: string): boolean {
   return TOKEN_RE.test(token);
+}
+
+/** Validates a runner token: 32-128 lowercase hex chars (see RUNNER_TOKEN_RE). */
+export function isValidRunnerToken(token: string): boolean {
+  return RUNNER_TOKEN_RE.test(token);
 }
 
 /** Validates a role template's `name` frontmatter (see ROLE_NAME_RE). */
@@ -81,6 +93,10 @@ export interface Args {
   project?: string;
   envFile: string;
   help: boolean;
+  /** Explicit answer to the "write .tagconn/README.md" prompt; undefined = ask (or default no, non-interactively). */
+  attribution?: 'yes' | 'no';
+  /** `--allow-dir` may repeat; each becomes a runner.json `allowedProjectDirs` entry. */
+  allowDirs: string[];
 }
 
 const DEFAULT_CLAUDE_DIR = join(homedir(), '.claude');
@@ -130,6 +146,8 @@ export function parseArgs(argv: string[]): Args {
     project: undefined,
     envFile: join(repoRoot, '.env'),
     help: false,
+    attribution: undefined,
+    allowDirs: [],
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -161,6 +179,19 @@ export function parseArgs(argv: string[]): Args {
         break;
       case '--repo-env-file':
         args.envFile = resolve(argv[++i] ?? args.envFile);
+        break;
+      case '--attribution': {
+        const v = argv[++i];
+        if (v !== 'yes' && v !== 'no') {
+          console.error(`--attribution must be "yes" or "no" (got ${JSON.stringify(v)})`);
+          args.help = true;
+          break;
+        }
+        args.attribution = v;
+        break;
+      }
+      case '--allow-dir':
+        args.allowDirs.push(resolve(argv[++i] ?? ''));
         break;
       case '--help':
       case '-h':
@@ -235,6 +266,11 @@ Options:
   --no-agents            Skip installing role subagents.
   --no-skills            Skip installing skills.
   --repo-env-file <path> Repo .env path to read/write (default: <repo>/.env).
+  --attribution yes|no   Write .tagconn/README.md into git repos you open (default: ask
+                          interactively, or "no" when not run in a terminal).
+  --allow-dir <path>     A directory quests/the Receptionist may run in (repeatable).
+                          Written to runner.json's allowedProjectDirs. Broad parents
+                          ($HOME, or a dir with many git repos under it) print a warning.
   --help                 Show this help.
 `);
 }
@@ -425,6 +461,254 @@ function ensureHookScript(configDir: string, dryRun: boolean): string {
   chmodSync(dest, 0o755);
   log(`  installed hook script at ${dest}`);
   return dest;
+}
+
+// ---------------------------------------------------------------------------
+// attribution (M8 8j): the opt-in .tagconn/README.md template, and the
+// (default-on) attribution.conf the hook uses to POST office.json imports.
+// See docs/design/runner-and-helpdesk.md §6.2.
+// ---------------------------------------------------------------------------
+
+/**
+ * Asks whether to enable README writes. `explicit` (from `--attribution`) always wins.
+ * Otherwise: prompts interactively when stdin is a TTY (default answer: no); everywhere
+ * else (CI, tests, piped input) it defaults to "no" without blocking on input.
+ */
+export async function promptAttribution(explicit: 'yes' | 'no' | undefined): Promise<boolean> {
+  if (explicit === 'yes') return true;
+  if (explicit === 'no') return false;
+  if (!process.stdin.isTTY) {
+    log('  no --attribution flag and not an interactive terminal: defaulting to "no"');
+    return false;
+  }
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (
+      await rl.question('Write a small .tagconn/README.md into git repos you open with Claude Code? [y/N] ')
+    )
+      .trim()
+      .toLowerCase();
+    return answer === 'y' || answer === 'yes';
+  } finally {
+    rl.close();
+  }
+}
+
+/** Installs the opt-in README template; the hook only ever writes .tagconn/README.md when this exists. */
+function installAttributionReadme(configDir: string, dryRun: boolean): string {
+  const dest = join(configDir, 'attribution-README.md');
+  const src = join(repoRoot, 'packages', 'agent-templates', 'attribution', 'README.md.tmpl');
+  if (dryRun) {
+    log(`  [dry-run] would copy ${src} -> ${dest}`);
+    return dest;
+  }
+  ensureConfigDir(configDir, dryRun);
+  cpSync(src, dest);
+  log(`  installed ${dest} (the hook will write .tagconn/README.md into repos you open)`);
+  return dest;
+}
+
+/** Removes the opt-in README template, so the hook stops writing .tagconn/README.md. */
+function removeAttributionReadme(configDir: string, dryRun: boolean): void {
+  const dest = join(configDir, 'attribution-README.md');
+  if (!existsSync(dest)) return;
+  if (dryRun) {
+    log(`  [dry-run] would remove ${dest}`);
+    return;
+  }
+  rmSync(dest);
+  log(`  removed ${dest}`);
+}
+
+/**
+ * Writes <configDir>/attribution.conf, mode 600: a curl `-K` config pointed at the
+ * import endpoint, reusing the hook token (same "hook" access level as /api/hooks).
+ * Installed by default - unlike the README template, importing writes nothing to the
+ * repo and the server always asks before applying an import (settings.attribution.autoImport).
+ */
+function ensureAttributionConf(configDir: string, token: string, url: string, dryRun: boolean): string {
+  const confPath = join(configDir, 'attribution.conf');
+  const content =
+    `# Written by tagconn scripts/install.ts. Used by the hook to POST\n` +
+    `# .tagconn/office.json profiles for import - mode 600, read by curl -K.\n` +
+    `header = "x-office-token: ${token}"\n` +
+    `url = "${url}/api/attribution/import"\n`;
+  if (dryRun) {
+    log(`  [dry-run] would write ${confPath} (mode 600)`);
+    return confPath;
+  }
+  ensureConfigDir(configDir, dryRun);
+  writeSecretFile(confPath, content);
+  log(`  wrote ${confPath}`);
+  return confPath;
+}
+
+/** Removes <configDir>/attribution.conf on uninstall. */
+function removeAttributionConf(configDir: string, dryRun: boolean): void {
+  const confPath = join(configDir, 'attribution.conf');
+  if (!existsSync(confPath)) return;
+  if (dryRun) {
+    log(`  [dry-run] would remove ${confPath}`);
+    return;
+  }
+  rmSync(confPath);
+  log(`  removed ${confPath}`);
+}
+
+// ---------------------------------------------------------------------------
+// runner (M8 8k): <configDir>/runner.json, the host-side authority for quests
+// and the Receptionist. See docs/design/runner-and-helpdesk.md §2.1.
+// ---------------------------------------------------------------------------
+
+function generateRunnerToken(): string {
+  return randomBytes(32).toString('hex');
+}
+
+/**
+ * Counts (up to `cap`) directories at or below `dir`, within `maxDepth` levels, that
+ * contain a `.git` entry - a cheap proxy for "this allowed dir holds many separate
+ * repos", which matters because quests/the Receptionist may run in ANY repo under an
+ * allowed dir. Skips dotfiles/node_modules, and gives up after `budget` directories
+ * visited so a huge tree can't make the installer hang.
+ */
+export function countGitReposBelow(dir: string, maxDepth = 2, cap = 4, budget = 2000): number {
+  let count = 0;
+  let visited = 0;
+  const visit = (d: string, depth: number): void => {
+    if (count >= cap || visited >= budget) return;
+    visited++;
+    let entries: string[];
+    try {
+      entries = readdirSync(d);
+    } catch {
+      return;
+    }
+    if (entries.includes('.git')) count++;
+    if (count >= cap || depth >= maxDepth) return;
+    for (const e of entries) {
+      if (visited >= budget) return;
+      if (e === '.git' || e === 'node_modules' || e.startsWith('.')) continue;
+      const full = join(d, e);
+      let isDir: boolean;
+      try {
+        isDir = statSync(full).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) visit(full, depth + 1);
+      if (count >= cap) return;
+    }
+  };
+  visit(dir, 0);
+  return count;
+}
+
+/**
+ * True for `$HOME`, `/`, or any dir with more than 3 git repos under it (see
+ * countGitReposBelow) - the design's examples of a "broad parent dir" like `~/Projects`.
+ * Quests/the Receptionist can run in any repo under an allowed dir, so a broad one
+ * effectively means "run code as me anywhere under here".
+ */
+export function isBroadAllowDir(dir: string): boolean {
+  if (dir === homedir() || dir === '/') return true;
+  return countGitReposBelow(dir) > 3;
+}
+
+/** Prints a loud warning for each broad allow-dir; returns the ones flagged. */
+export function warnBroadAllowDirs(dirs: string[]): string[] {
+  const broad = dirs.filter(isBroadAllowDir);
+  for (const d of broad) {
+    console.warn(
+      `  WARNING: ${d} looks like a broad parent directory (it is $HOME/root, or has more than 3 git ` +
+        `repos under it). Quests and the Receptionist can run Claude Code as you in ANY repo below an ` +
+        `allowed dir - prefer listing individual project directories with --allow-dir instead.`,
+    );
+  }
+  return broad;
+}
+
+export interface RunnerConfigResult {
+  path: string;
+  token: string;
+  allowedProjectDirs: string[];
+  tokenGenerated: boolean;
+}
+
+/**
+ * Writes <configDir>/runner.json, mode 600 (RunnerLocalConfigSchema in packages/shared;
+ * only the fields the installer knows about are set here, the runner fills the rest
+ * with its own defaults). Idempotent: keeps the existing token, and keeps the existing
+ * allowedProjectDirs when no --allow-dir was passed this run.
+ */
+function ensureRunnerConfig(configDir: string, url: string, allowDirsFlag: string[], dryRun: boolean): RunnerConfigResult {
+  const path = join(configDir, 'runner.json');
+  let existing: { token?: unknown; allowedProjectDirs?: unknown } = {};
+  if (existsSync(path)) {
+    try {
+      existing = JSON.parse(readFileSync(path, 'utf8'));
+    } catch {
+      existing = {};
+    }
+  }
+  let token = typeof existing.token === 'string' ? existing.token : '';
+  let tokenGenerated = false;
+  if (!token || !isValidRunnerToken(token)) {
+    token = generateRunnerToken();
+    tokenGenerated = true;
+  }
+  const allowedProjectDirs =
+    allowDirsFlag.length > 0
+      ? allowDirsFlag
+      : Array.isArray(existing.allowedProjectDirs)
+        ? existing.allowedProjectDirs.filter((d): d is string => typeof d === 'string')
+        : [];
+  const config = { url, token, allowedProjectDirs };
+  const text = JSON.stringify(config, null, 2) + '\n';
+  if (dryRun) {
+    log(`  [dry-run] would write ${path} (mode 600)`);
+  } else {
+    ensureConfigDir(configDir, dryRun);
+    writeSecretFile(path, text);
+    log(`  ${tokenGenerated ? 'generated new runner token' : 'kept existing runner token'}, wrote ${path}`);
+  }
+  if (allowedProjectDirs.length > 0) {
+    log(
+      '  note: quests need "hasTrustDialogAccepted" for each dir - open each allowed project once ' +
+        'interactively in claude (run `claude` in that directory and accept the trust dialog) before ' +
+        'starting quests there.',
+    );
+  } else {
+    log('  no --allow-dir given: quests and the Receptionist project scope have nowhere to run yet.');
+  }
+  return { path, token, allowedProjectDirs, tokenGenerated };
+}
+
+/** Removes <configDir>/runner.json on uninstall. */
+function removeRunnerConfig(configDir: string, dryRun: boolean): void {
+  const path = join(configDir, 'runner.json');
+  if (!existsSync(path)) return;
+  if (dryRun) {
+    log(`  [dry-run] would remove ${path}`);
+    return;
+  }
+  rmSync(path);
+  log(`  removed ${path}`);
+}
+
+/** Upserts OFFICE_RUNNER__TOKEN into the repo .env (same file/convention as OFFICE_HOOK_TOKEN). */
+function ensureRunnerTokenEnv(envFile: string, runnerToken: string, dryRun: boolean): void {
+  const text = existsSync(envFile) ? readFileSync(envFile, 'utf8') : '';
+  let lines = text.split('\n');
+  if (lines.length && lines[lines.length - 1] === '') lines = lines.slice(0, -1);
+  lines = upsertEnvLine(lines, 'OFFICE_RUNNER__TOKEN', runnerToken);
+  const newText = lines.join('\n') + '\n';
+  if (dryRun) {
+    log(`  [dry-run] would set OFFICE_RUNNER__TOKEN in ${envFile}`);
+    return;
+  }
+  writeSecretFile(envFile, newText);
+  log(`  set OFFICE_RUNNER__TOKEN in ${envFile}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -734,7 +1018,7 @@ function uninstallSkills(claudeDir: string, dryRun: boolean): void {
 // main
 // ---------------------------------------------------------------------------
 
-export function main(): void {
+export async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     printHelp();
@@ -769,6 +1053,13 @@ export function main(): void {
     removeCurlConf(args.configDir, args.dryRun);
     removeLegacyHookEnv(args.configDir, args.dryRun);
 
+    log('\n[attribution]');
+    removeAttributionReadme(args.configDir, args.dryRun);
+    removeAttributionConf(args.configDir, args.dryRun);
+
+    log('\n[runner]');
+    removeRunnerConfig(args.configDir, args.dryRun);
+
     log('\ntagconn uninstalled. The hook script and .env were left in place;');
     log(`remove ${args.configDir} manually if you want the hook script gone too.`);
     return;
@@ -781,6 +1072,21 @@ export function main(): void {
   const confPath = ensureCurlConf(args.configDir, token, args.url, args.dryRun);
   removeLegacyHookEnv(args.configDir, args.dryRun);
   const hookScriptPath = ensureHookScript(args.configDir, args.dryRun);
+
+  log('\n[attribution]');
+  ensureAttributionConf(args.configDir, token, args.url, args.dryRun);
+  const wantsReadme = await promptAttribution(args.attribution);
+  if (wantsReadme) {
+    installAttributionReadme(args.configDir, args.dryRun);
+  } else {
+    removeAttributionReadme(args.configDir, args.dryRun);
+    log('  README writes disabled (opt in with --attribution yes, or answer "y" at the prompt)');
+  }
+
+  log('\n[runner]');
+  const runnerConfig = ensureRunnerConfig(args.configDir, args.url, args.allowDirs, args.dryRun);
+  warnBroadAllowDirs(runnerConfig.allowedProjectDirs);
+  ensureRunnerTokenEnv(args.envFile, runnerConfig.token, args.dryRun);
 
   log('\n[settings.json]');
   backupSettings(settingsPath, args.dryRun);
@@ -814,10 +1120,8 @@ export function main(): void {
 
 // Only run when this file is the entry point (not when imported by tests).
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  try {
-    main();
-  } catch (err) {
+  main().catch((err: unknown) => {
     console.error(`tagconn install failed: ${(err as Error).message}`);
     process.exitCode = 1;
-  }
+  });
 }
