@@ -1,4 +1,4 @@
-import type { Project } from '@tagconn/shared';
+import { MULTIVERSE_FLOOR_ID, type Project } from '@tagconn/shared';
 
 /** How the stairs order floors (`settings.office.floorOrder`). */
 export type FloorOrder = 'created' | 'name' | 'recent';
@@ -78,3 +78,6 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 export function isModalOpen(doc: Document = document): boolean {
   return !!doc.querySelector('[aria-modal="true"], [data-modal]');
 }
+
+/** True for the virtual Multiverse floor id (M8 8h). */
+export const isMultiverseFloor = (id: string): boolean => id === MULTIVERSE_FLOOR_ID;
