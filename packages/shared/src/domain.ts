@@ -1,3 +1,4 @@
+import type { Hero } from './heroes.js';
 import type { OfficeLayout } from './layout.js';
 
 /** What a character is visibly doing. Drives sprite animation. */
@@ -135,4 +136,6 @@ export interface OfficeSnapshot {
   events: OfficeEvent[];
   /** All saved layouts (M7). Optional so pre-M7 servers and test fixtures stay valid. */
   layouts?: OfficeLayout[];
+  /** Heroes of the subscribed floor(s) (M8 8i). Optional so pre-M8 servers and fixtures stay valid. */
+  heroes?: Hero[];
 }

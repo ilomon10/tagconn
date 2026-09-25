@@ -1,4 +1,5 @@
 import type { Agent, OfficeEvent, OfficeSnapshot, Project, Session, Task } from './domain.js';
+import type { Hero, HeroCreate, HeroListRequest, HeroUpdateRequest } from './heroes.js';
 import type { LayoutAssign, OfficeLayout, OfficeLayoutInput } from './layout.js';
 import type { Role } from './roles.js';
 import type { Settings, SettingsPatch } from './settings.js';
@@ -22,6 +23,8 @@ export interface ServerToClientEvents {
   'layout:upsert': (l: OfficeLayout) => void;
   /** A layout was deleted; projects that used it are re-broadcast via `project:upsert`. */
   'layout:remove': (id: string) => void;
+  'hero:upsert': (h: Hero) => void;
+  'hero:remove': (id: string) => void;
 }
 
 export interface ClientToServerEvents {
@@ -42,6 +45,13 @@ export interface ClientToServerEvents {
   'layouts:delete': (id: string, ack: Ack<true>) => void;
   /** Set or clear (null) a project's layout; replies with the updated project. */
   'layouts:assign': (req: LayoutAssign, ack: Ack<Project>) => void;
+  'heroes:list': (req: HeroListRequest, ack: Ack<Hero[]>) => void;
+  'heroes:create': (req: HeroCreate, ack: Ack<Hero>) => void;
+  'heroes:update': (req: HeroUpdateRequest, ack: Ack<Hero>) => void;
+  /** Regenerate name (pool) and appearance (seed); clears `customized`. */
+  'heroes:reset': (id: string, ack: Ack<Hero>) => void;
+  /** Rejected while the hero is bound to a live agent. */
+  'heroes:delete': (id: string, ack: Ack<true>) => void;
 }
 
 /** Room names. */

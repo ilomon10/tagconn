@@ -4,10 +4,13 @@ import type { Ack } from './socket.js';
 
 /**
  * M8 tagconn attribution in projects (8j). A small `.tagconn/` marker inside project repos:
- *   .tagconn/README.md   what tagconn is + how to restore (written by the hook, only if absent)
+ *   .tagconn/README.md   what tagconn is + how to restore (written by the hook, only if absent, and
+ *                        only when the user said yes at install time: opt-in)
  *   .tagconn/office.json optional portable office profile (written only on an explicit save)
  * Repo content is UNTRUSTED input (a cloned repo can contain anything), so the profile is strictly
- * validated, size-capped and imported only with consent by default (settings.attribution.autoImport).
+ * validated, size-capped, imported only with consent by default (settings.attribution.autoImport),
+ * and an import NEVER creates or changes roles, ~/.claude/agents, skills or settings: heroes may only
+ * reference roles that already exist on this host (others are dropped).
  * See docs/design/runner-and-helpdesk.md ("Attribution").
  */
 
@@ -16,15 +19,15 @@ export const ATTRIBUTION_README = 'README.md';
 export const ATTRIBUTION_PROFILE = 'office.json';
 export const ATTRIBUTION_PROFILE_KIND = 'tagconn.office-profile';
 export const ATTRIBUTION_PROFILE_VERSION = 1;
-/** Hard ceiling; settings.attribution.maxProfileBytes may only lower it. */
+/** Hard ceiling; settings.attribution.maxProfileBytes may only lower it. The hook reads at most +1 byte. */
 export const ATTRIBUTION_MAX_PROFILE_BYTES = 65_536;
 /** Header the hook sends with a profile import (value validated as a Claude session id). */
 export const ATTRIBUTION_SESSION_HEADER = 'x-tagconn-session-id';
 
 /**
  * Rejects strings that look like host-specific absolute paths, so a profile never leaks or depends on
- * one machine's layout (e.g. "/home/alice/...", "C:\\Users\\...", "~/..."), and never contains secrets
- * we can recognise cheaply. The server additionally runs its redaction patterns and rejects on a hit.
+ * one machine's layout (e.g. "/home/alice/...", "C:\\Users\\...", "~/..."). The server additionally
+ * runs its redaction patterns and rejects on a hit.
  */
 const HOST_PATH_RE = /^(\/(home|Users|root|mnt|media|var|opt|srv|tmp|etc|private)\/|~\/|[A-Za-z]:[\\/]|\\\\)/;
 export const looksLikeHostPath = (s: string): boolean => HOST_PATH_RE.test(s.trim());
@@ -36,7 +39,10 @@ const collectStrings = (v: unknown, out: string[], depth = 0): void => {
   else if (v && typeof v === 'object') for (const x of Object.values(v)) collectStrings(x, out, depth + 1);
 };
 
-/** Portable hero entry. Mapped onto the heroes module (8i) on import; unknown look keys are dropped there. */
+/**
+ * Portable hero entry. `role` is a REFERENCE to an existing role on the importing host; entries whose
+ * role does not exist are dropped (never auto-created). Unknown look keys are dropped by the heroes module (8i).
+ */
 export const HeroProfileSchema = z.strictObject({
   role: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/),
   name: z.string().trim().min(1).max(40),
@@ -90,22 +96,37 @@ export interface ProjectProfileMeta {
 export const ATTRIBUTION_IMPORT_STATUSES = ['imported', 'pending', 'ignored', 'rejected'] as const;
 export type AttributionImportStatus = (typeof ATTRIBUTION_IMPORT_STATUSES)[number];
 
+export const ATTRIBUTION_IMPORT_REASONS = [
+  'disabled',
+  'no-hook-token', // server.hookToken is empty: imports are refused (anyone local could post one)
+  'unknown-session',
+  'stale-session',
+  'already-configured',
+  'dismissed-before',
+  'too-large',
+  'invalid',
+] as const;
+export type AttributionImportReason = (typeof ATTRIBUTION_IMPORT_REASONS)[number];
+
 /** Reply of POST /api/attribution/import (hook token). The hook discards it; tests assert on it. */
 export interface AttributionImportResult {
   status: AttributionImportStatus;
-  /** e.g. "disabled", "already-configured", "unknown-session", "stale-session", "too-large", "invalid". */
-  reason?: string;
+  reason?: AttributionImportReason;
   projectId?: string;
 }
 
 /** A profile received with autoImport = "ask", waiting for the admin to accept or dismiss. */
 export interface PendingProfileImport {
   projectId: string;
+  /** Host path of the repo the profile came from; shown in the toast so the user knows its origin. */
+  projectCwd: string;
   receivedAt: number;
   floorName: string;
   tagconnVersion: string;
   hasLayout: boolean;
   heroCount: number;
+  /** Heroes that would be dropped because their role does not exist on this host. */
+  unknownRoles: string[];
 }
 
 export const AttributionResolveSchema = z.strictObject({
@@ -122,9 +143,9 @@ export const AttributionSaveSchema = z.strictObject({
 export type AttributionSave = z.input<typeof AttributionSaveSchema>;
 
 /**
- * server -> runner. The runner validates projectDir (realpath, inside allowedProjectDirs or
- * readOnlyProjectDirs, contains .git, not $HOME or /), refuses symlinked `.tagconn` or `office.json`,
- * re-parses `content` with AttributionProfileSchema, and writes atomically (tmp + rename, 0644).
+ * server -> runner. The runner validates projectDir (realpath strictly inside allowedProjectDirs,
+ * contains .git, not $HOME or /), refuses a symlinked `.tagconn` or `office.json`, re-parses `content`
+ * with AttributionProfileSchema, and writes atomically (tmp + rename in .tagconn, mode 0644).
  */
 export const AttributionWriteCommandSchema = z.strictObject({
   projectDir: z.string().min(1).max(4096).startsWith('/'),

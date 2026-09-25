@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { ACTIVITIES, ZONES } from './domain.js';
 import { HOOK_EVENTS } from './hook.js';
+import { DEFAULT_HERO_NAME_POOLS, HERO_LIMITS, HeroNamePoolsSchema } from './heroes.js';
 import { DEFAULT_LAYOUT_ID, LAYOUT_ID_RE, OFFICE_STYLES } from './layout.js';
+import { MULTIVERSE_LIMITS } from './multiverse.js';
 
 export const ActivityRuleSchema = z.object({
   /** Regex matched against tool_name (anchored). */
@@ -94,6 +96,18 @@ export const SettingsSchema = z.object({
       typeToRole: z.record(z.string(), z.string()).default({ 'general-purpose': 'developer', Explore: 'analyst', Plan: 'architect' }),
     })
     .prefault({}),
+  heroes: z
+    .object({
+      /** Bind agents to persistent named heroes (8i). Off = anonymous characters (pre-M8 look). */
+      enabled: z.boolean().default(true),
+      maxPerRole: z.number().int().min(1).max(HERO_LIMITS.hardMaxPerRole).default(6),
+      maxPerProject: z.number().int().min(1).max(HERO_LIMITS.hardMaxPerProject).default(40),
+      /** A new subagent may take over the hero of a subagent idle this long; 0 = never. */
+      reuseIdleAfterSec: z.number().min(0).default(600),
+      /** Role (or `default`) → names for new heroes. */
+      namePools: HeroNamePoolsSchema.default(DEFAULT_HERO_NAME_POOLS),
+    })
+    .prefault({}),
   sessions: z
     .object({
       /** Seconds without events before a session shows as idle. */
@@ -148,7 +162,7 @@ export const SettingsSchema = z.object({
       zones: z.record(z.string(), ZoneSpotSchema).default({}),
       /** Visual skin (M7). A layout may override it with its own `style`. */
       style: z.enum(OFFICE_STYLES).default('guild'),
-      /** Layout for floors without their own `layoutId` (and for the "All floors" view). */
+      /** Layout for floors without their own `layoutId`. */
       defaultLayoutId: z.string().regex(LAYOUT_ID_RE).default(DEFAULT_LAYOUT_ID),
       /** Stair order of floors: oldest project first (ground floor), by name, or most recently active first. */
       floorOrder: z.enum(['created', 'name', 'recent']).default('created'),
@@ -168,6 +182,16 @@ export const SettingsSchema = z.object({
       maxBubbles: z.number().int().min(1).default(6),
       /** Camera zoom below which name tags and bubbles hide except for the selected or waiting/blocked characters (shown again on hover). */
       labelMinZoom: z.number().min(0).max(4).default(0.8),
+      /** 8b. `single`: one Guild Master per floor (the most recently active session) + a session count chip. */
+      pmMode: z.enum(['single', 'per-session']).default('single'),
+      /** 8b. Minimum seconds before the Guild Master switches to another session (a session that needs you switches at once). */
+      pmSwitchCooldownSec: z.number().min(0).max(600).default(15),
+      /** 8c. Seconds a hero with no live agent rests in the tavern before walking out; 0 = leave at once. */
+      idleLeaveSec: z.number().min(0).max(86_400).default(300),
+      /** 8h. Realms drawn on the Multiverse floor; extra projects are grouped into one "Other realms". */
+      multiverseMaxRealms: z.number().int().min(1).max(MULTIVERSE_LIMITS.maxRealms).default(MULTIVERSE_LIMITS.maxRealms),
+      /** 8h. Character cap on the Multiverse floor (split fairly across realms; Guild Masters first). */
+      multiverseMaxCharacters: z.number().int().min(1).max(MULTIVERSE_LIMITS.maxCharacters).default(60),
     })
     .prefault({}),
   notifications: z
@@ -208,7 +232,7 @@ export const GUI_IMMUTABLE_SETTINGS = [
 ] as const;
 
 /** Record-typed settings that a patch replaces wholesale instead of deep-merging. */
-export const WHOLESALE_REPLACE_SETTINGS = ['agents.typeToRole', 'office.zones'] as const;
+export const WHOLESALE_REPLACE_SETTINGS = ['agents.typeToRole', 'office.zones', 'heroes.namePools'] as const;
 
 /** Placeholder the API returns instead of secret values. */
 export const MASKED_SECRET = '********';

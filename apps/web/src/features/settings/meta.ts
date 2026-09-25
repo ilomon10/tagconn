@@ -8,6 +8,7 @@ export const SECTION_LABELS: Record<keyof Settings, { title: string; hint: strin
   ingest: { title: 'Ingest', hint: 'Which hook events are stored and how payloads are redacted.' },
   paths: { title: 'Paths', hint: 'Where Claude Code keeps its files.' },
   agents: { title: 'Agents', hint: 'Lifecycle timings and agent type → role mapping.' },
+  heroes: { title: 'Heroes', hint: 'Persistent named characters that subagents are assigned to (M8).' },
   sessions: { title: 'Sessions', hint: 'When a session shows idle, and when a stale one is considered ended.' },
   transcripts: { title: 'Transcripts', hint: 'Reading Claude Code transcripts to compute token usage.' },
   activity: { title: 'Activity rules', hint: 'First matching rule decides what a character does for a tool call.' },
