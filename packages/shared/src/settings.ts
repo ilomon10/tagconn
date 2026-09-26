@@ -185,6 +185,24 @@ export const SettingsSchema = z.object({
       maxBubbles: z.number().int().min(1).default(6),
       /** Camera zoom below which name tags and bubbles hide except for the selected or waiting/blocked characters (shown again on hover). */
       labelMinZoom: z.number().min(0).max(4).default(0.8),
+      /** M8 8o: WebGL post-processing. Ignored on the canvas renderer; moving effects pause under reduced motion. */
+      shaders: z
+        .object({
+          enabled: z.boolean().default(true),
+          /** `auto` picks `low` on small or slow devices (frame-time based). */
+          quality: z.enum(['auto', 'low', 'high']).default('auto'),
+          /** Bloom around light sources (torches, braziers, monitors, windows); 0 = off. */
+          bloom: z.number().min(0).max(1).default(0.45),
+          /** Darkened screen edges; 0 = off. */
+          vignette: z.number().min(0).max(1).default(0.3),
+          /** Per-style color grading (warm office, candlelit guild, aurora rift). */
+          grading: z.boolean().default(true),
+          /** Soft animated glow pools under light sources. */
+          lightGlow: z.boolean().default(true),
+          /** CRT scanlines + slight curvature, modern style only. */
+          scanlines: z.boolean().default(false),
+        })
+        .prefault({}),
       /** 8b. `single`: one Guild Master per floor (the most recently active session) + a session count chip. */
       pmMode: z.enum(['single', 'per-session']).default('single'),
       /** 8b. Minimum seconds before the Guild Master switches to another session (a session that needs you switches at once). */
