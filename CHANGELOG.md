@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-26
+
 ### Added
 - The Quests tab and the Receptionist now say exactly what to do next: "Pair this browser", the `pnpm office:runner` command with a Copy button when the runner is offline, the setting to change when it's disabled, and Retry when a load fails.
 - "Raise the limit" on the "+N more not shown" banner opens Settings → Office, and a "Connecting to the office…" message replaces the blank canvas while the page connects.
@@ -110,7 +112,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/ilomon10/tagconn/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ilomon10/tagconn/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ilomon10/tagconn/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ilomon10/tagconn/compare/v0.1.0...v0.2.0
