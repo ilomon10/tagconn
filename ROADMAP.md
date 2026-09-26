@@ -61,6 +61,7 @@ Plan: `~/.claude/plans/let-we-brainstorming-i-elegant-abelson.md`
 - [x] Fix pass: transcripts hardening (fd-based open, O_NOFOLLOW, per-read containment, caps, LRU, id validation, TextDecoder) + web floor-usage fix; 99 server tests
 
 ## Bugs / UX
+- [x] Live server crash loop (Node 24.21 + better-sqlite3 native assertion); Docker pinned to node:24.16, live server rebuilt from the deployed code; 0 restarts since
 - [x] Canvas safe region: the agent panel no longer blocks the map; insets-aware camera, drag-pan always works, center selected agent in the visible area, Follow, Esc/click-away to close; 142 web tests  [Developer: web]
 
 ## M7: Magic Guild Hall: themes, office editor, procedural generation, stairs  [PM plan]
@@ -128,9 +129,10 @@ so parallel or old sessions leave extra PMs on a floor.
   - [x] T4 fireplace/window bloom in postfx
 - [x] W3b place the Receptionist NPC at each floor's entrance / the Nexus gate (after 8o touches OfficeScene)
 - [x] 8o. **Shaders** (user request): WebGL post-processing: per-style color grading, vignette, bloom on light sources (torches, braziers, monitors, windows) via a light layer so pixel art stays crisp, flame flicker (reduced-motion aware), optional CRT scanlines for modern; `office.shaders.*` settings (contract done), auto quality, canvas fallback  [Developer: web]
-- [~] 8g. Final code review [x] (no blockers; listener-cap warning fixed) · security review SC5 = NOT READY (2 High: runner acts on unverified reconnects [PoC]; quests inherit user allow rules and all tools; 3 Med: home config writable, no timeout, save temp file follows symlinks) → fixes: server/installer [x], runner [~] · QA end-to-end incl. real-CLI quest/receptionist and runner acceptance (a)–(i) → fixes → v0.3.0
+- [~] 8g. Final code review [x] (no blockers; listener-cap warning fixed) · security review SC5 = NOT READY (2 High: runner acts on unverified reconnects [PoC]; quests inherit user allow rules and all tools; 3 Med: home config writable, no timeout, save temp file follows symlinks) → fixes: server/installer [x], runner [x] · QA non-CLI scenarios pass · SC5 re-review [~] · real-CLI quest/receptionist/acceptance [~] · QA small fixes (pair --label, CORS log, sandbox stateDir) [~] · QA end-to-end incl. real-CLI quest/receptionist and runner acceptance (a)–(i) → fixes → v0.3.0
 
 ## Backlog
+- [ ] Upgrade better-sqlite3 to 13.x and unpin Node once 24.2x is verified (decision #24)
 - [ ] nginx `/assets/`: duplicate Cache-Control (expires + add_header); Firefox check of the CSP
 - [ ] Move timing/perf tests into a separate `pnpm test:perf` run (they flake when the machine is loaded)
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
