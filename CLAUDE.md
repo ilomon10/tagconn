@@ -73,5 +73,7 @@ apps/server/test/fixtures/  REAL hook payloads captured from Claude Code; use th
 Use the project subagents in `.claude/agents/` (analyst, architect, developer, qa-engineer,
 code-reviewer, security-engineer). The main session acts as PM. It splits work into small, file-disjoint
 tasks, runs developers in parallel, then runs QA, review, and security in parallel, and records
-progress in `ROADMAP.md`. Every subagent ends its reply with a ```handoff block
+progress in `ROADMAP.md`. Subagents must not fork themselves or spawn helpers that touch files: parallel work
+relies on file ownership, and a fork in the same working tree duplicates edits (use `isolation: "worktree"` if a
+helper truly must write). Every subagent ends its reply with a ```handoff block
 (see `packages/agent-templates/skills/handoff-report`).
