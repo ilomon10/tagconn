@@ -1,6 +1,6 @@
 import { isTerminalRunStatus, type Session } from '@tagconn/shared';
 import type { Deps } from '../../core/di/index.js';
-import type { HookContext } from '../../core/event-bus/index.js';
+import type { BusEvents, HookContext } from '../../core/event-bus/index.js';
 
 export const PROMPT_MAX = 200;
 
@@ -86,6 +86,45 @@ export class SessionsService {
     next.runId = ctx.runIdHint;
     next.origin = 'quest';
     this.deps.runLinker.hint(ctx.runIdHint, ctx.sessionId);
+  }
+
+  /**
+   * M8 8k, S5 (§2.6 "Authoritative"): `runs` emits this once a run's own `init` event reports its
+   * Claude `session_id` (or, before that lands, from the header hint it already echoed back via
+   * `runLinker.hint` above — either way this is the run's side of the same link). Unlike `linkRun`
+   * above (session hook -> run), this is the run -> session direction, and `hook.received`/`run.linked`
+   * can race in either order:
+   *  - SessionStart-before-init: the row already exists (origin 'cli', no runId yet); this upgrades it.
+   *  - init-before-SessionStart: no row exists yet; this creates it lazily (same shape `onHook`'s own
+   *    lazy-create uses). The SessionStart hook that arrives afterwards then only fills in the rest,
+   *    since `linkRun` never resets an existing runId/origin (`if (next.runId || ...) return`).
+   * Never crosses projects: an existing session's project always wins, and a mismatch is ignored+warned
+   * exactly like `linkRun`'s own guard. Idempotent: relinking the same run onto an already-linked
+   * session is a no-op (no repository write, no re-emit).
+   */
+  onRunLinked(e: BusEvents['run.linked']): void {
+    const run = this.deps.runDispatcher.get(e.runId);
+    if (!run || run.kind !== 'quest') return; // never link a Session to a non-quest (receptionist) run
+    if (!e.projectId) {
+      this.deps.logger.warn({ runId: e.runId, sessionId: e.sessionId }, 'ignoring run.linked: run has no projectId');
+      return;
+    }
+    const repo = this.deps.sessionsRepository;
+    const prev = repo.get(e.sessionId);
+    if (prev && prev.projectId !== e.projectId) {
+      this.deps.logger.warn(
+        { runId: e.runId, sessionId: e.sessionId, runProjectId: e.projectId, sessionProjectId: prev.projectId },
+        'ignoring run.linked: run does not belong to this session project',
+      );
+      return;
+    }
+    if (prev?.runId === e.runId && prev.origin === 'quest') return; // already linked: idempotent re-link
+    const now = Date.now();
+    const next: Session = prev
+      ? { ...prev, runId: e.runId, origin: 'quest' }
+      : { id: e.sessionId, projectId: e.projectId, status: 'active', startedAt: now, runId: e.runId, origin: 'quest' };
+    repo.upsert(next, now);
+    this.deps.bus.emit('session.upserted', next);
   }
 
   /**

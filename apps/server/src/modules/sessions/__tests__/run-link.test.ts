@@ -132,3 +132,116 @@ describe('sessions <-> runs linking (M8 8k, S5, §2.6 "Hint")', () => {
     expect(session?.origin).toBe('cli');
   });
 });
+
+describe('sessions <-> runs linking (M8 bugfix: §2.6 "Authoritative" run.linked)', () => {
+  let app: App | undefined;
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  it('init-before-SessionStart: creates the session row lazily, and a later SessionStart keeps the link', async () => {
+    app = await buildTestApp();
+    const projectId = projectIdFor(CWD);
+    app.diContainer.cradle.runsRepository.insert(baseRun({ projectId }));
+
+    const upserts: unknown[] = [];
+    app.diContainer.cradle.bus.on('session.upserted', (s) => upserts.push(s));
+    app.diContainer.cradle.bus.emit('run.linked', { runId: RUN_ID, sessionId: SESSION, projectId });
+    expect(upserts).toHaveLength(1);
+
+    let snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
+    let session = snap.sessions.find((s) => s.id === SESSION);
+    expect(session?.runId).toBe(RUN_ID);
+    expect(session?.origin).toBe('quest');
+    expect(session?.status).toBe('active');
+    expect(session?.projectId).toBe(projectId);
+
+    // The SessionStart hook arrives afterwards: it must not reset the link back to cli/undefined.
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: { session_id: SESSION, cwd: CWD, hook_event_name: 'SessionStart' },
+    });
+    expect(res.statusCode).toBe(202);
+
+    snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
+    session = snap.sessions.find((s) => s.id === SESSION);
+    expect(session?.runId).toBe(RUN_ID);
+    expect(session?.origin).toBe('quest');
+  });
+
+  it('SessionStart-before-init: an existing cli session is upgraded to quest + its run id', async () => {
+    app = await buildTestApp();
+    const projectId = projectIdFor(CWD);
+    app.diContainer.cradle.runsRepository.insert(baseRun({ projectId }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: { session_id: SESSION, cwd: CWD, hook_event_name: 'SessionStart' },
+    });
+    expect(res.statusCode).toBe(202);
+
+    let snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
+    let session = snap.sessions.find((s) => s.id === SESSION);
+    expect(session?.origin).toBe('cli');
+    expect(session?.runId).toBeUndefined();
+
+    app.diContainer.cradle.bus.emit('run.linked', { runId: RUN_ID, sessionId: SESSION, projectId });
+
+    snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
+    session = snap.sessions.find((s) => s.id === SESSION);
+    expect(session?.runId).toBe(RUN_ID);
+    expect(session?.origin).toBe('quest');
+  });
+
+  it('never crosses projects: a run.linked whose project differs from an existing session is ignored', async () => {
+    app = await buildTestApp();
+    const projectId = projectIdFor(CWD);
+    const otherProjectId = projectIdFor(OTHER_CWD);
+    app.diContainer.cradle.runsRepository.insert(baseRun({ projectId: otherProjectId }));
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/hooks',
+      payload: { session_id: SESSION, cwd: CWD, hook_event_name: 'SessionStart' },
+    });
+
+    app.diContainer.cradle.bus.emit('run.linked', { runId: RUN_ID, sessionId: SESSION, projectId: otherProjectId });
+
+    const snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
+    const session = snap.sessions.find((s) => s.id === SESSION);
+    expect(session?.runId).toBeUndefined();
+    expect(session?.origin).toBe('cli');
+    expect(session?.projectId).toBe(projectId);
+  });
+
+  it('is idempotent: relinking the same run onto an already-linked session is a no-op', async () => {
+    app = await buildTestApp();
+    const projectId = projectIdFor(CWD);
+    app.diContainer.cradle.runsRepository.insert(baseRun({ projectId }));
+
+    app.diContainer.cradle.bus.emit('run.linked', { runId: RUN_ID, sessionId: SESSION, projectId });
+    const upserts: unknown[] = [];
+    app.diContainer.cradle.bus.on('session.upserted', (s) => upserts.push(s));
+    app.diContainer.cradle.bus.emit('run.linked', { runId: RUN_ID, sessionId: SESSION, projectId });
+    expect(upserts).toHaveLength(0); // already linked: no redundant repository write or re-emit
+
+    const snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
+    const session = snap.sessions.find((s) => s.id === SESSION);
+    expect(session?.runId).toBe(RUN_ID);
+    expect(session?.origin).toBe('quest');
+  });
+
+  it('never links a Session to a non-quest (receptionist) run', async () => {
+    app = await buildTestApp();
+    const projectId = projectIdFor(CWD);
+    app.diContainer.cradle.runsRepository.insert(baseRun({ kind: 'receptionist', projectId }));
+
+    app.diContainer.cradle.bus.emit('run.linked', { runId: RUN_ID, sessionId: SESSION, projectId });
+
+    const snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
+    expect(snap.sessions.find((s) => s.id === SESSION)).toBeUndefined();
+  });
+});
