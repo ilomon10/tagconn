@@ -15,7 +15,9 @@ onto in-scene stairs.
 | `F` | Open **Manage floors**. |
 | `H` | Open the [Heroes](#heroes-h) panel for the current floor. |
 | `V` | Turn the [screen effect](display.md#screen-effect-per-browser) on or off for this browser. |
-| `Esc` | Close whatever panel/drawer is open. |
+| `[` / `]` | Select the previous / next character on this floor (same order as the roster). The drawer opens and screen readers announce who is selected. |
+| `?` | Show every keyboard shortcut (also the **?** button in the top bar). |
+| `Esc` | Close the dialog or panel on top (Manage floors, the sessions popover, the shortcuts list, then the character drawer). |
 
 Hotkeys are ignored while you're typing in a text field, while a modal (Hall Planner, Heroes,
 Receptionist, ...) is open, or mid-transition.
@@ -120,3 +122,14 @@ config file/env var that controls them instead. A **restart required** badge mar
 take effect after the server process restarts.
 
 Next: [Attribution](attribution.md).
+
+## Accessibility
+
+- Everything in the office can be reached from the keyboard: `[` / `]` move between characters, and
+  dialogs keep keyboard focus inside until you close them, then give it back to where you were.
+- Characters, stairs and realm areas keep a click area of at least about 24 screen pixels however far
+  you zoom out.
+- With your system's **reduced motion** setting on, characters stop fading, glows stop pulsing, the camera
+  jumps instead of gliding, and the screen effects hold still.
+- Text meets WCAG AA contrast (4.5:1) on the dark panels.
+

@@ -12,7 +12,10 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 - **Edge vignette in pixel style**: the vignette now darkens only a thin frame along the screen edges (`vignetteSize`, default 12% of the shorter side), drawn as 4 hard pixel-art bands (25/50/75/100%). `vignetteStyle: smooth` gives a soft fade instead; `vignetteSteps` and `vignettePixel` tune the bands.
 - **User guide** in `docs/guide/`: getting started, pairing your browser, runner and quests, the Receptionist, the office, attribution, display, configuration and troubleshooting.
 
+- **Keyboard and accessibility pass**: `[` / `]` step through the characters on a floor (with a screen-reader announcement), `?` opens a list of every shortcut, dialogs keep and return keyboard focus and close with Esc, click areas stay at least 24px when zoomed out, and reduced motion now also stops the leave fade and pulsing dots.
+
 ### Fixed
+- Low-contrast grey captions in the top bar and roster, and the red "needs you" badge, now meet WCAG AA.
 - Saving in a browser that isn't paired now asks you to pair straight away (and opens the pairing dialog) instead of failing after 10 seconds with "Timed out waiting for settings:update".
 - The hover tooltip ("Travel to …", stairs) now sits right next to the cursor at every zoom level, and no longer stays on screen after you travel.
 - `pnpm office:pair` explains what to do when the server has no runner token yet (run `pnpm office:install`, then `pnpm office:up`).
