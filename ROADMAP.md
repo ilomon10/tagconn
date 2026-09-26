@@ -92,7 +92,7 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [x] Contract patch A (heroes, pm mode, multiverse) applied  [PM]
 - [x] Contract patch B (runner/auth/receptionist/attribution; whole runner + auth sections GUI-immutable)  [PM]
 - [x] Wave B1: S1 admin auth/pairing/gating [x] · S2 runs module + /runner HMAC [x] · R1 host runner [x] (protocol verified against a real socket.io server) · I1 hook/installer/doctor/pair [x] · D1 nginx CSP [x]
-- [~] Wave B2: S3 receptionist module [x] · S4 attribution module [x] · S5 run↔session linking [x] · W1 web auth [x] · W2 quest board [~] · W3 receptionist UI [~] · W4 settings/attribution UI + Vite CSP [~]
+- [~] Wave B2: S3 receptionist module [x] · S4 attribution module [x] · S5 run↔session linking [x] · W1 web auth [x] · W2 quest board [~] · W3 receptionist UI [~] · W4 settings/attribution UI + Vite CSP [~] (restarted 2026-09-26 after a usage-limit interruption)
 - [x] SC2 security review of S1 + S2: NOT READY: 1 High (unauthenticated /runner crash, confirmed), 5 Med (idle expiry never runs out, pairing lockout DoS, runner.enabled ignored, missing server dir check, caps don't stop storage), 8 Low; flakes are test-side fixed sleeps
 - [x] SC2 fixes (auth + runs): H1 crash fixed (safe-ack + try/catch in runs.gateway.ts), M1-M5 and L1-L8 all addressed (idle-expiry touch split, pairing bucket separation, runner.enabled enforced at handshake+enqueue, server-side dir check + pre-dispatch schema parse, output-cap drop-and-single-stop with a persisted byte counter, redaction, resume provenance, unverified-socket cap, boot token validation); flaky fixed-sleep tests replaced with vi.waitFor; awaits Q1 sign-off  [Developer: server]
 - [ ] Q1 M8 security tests + real-CLI R1 acceptance (a)–(i) in sandbox; SC2 (after S1+S2)
@@ -120,7 +120,7 @@ so parallel or old sessions leave extra PMs on a floor.
 - [ ] 8m. **GUI admin auth for code execution** (decision 12 revisited): because the browser can now start Claude runs, run and receptionist actions need an admin session. It is a same-origin bootstrap token issued to the local UI, sent in the socket handshake and on REST writes, separate from the hook and runner tokens. There are regression tests for cross-origin, CSRF and rebinding attempts against the run endpoints.  [Architect + Security → Developer: server + web]
 - [~] 8n. **Richer rooms + door editing + reachability** (user request): furnishing fills rooms properly for their size and type (no more mostly empty server rooms); per-room controls (density, seat/desk count, decoration amount, aisle width, reroll seed) and layout-wide defaults; editable doors (add, move, resize, delete; explicit list or auto); a reachability check that shows exactly which rooms or seats are blocked and why, with one-click fixes. Contract done (`RoomFurnish`, `DoorSpec`, door validation).
   - [x] P1 procgen furnishing engine + doors + reachability report (16 new furniture kinds; 3 reachability bugs fixed)  [Developer: web]
-  - [~] T1 new furniture/decor kinds painted in modern, guild and rift  [Developer: web]
+  - [~] T1 new furniture/decor kinds painted in modern, guild and rift (restarted after a usage-limit interruption)  [Developer: web]
   - [x] E1 Hall Planner: furnishing inspector, door tool, reachability overlay with one-click fixes  [Developer: web]
 - [ ] 8g. Review + security + QA → v0.3.0
 
