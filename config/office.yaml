@@ -132,6 +132,26 @@ office: {}
   #                                  # projects group into one "Other realms" realm
   # multiverseMaxCharacters: 60      # character cap on the Multiverse floor, split fairly
   #                                  # across realms (Guild Masters first)
+  # shaders: {}                      # M8 8o WebGL post-processing; M9 monitor screen effects.
+  #                                    Ignored on the canvas renderer (WebGL unavailable).
+  #   enabled: true
+  #   quality: "auto"                # auto | low | high. auto measures frame time for ~2s.
+  #   bloom: 0.45                    # 0..1. Glow around torches, braziers, monitors, windows; 0 = off.
+  #   vignette: 0.4                  # 0..1. Darkness at the very screen edge; 0 = off.
+  #   vignetteSize: 0.12             # 0.03..0.4. Frame width, fraction of the shorter side; the middle stays clean.
+  #   vignetteStyle: "pixel"         # pixel | smooth. pixel: hard stepped bands on a blocky
+  #                                    grid (default). smooth: a soft fade along the edges.
+  #   vignetteSteps: 4               # 2..8. Pixel style shade bands (4 = 25/50/75/100%).
+  #   vignettePixel: 4               # 1..16. Pixel style block size, in art pixels; scales
+  #                                    with the camera zoom.
+  #   grading: true                  # Per-style color grading (warm office, candlelit guild,
+  #                                    aurora rift).
+  #   lightGlow: true                # Soft animated glow pools under light sources.
+  #   screen: "off"                  # off | crt | lcd | vhs. Server default monitor effect;
+  #                                    each browser's top bar "Screen" button may override it.
+  #   screenStrength: 0.6            # 0..1. Screen effect intensity.
+  #   scanlines: false               # Legacy: CRT look on the modern style, used only while
+  #                                    `screen` is "off". Prefer `screen: "crt"`.
 
 notifications: {}
   # onWaiting: true

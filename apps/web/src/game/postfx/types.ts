@@ -1,9 +1,11 @@
-// apps/web/src/game/postfx/types.ts  (M8 8o: WebGL shaders / post-processing)
+// apps/web/src/game/postfx/types.ts  (M8 8o: WebGL shaders / post-processing; M9: screen effects + pixel vignette)
 //
-// Pure types shared by the postfx logic modules (grading.ts, lights.ts, quality.ts, uniforms.ts)
-// and the Phaser-facing pieces (GradingPipeline.ts, ScanlinesPipeline.ts, LightLayer.ts,
-// PostFxController.ts). Kept dependency-free (no Phaser import, runtime or type) so the logic
-// modules stay importable from vitest's node environment without touching `window`.
+// Pure types shared by the postfx logic modules (grading.ts, lights.ts, quality.ts, uniforms.ts,
+// vignette.ts) and the Phaser-facing pieces (GradingPipeline.ts, ScreenPipeline.ts,
+// VignettePipeline.ts, LightLayer.ts, PostFxController.ts). Kept dependency-free (no Phaser import,
+// runtime or type) so the logic modules stay importable from vitest's node environment without
+// touching `window`.
+import type { ScreenEffect } from '@tagconn/shared';
 
 /** Resolved (never `'auto'`) render quality — `PostFxController` resolves `'auto'` down to one of
  *  these via `quality.ts` before anything here is consulted. */
@@ -42,6 +44,27 @@ export interface LightSource {
   flicker: boolean;
 }
 
+/** Resolved `office.shaders` vignette fields, ready for `VignettePipeline`'s uniforms; `strength: 0`
+ *  disables the pipeline's effect outright (an exact pass-through, not a removed pipeline). */
+export interface ResolvedVignette {
+  strength: number;
+  style: 'pixel' | 'smooth';
+  /** Pixel style band count (`office.shaders.vignetteSteps`); unused by `'smooth'`. */
+  steps: number;
+  /** Pixel style block size in art px (`office.shaders.vignettePixel`); unused by `'smooth'`. */
+  pixel: number;
+  /** Frame width as a fraction of the shorter screen side (`office.shaders.vignetteSize`). */
+  size: number;
+}
+
+/** Resolved monitor screen effect (`office.shaders.screen`, plus any per-browser override) — see
+ *  `uniforms.ts#resolveShaderConfig` for the precedence. `mode: 'off'` (or `strength: 0`) is an exact
+ *  pass-through, per `ScreenPipeline`'s own guard. */
+export interface ResolvedScreen {
+  mode: ScreenEffect;
+  strength: number;
+}
+
 /** Everything `PostFxController` needs for one frame, fully resolved from
  *  `Settings['office']['shaders']` + the active style + the resolved quality — see `uniforms.ts`. */
 export interface ResolvedShaderConfig {
@@ -49,14 +72,12 @@ export interface ResolvedShaderConfig {
   quality: ShaderQuality;
   /** `null` when grading is off (or shaders are off entirely) — no pipeline should be attached. */
   grading: GradingPreset | null;
-  /** 0 disables the vignette pipeline outright. */
-  vignetteStrength: number;
+  vignette: ResolvedVignette;
   /** 0 disables the bloom pass on the light layer (plain additive sprites still draw, see 8o.1c). */
   bloomStrength: number;
   /** Whether the light layer's glow sprites exist at all. */
   lightGlow: boolean;
-  /** CRT scanlines + mild curvature/chromatic offset — modern style only, per requirement 8o.1d. */
-  scanlines: boolean;
+  screen: ResolvedScreen;
   /** Cap on simultaneous light sprites; lower on `'low'` quality (requirement 8o.3). */
   maxLights: number;
 }

@@ -37,7 +37,7 @@ import {
   type ThemeRegion,
 } from '../themes';
 import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets } from '../camera/insets';
-import { zoomCameraAboutPoint } from '../camera/zoom';
+import { fixedPositionForScreenPoint, zoomCameraAboutPoint } from '../camera/zoom';
 import { isDragMove } from '../camera/drag';
 import { counterScale, labelVisible, layoutLabels, type LabelSubject } from '../labels';
 import { PostFxController } from '../postfx/PostFxController';
@@ -93,6 +93,9 @@ export interface OfficeState {
    *  `resolveCast` call uses — a pin isn't absolute (a challenger that needs you can still preempt it
    *  for one cycle), but it is fed back in every frame, so it wins back the next one. */
   pinnedPrimary: Record<string, string>;
+  /** M9: this browser's monitor screen effect (the per-browser toggle over the server default,
+   *  resolved in OfficeView). Omitted = follow `office.shaders.screen`. */
+  screenFx?: { on: boolean; effect: 'crt' | 'lcd' | 'vhs' };
 }
 
 const parseColor = (c: string | undefined, fallback = 0x8e8e9e) => {
@@ -311,7 +314,7 @@ export class OfficeScene extends Phaser.Scene {
     this.setupCamera();
     this.themeTimer = this.time.addEvent({ delay: 60_000, loop: true, callback: () => this.applyLighting() });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (this.tooltip.visible) this.tooltip.setPosition(p.x + 14, p.y - 10);
+      if (this.tooltip.visible) this.placeTooltip(p);
     });
     this.scale.on('resize', () => this.fitCamera());
     window.addEventListener('blur', this.endDragOnBlur);
@@ -335,6 +338,7 @@ export class OfficeScene extends Phaser.Scene {
    *  world position unless `setOfficeState` also decides to reseat them (a real layout change).
    *  `multiverse` is non-null exactly when this is the Multiverse floor (M8 8h). */
   private buildWorld(layout: OfficeLayout, style: OfficeStyle | typeof MULTIVERSE_THEME_ID, multiverse: MultiversePlan | null) {
+    this.hideTooltip();
     this.map = generateMap(layout);
     this.theme = getTheme(style);
     this.appliedStyle = style;
@@ -470,6 +474,52 @@ export class OfficeScene extends Phaser.Scene {
     }
   }
 
+  // ---------------------------------------------------------------- tooltip
+
+  /** Shows the hover tooltip with `text`, placed at the current pointer. No-op while `inputLocked`
+   *  (a stairs/realm click starts a transition or rebuild that will tear the hovered zone down
+   *  before its `pointerout` can fire — see `hideTooltip` call sites below). */
+  private showTooltip(text: string) {
+    if (this.inputLocked) return;
+    this.tooltip.setText(text).setVisible(true);
+    this.placeTooltip();
+  }
+
+  private hideTooltip() {
+    this.tooltip.setVisible(false);
+  }
+
+  /**
+   * Positions the (`setScrollFactor(0)`) tooltip so it reads as pinned to the pointer regardless of
+   * camera zoom, and stays legible size (11px) instead of scaling with it — see `fixedPositionForScreenPoint`'s
+   * doc comment for why a scroll-factor-0 object still needs this correction. Defaults to the
+   * default pointer offset (right + above the cursor), flipped to the left/below near the canvas'
+   * right/top edges so the box never runs off-screen.
+   */
+  private placeTooltip(p: Phaser.Input.Pointer = this.input.activePointer) {
+    const cam = this.cameras.main;
+    const zoom = cam.zoom;
+    this.tooltip.setScale(1 / zoom);
+    const w = this.tooltip.width;
+    const h = this.tooltip.height;
+    const margin = 8;
+    let originX = 0;
+    let originY = 1;
+    let offsetX = 14;
+    let offsetY = -10;
+    if (p.x + offsetX + w > cam.width - margin) {
+      originX = 1;
+      offsetX = -14;
+    }
+    if (p.y + offsetY - h < margin) {
+      originY = 0;
+      offsetY = 10;
+    }
+    this.tooltip.setOrigin(originX, originY);
+    const { x, y } = fixedPositionForScreenPoint({ screenX: p.x + offsetX, screenY: p.y + offsetY, zoom, camWidth: cam.width, camHeight: cam.height });
+    this.tooltip.setPosition(x, y);
+  }
+
   // ---------------------------------------------------------------- stairs
 
   private buildStairsInteractive() {
@@ -490,7 +540,10 @@ export class OfficeScene extends Phaser.Scene {
       zone.on('pointerover', () => this.hoverStairs(spot, ring));
       zone.on('pointerout', () => this.unhoverStairs(ring));
       zone.on('pointerup', () => {
-        if (!this.inputLocked) this.events.emit('stairs', spot.dir);
+        if (!this.inputLocked) {
+          this.hideTooltip();
+          this.events.emit('stairs', spot.dir);
+        }
       });
       this.stairsSprites.push({ spot, zone, ring });
     }
@@ -502,12 +555,12 @@ export class OfficeScene extends Phaser.Scene {
     const floor = this.state?.floor ?? null;
     const target = spot.dir === 'up' ? floor?.above : floor?.below;
     const text = floor === null ? 'Open the floor picker' : target ? `${spot.dir === 'up' ? 'Up to' : 'Down to'} ${target.label}` : 'No floor this way';
-    this.tooltip.setText(text).setVisible(true);
+    this.showTooltip(text);
   }
 
   private unhoverStairs(ring: Phaser.GameObjects.Arc) {
     ring.setScale(1);
-    this.tooltip.setVisible(false);
+    this.hideTooltip();
   }
 
   /** Grey out a direction with no floor to reach; a floor with no `OfficeFloorInfo` at all (only
@@ -547,14 +600,15 @@ export class OfficeScene extends Phaser.Scene {
       zone.on('pointerover', () => {
         outline.clear().lineStyle(2, accent, 0.85).strokeRect(px + 1, py + 1, pw - 2, ph - 2);
         outline.setVisible(true);
-        this.tooltip.setText(realm.overflow ? `Open the floor picker · ${realm.name}` : `Travel to ${realm.name}`).setVisible(true);
+        this.showTooltip(realm.overflow ? `Open the floor picker · ${realm.name}` : `Travel to ${realm.name}`);
       });
       zone.on('pointerout', () => {
         outline.setVisible(false);
-        this.tooltip.setVisible(false);
+        this.hideTooltip();
       });
       zone.on('pointerup', () => {
         if (this.inputLocked || this.drag?.moved) return;
+        this.hideTooltip();
         this.events.emit('realmClick', realm.overflow ? null : (realm.projectIds[0] ?? null));
       });
       this.realmZoneSprites.push({ zone, outline });
@@ -570,6 +624,7 @@ export class OfficeScene extends Phaser.Scene {
    */
   runTransition(ms: number, dir?: 'up' | 'down'): Promise<void> {
     this.inputLocked = true;
+    this.hideTooltip();
     const cam = this.cameras.main;
     // Saved so `finishTransition` can restore them instead of leaving the bump/nudge applied.
     this.preTransitionZoom = cam.zoom;
@@ -661,6 +716,7 @@ export class OfficeScene extends Phaser.Scene {
       cam.setScroll(scrollX, scrollY);
       this.panned = true;
       this.clampCamera();
+      if (this.tooltip.visible) this.placeTooltip(p);
     });
   }
 
@@ -676,6 +732,7 @@ export class OfficeScene extends Phaser.Scene {
     cam.setZoom(this.targetZoom());
     if (!this.panned) cam.centerOn(this.worldW / 2, this.worldH / 2);
     this.clampCamera();
+    if (this.tooltip.visible) this.placeTooltip();
   }
 
   resetView() {
@@ -804,7 +861,7 @@ export class OfficeScene extends Phaser.Scene {
     this.refreshStairsAvailability();
     if (prevZoom !== office.zoom) this.fitCamera();
     this.applyLighting();
-    this.postFx.applySettings(office.shaders, effectiveStyle);
+    this.postFx.applySettings(office.shaders, effectiveStyle, prefersReducedMotion(), state.screenFx);
     this.receptionistNpc?.setVisible(state.settings.receptionist.enabled);
 
     const instant = this.floorKey !== state.floorKey;
@@ -1175,6 +1232,8 @@ export class OfficeScene extends Phaser.Scene {
 
   update(time: number, delta: number) {
     this.postFx.sampleFrame(delta);
+    // Pixel-vignette blocks and the LCD grid follow the camera zoom (incl. transition tweens); a field set.
+    this.postFx.setZoom(this.cameras.main.zoom);
     const speed = this.state?.settings.office.walkSpeed ?? 120;
     for (const [key, c] of this.characters) {
       c.update(time, delta, speed);

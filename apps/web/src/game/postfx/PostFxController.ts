@@ -1,12 +1,14 @@
-// apps/web/src/game/postfx/PostFxController.ts  (M8 8o: orchestrates the shader stack)
+// apps/web/src/game/postfx/PostFxController.ts  (M8 8o: orchestrates the shader stack; M9: screen effects + pixel vignette)
 //
-// The only Phaser-facing entry point `OfficeScene` talks to. Owns three things attached to
+// The only Phaser-facing entry point `OfficeScene` talks to. Owns three pipelines attached to
 // `cameras.main` for the whole scene lifetime (created once, never re-added — see the note on
 // `setPostPipeline` having no dedupe guard, which is why every toggle below is a uniform flip
-// rather than an add/remove):
+// rather than an add/remove), in chain order:
 //   1. `GradingPipeline` — disabled by swapping in the identity preset (a true no-op grade).
-//   2. `ScanlinesPipeline` — disabled via `strength = 0` (a true no-op pass).
-//   3. the built-in `VignetteFXPipeline` (`camera.postFX.addVignette`) — disabled via `strength = 0`.
+//   2. `ScreenPipeline` — the monitor screen effect (CRT/LCD/VHS); disabled via `mode = 0` (a true
+//      no-op pass, see its own header).
+//   3. `VignettePipeline` — replaces the old built-in `camera.postFX.addVignette`; disabled via
+//      `strength = 0` (also a true no-op pass).
 // Plus a `LightLayer` (its own Container + bloom postFX), rebuilt only when the map/style changes.
 //
 // Any WebGL failure (canvas renderer, a pipeline that fails to compile, ...) is caught and turns
@@ -21,9 +23,10 @@ import { GradingPipeline } from './GradingPipeline';
 import { extractLightSources } from './lights';
 import { LightLayer } from './LightLayer';
 import { createAutoQualityState, effectiveQuality, resolveAutoQuality, sampleAutoQuality, type AutoQualityState } from './quality';
-import { ScanlinesPipeline } from './ScanlinesPipeline';
+import { ScreenPipeline } from './ScreenPipeline';
 import type { ShaderQuality } from './types';
-import { resolveShaderConfig, type ShaderSettings } from './uniforms';
+import { resolveShaderConfig, type ScreenOverride, type ShaderSettings } from './uniforms';
+import { VignettePipeline } from './VignettePipeline';
 
 /** Just above `OfficeScene`'s night-tint rectangle (depth 90_000) so torch/lamp glow reads through
  *  the dark-mode overlay instead of being dimmed by it — the whole point of a "cozy lit" mood. */
@@ -34,8 +37,8 @@ let loggedFailure = false;
 export class PostFxController {
   private webgl = false;
   private gradingPipeline: GradingPipeline | null = null;
-  private scanlinesPipeline: ScanlinesPipeline | null = null;
-  private vignette: Phaser.FX.Vignette | null = null;
+  private screenPipeline: ScreenPipeline | null = null;
+  private vignettePipeline: VignettePipeline | null = null;
   private lightLayer: LightLayer | null = null;
 
   private autoQuality: AutoQualityState = createAutoQualityState();
@@ -51,16 +54,19 @@ export class PostFxController {
       // idempotent (keyed by name), so re-running this on every scene create is harmless.
       const pipelines = (renderer as Phaser.Renderer.WebGL.WebGLRenderer).pipelines;
       pipelines.addPostPipeline('office-grading', GradingPipeline);
-      pipelines.addPostPipeline('office-scanlines', ScanlinesPipeline);
+      pipelines.addPostPipeline('office-screen', ScreenPipeline);
+      pipelines.addPostPipeline('office-vignette', VignettePipeline);
 
       const cam = scene.cameras.main;
+      // Chain order: grading -> screen -> vignette.
       cam.setPostPipeline(GradingPipeline);
       this.gradingPipeline = firstPipeline<GradingPipeline>(cam.getPostPipeline(GradingPipeline));
-      cam.setPostPipeline(ScanlinesPipeline);
-      this.scanlinesPipeline = firstPipeline<ScanlinesPipeline>(cam.getPostPipeline(ScanlinesPipeline));
-      this.vignette = cam.postFX.addVignette(0.5, 0.5, 0.65, 0);
+      cam.setPostPipeline(ScreenPipeline);
+      this.screenPipeline = firstPipeline<ScreenPipeline>(cam.getPostPipeline(ScreenPipeline));
+      cam.setPostPipeline(VignettePipeline);
+      this.vignettePipeline = firstPipeline<VignettePipeline>(cam.getPostPipeline(VignettePipeline));
       this.lightLayer = new LightLayer(scene, LIGHT_LAYER_DEPTH);
-      this.webgl = !!this.gradingPipeline && !!this.scanlinesPipeline;
+      this.webgl = !!this.gradingPipeline && !!this.screenPipeline && !!this.vignettePipeline;
     } catch (err) {
       this.disable(err);
     }
@@ -79,14 +85,14 @@ export class PostFxController {
     this.webgl = false;
     try {
       if (this.gradingPipeline) this.scene.cameras.main.removePostPipeline(this.gradingPipeline);
-      if (this.scanlinesPipeline) this.scene.cameras.main.removePostPipeline(this.scanlinesPipeline);
-      if (this.vignette) this.scene.cameras.main.postFX.remove(this.vignette);
+      if (this.screenPipeline) this.scene.cameras.main.removePostPipeline(this.screenPipeline);
+      if (this.vignettePipeline) this.scene.cameras.main.removePostPipeline(this.vignettePipeline);
     } catch {
       /* best effort */
     }
     this.gradingPipeline = null;
-    this.scanlinesPipeline = null;
-    this.vignette = null;
+    this.screenPipeline = null;
+    this.vignettePipeline = null;
     this.lightLayer?.destroy();
     this.lightLayer = null;
   }
@@ -109,21 +115,45 @@ export class PostFxController {
     return this.lastQuality;
   }
 
-  /** Hot-applies `office.shaders` + the active style — safe to call every `setOfficeState` pass; no
-   *  pipeline is ever added/removed here, only its uniforms/strength are updated (see the header note
-   *  on why: `setPostPipeline` has no dedupe guard, so toggling by add/remove would leak duplicates). */
-  applySettings(shaders: ShaderSettings, style: OfficeStyle | typeof MULTIVERSE_THEME_ID): void {
+  /**
+   * Hot-applies `office.shaders` + the active style + the current per-browser screen-effect
+   * override (if any) — safe to call every `setOfficeState` pass; no pipeline is ever added/removed
+   * here, only its uniforms/strength are updated (see the header note on why: `setPostPipeline` has
+   * no dedupe guard, so toggling by add/remove would leak duplicates). `reducedMotion` freezes the
+   * screen effect's time-based motion (CRT flicker, VHS wobble/drift) — pass `prefersReducedMotion()`.
+   */
+  applySettings(shaders: ShaderSettings, style: OfficeStyle | typeof MULTIVERSE_THEME_ID, reducedMotion: boolean, screenOverride?: ScreenOverride): void {
     if (!this.webgl) return;
     const quality = this.resolveQuality(shaders.quality);
-    const cfg = resolveShaderConfig(shaders, style, quality);
+    const cfg = resolveShaderConfig(shaders, style, quality, screenOverride);
     try {
       this.gradingPipeline?.setPreset(cfg.grading ?? IDENTITY_GRADING);
-      if (this.scanlinesPipeline) this.scanlinesPipeline.strength = cfg.scanlines ? 1 : 0;
-      if (this.vignette) this.vignette.strength = cfg.vignetteStrength;
+      if (this.screenPipeline) {
+        this.screenPipeline.setEffect(cfg.screen.mode);
+        this.screenPipeline.strength = cfg.screen.strength;
+        this.screenPipeline.reducedMotion = reducedMotion;
+        this.screenPipeline.lowQuality = cfg.quality === 'low';
+      }
+      if (this.vignettePipeline) {
+        this.vignettePipeline.setStyle(cfg.vignette.style);
+        this.vignettePipeline.strength = cfg.vignette.strength;
+        this.vignettePipeline.steps = cfg.vignette.steps;
+        this.vignettePipeline.pixelSize = cfg.vignette.pixel;
+        this.vignettePipeline.size = cfg.vignette.size;
+      }
       this.lightLayer?.setBloom(cfg.bloomStrength, cfg.quality);
     } catch (err) {
       this.disable(err);
     }
+  }
+
+  /** Keeps the pixel vignette's block grid and the LCD subpixel grid aligned with the art's own
+   *  pixels as the camera zooms — a cheap uniform set, call from every zoom-changing spot (the wheel
+   *  handler, `zoomBy`, `resetView`, `fitCamera`), not just `setOfficeState`. */
+  setZoom(zoom: number): void {
+    if (!this.webgl) return;
+    if (this.screenPipeline) this.screenPipeline.zoom = zoom;
+    if (this.vignettePipeline) this.vignettePipeline.zoom = zoom;
   }
 
   /** Rebuilds the light layer's glow sprites for the current map — call from `buildWorld`/`applySkin`
@@ -144,16 +174,16 @@ export class PostFxController {
   destroy(): void {
     try {
       if (this.gradingPipeline) this.scene.cameras.main.removePostPipeline(this.gradingPipeline);
-      if (this.scanlinesPipeline) this.scene.cameras.main.removePostPipeline(this.scanlinesPipeline);
-      if (this.vignette) this.scene.cameras.main.postFX.remove(this.vignette);
+      if (this.screenPipeline) this.scene.cameras.main.removePostPipeline(this.screenPipeline);
+      if (this.vignettePipeline) this.scene.cameras.main.removePostPipeline(this.vignettePipeline);
     } catch {
       /* scene may already be tearing down its renderer */
     }
     this.lightLayer?.destroy();
     this.lightLayer = null;
     this.gradingPipeline = null;
-    this.scanlinesPipeline = null;
-    this.vignette = null;
+    this.screenPipeline = null;
+    this.vignettePipeline = null;
     this.webgl = false;
   }
 }

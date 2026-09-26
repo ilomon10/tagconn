@@ -74,6 +74,8 @@ function RunnerNotice() {
 
 type Shaders = Settings['office']['shaders'];
 const SHADER_QUALITY: Shaders['quality'][] = ['auto', 'low', 'high'];
+const SHADER_VIGNETTE_STYLE: Shaders['vignetteStyle'][] = ['pixel', 'smooth'];
+const SHADER_SCREEN: Shaders['screen'][] = ['off', 'crt', 'lcd', 'vhs'];
 
 /** A 0-1 shader parameter as a labelled range slider (bloom, vignette) — a boxed text `Input` reads
  *  poorly for "how much", and the schema already bounds it to [0, 1]. */
@@ -119,11 +121,37 @@ function ShaderEffectsGroup({ value, base, onChange }: { value: Shaders; base: S
         <Field label={label('Vignette', 'vignette')} hint={KEY_HINTS['office.shaders.vignette']}>
           <ShaderSlider value={value.vignette} onChange={(v) => set('vignette', v)} />
         </Field>
+        <Field label={label('Vignette width', 'vignetteSize')} hint={KEY_HINTS['office.shaders.vignetteSize']}>
+          <Input type="number" min={0.03} max={0.4} step={0.01} value={value.vignetteSize} onChange={(e) => set('vignetteSize', Number(e.target.value))} />
+        </Field>
+        <Field label={label('Vignette style', 'vignetteStyle')} hint={KEY_HINTS['office.shaders.vignetteStyle']}>
+          <Select value={value.vignetteStyle} onChange={(e) => set('vignetteStyle', e.target.value as Shaders['vignetteStyle'])}>
+            {SHADER_VIGNETTE_STYLE.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label={label('Vignette bands', 'vignetteSteps')} hint={KEY_HINTS['office.shaders.vignetteSteps']}>
+          <Input type="number" min={2} max={8} step={1} value={value.vignetteSteps} onChange={(e) => set('vignetteSteps', Number(e.target.value))} />
+        </Field>
+        <Field label={label('Vignette pixel size', 'vignettePixel')} hint={KEY_HINTS['office.shaders.vignettePixel']}>
+          <Input type="number" min={1} max={16} step={1} value={value.vignettePixel} onChange={(e) => set('vignettePixel', Number(e.target.value))} />
+        </Field>
         <Field label={label('Color grading', 'grading')} hint={KEY_HINTS['office.shaders.grading']}>
           <Checkbox checked={value.grading} onChange={(v) => set('grading', v)} label={value.grading ? 'On' : 'Off'} />
         </Field>
         <Field label={label('Light glow', 'lightGlow')} hint={KEY_HINTS['office.shaders.lightGlow']}>
           <Checkbox checked={value.lightGlow} onChange={(v) => set('lightGlow', v)} label={value.lightGlow ? 'On' : 'Off'} />
+        </Field>
+        <Field label={label('Screen effect', 'screen')} hint={KEY_HINTS['office.shaders.screen']}>
+          <Select value={value.screen} onChange={(e) => set('screen', e.target.value as Shaders['screen'])}>
+            {SHADER_SCREEN.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label={label('Screen strength', 'screenStrength')} hint={KEY_HINTS['office.shaders.screenStrength']}>
+          <ShaderSlider value={value.screenStrength} onChange={(v) => set('screenStrength', v)} />
         </Field>
         <Field label={label('Scanlines', 'scanlines')} hint={KEY_HINTS['office.shaders.scanlines']}>
           <Checkbox checked={value.scanlines} onChange={(v) => set('scanlines', v)} label={value.scanlines ? 'On' : 'Off'} />

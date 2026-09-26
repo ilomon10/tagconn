@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ALL_FLOORS, onFloor, useOfficeStore, visibleProjects, type ConnectionState } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { resolveScreenFx, SCREEN_EFFECT_PREFS, useDisplayPrefsStore, type ScreenEffectPref } from '../stores/displayPrefsStore';
 import { enterDemo, exitDemo, startLive } from '../lib/connection';
 import { notificationsSupported, requestNotificationPermission } from '../lib/notify';
 import { formatTokens } from '../lib/format';
@@ -178,6 +179,118 @@ function HeroesButton() {
   );
 }
 
+const SCREEN_EFFECT_LABEL: Record<ScreenEffectPref, string> = { crt: 'CRT', lcd: 'LCD', vhs: 'VHS' };
+
+/**
+ * The office's monitor screen effect (M9, docs/decisions.md #25) — a per-browser display
+ * preference over the server's `office.shaders.screen` default (`displayPrefsStore`), not a
+ * settings write, so it needs no admin session and works the same in demo mode. The main button
+ * toggles on/off; the caret opens a small menu to pick CRT/LCD/VHS or go back to the server default.
+ * Hotkey `V` mirrors `HeroesButton`'s `H`: ignored while typing or a modal (the Hall Planner) is open.
+ */
+function ScreenEffectButton() {
+  const shadersEnabled = useSettingsStore((s) => s.settings.office.shaders.enabled);
+  const serverScreen = useSettingsStore((s) => s.settings.office.shaders.screen);
+  const screenOn = useDisplayPrefsStore((s) => s.screenOn);
+  const screenEffect = useDisplayPrefsStore((s) => s.screenEffect);
+  const setScreenOn = useDisplayPrefsStore((s) => s.setScreenOn);
+  const setScreenEffect = useDisplayPrefsStore((s) => s.setScreenEffect);
+  const reset = useDisplayPrefsStore((s) => s.reset);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const resolved = resolveScreenFx(serverScreen, { screenOn, screenEffect });
+  const disabled = !shadersEnabled;
+  const toggle = () => setScreenOn(!resolved.on);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'v' || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (disabled || isTypingTarget(e.target) || isModalOpen()) return;
+      e.preventDefault();
+      toggle();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disabled, resolved.on]);
+
+  // Close the menu on an outside click or Escape — the same pattern a native `<select>` gives you
+  // for free, reimplemented here since the menu is a small custom popover, not a `Select`.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuOpen]);
+
+  const title = disabled ? 'Screen effect unavailable — office.shaders.enabled is off' : `Screen effect: ${SCREEN_EFFECT_LABEL[resolved.effect]} (V)`;
+
+  return (
+    <div ref={rootRef} className="relative flex items-center gap-0.5 rounded-md bg-ink-850 p-0.5">
+      <Button variant="ghost" aria-pressed={resolved.on} disabled={disabled} onClick={toggle} title={title} className={resolved.on ? 'text-cozy' : undefined}>
+        <span aria-hidden="true">🖥</span>
+        <span className="hidden sm:inline">Screen</span>
+      </Button>
+      <Button
+        variant="ghost"
+        className="px-1"
+        disabled={disabled}
+        aria-label="Choose screen effect"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        onClick={() => setMenuOpen((v) => !v)}
+      >
+        ▾
+      </Button>
+      {menuOpen && !disabled && (
+        <div role="menu" aria-label="Screen effect" className="absolute right-0 top-full z-20 mt-1 w-44 rounded-md border border-ink-700 bg-ink-850 p-1 shadow-lg">
+          {SCREEN_EFFECT_PREFS.map((effect) => (
+            <button
+              key={effect}
+              type="button"
+              role="menuitemradio"
+              aria-checked={resolved.effect === effect}
+              className={cx(
+                'flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs hover:bg-ink-700',
+                resolved.effect === effect ? 'text-cozy' : 'text-ink-200',
+              )}
+              onClick={() => {
+                setScreenEffect(effect);
+                setMenuOpen(false);
+              }}
+            >
+              {SCREEN_EFFECT_LABEL[effect]}
+              {resolved.effect === effect && <span aria-hidden="true">✓</span>}
+            </button>
+          ))}
+          <div className="my-1 h-px bg-ink-700" />
+          <button
+            type="button"
+            role="menuitem"
+            className="w-full rounded px-2 py-1 text-left text-xs text-ink-400 hover:bg-ink-700"
+            onClick={() => {
+              reset();
+              setMenuOpen(false);
+            }}
+          >
+            Use server default
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NotifyButton() {
   const [perm, setPerm] = useState(() => (notificationsSupported() ? Notification.permission : 'denied'));
   if (!notificationsSupported() || perm !== 'default') return null;
@@ -221,6 +334,7 @@ export function TopBar({ tab, onTab, onOpenPlanner }: { tab: Tab; onTab: (t: Tab
           ))}
         </nav>
         <HeroesButton />
+        <ScreenEffectButton />
         <ReceptionistButton />
         <Button variant="ghost" onClick={onOpenPlanner} title="Draw and edit floor plans">
           Hall Planner

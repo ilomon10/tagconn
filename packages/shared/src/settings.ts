@@ -8,6 +8,10 @@ import { DEFAULT_LAYOUT_ID, LAYOUT_ID_RE, OFFICE_STYLES } from './layout.js';
 import { MULTIVERSE_LIMITS } from './multiverse.js';
 import { DOMAIN_RE, isValidWebFetchAllowRule, RUN_MODELS, RUN_PERMISSION_MODES, TOOL_RULE_RE } from './runner.js';
 
+/** Monitor screen effects for the office camera (`office.shaders.screen`). */
+export const SCREEN_EFFECTS = ['off', 'crt', 'lcd', 'vhs'] as const;
+export type ScreenEffect = (typeof SCREEN_EFFECTS)[number];
+
 export const ActivityRuleSchema = z.object({
   /** Regex matched against tool_name (anchored). */
   tool: z.string(),
@@ -193,13 +197,25 @@ export const SettingsSchema = z.object({
           quality: z.enum(['auto', 'low', 'high']).default('auto'),
           /** Bloom around light sources (torches, braziers, monitors, windows); 0 = off. */
           bloom: z.number().min(0).max(1).default(0.45),
-          /** Darkened screen edges; 0 = off. */
-          vignette: z.number().min(0).max(1).default(0.3),
+          /** Darkness at the very screen edge; 0 = off. */
+          vignette: z.number().min(0).max(1).default(0.4),
+          /** How far the vignette reaches in from the edges, as a fraction of the shorter screen side (the middle stays clean). */
+          vignetteSize: z.number().min(0.03).max(0.4).default(0.12),
+          /** `pixel`: hard stepped bands on a blocky grid (pixel-art look); `smooth`: a soft elliptical falloff. */
+          vignetteStyle: z.enum(['pixel', 'smooth']).default('pixel'),
+          /** Number of hard shade bands for the pixel vignette (4 = 25/50/75/100% of `vignette`). */
+          vignetteSteps: z.number().int().min(2).max(8).default(4),
+          /** Pixel vignette block size, in art pixels (it scales with the camera zoom). */
+          vignettePixel: z.number().int().min(1).max(16).default(4),
+          /** Default monitor screen effect for every viewer; each browser can override it from the top bar. */
+          screen: z.enum(SCREEN_EFFECTS).default('off'),
+          /** Intensity of the screen effect. */
+          screenStrength: z.number().min(0).max(1).default(0.6),
           /** Per-style color grading (warm office, candlelit guild, aurora rift). */
           grading: z.boolean().default(true),
           /** Soft animated glow pools under light sources. */
           lightGlow: z.boolean().default(true),
-          /** CRT scanlines + slight curvature, modern style only. */
+          /** Legacy: CRT look on the modern style only, used when `screen` is `off`. Prefer `screen: 'crt'`. */
           scanlines: z.boolean().default(false),
         })
         .prefault({}),
