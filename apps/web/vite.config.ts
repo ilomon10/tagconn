@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -38,11 +38,30 @@ const SECURITY_HEADERS: Record<string, string> = {
  */
 const DEV_CSP = CSP.replace("script-src 'self';", "script-src 'self' 'unsafe-inline';").replace("style-src 'self';", "style-src 'self' 'unsafe-inline';");
 
+/**
+ * Phaser's bundled webpack runtime finds the global object with `this || new Function('return this')()`.
+ * In an ES module `this` is undefined, so it reaches `new Function`, which our CSP (no 'unsafe-eval')
+ * blocks — it's caught and falls back to `window`, but the browser still logs a CSP violation. Every
+ * browser we support has `globalThis`, so swap it in and keep the console clean.
+ */
+function noGlobalThisEval(): Plugin {
+  const pattern = /new Function\((['"])return this\1\)\(\)/g;
+  return {
+    name: 'tagconn:no-global-this-eval',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('phaser') || !code.includes('return this')) return null;
+      const out = code.replace(pattern, 'globalThis');
+      return out === code ? null : { code: out, map: null };
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const target = env.VITE_OFFICE_SERVER || 'http://localhost:4317';
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [noGlobalThisEval(), react(), tailwindcss()],
     server: {
       port: 5173,
       headers: { ...SECURITY_HEADERS, 'Content-Security-Policy': DEV_CSP },
