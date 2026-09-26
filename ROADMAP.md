@@ -128,7 +128,7 @@ so parallel or old sessions leave extra PMs on a floor.
   - [x] T4 fireplace/window bloom in postfx
 - [x] W3b place the Receptionist NPC at each floor's entrance / the Nexus gate (after 8o touches OfficeScene)
 - [x] 8o. **Shaders** (user request): WebGL post-processing: per-style color grading, vignette, bloom on light sources (torches, braziers, monitors, windows) via a light layer so pixel art stays crisp, flame flicker (reduced-motion aware), optional CRT scanlines for modern; `office.shaders.*` settings (contract done), auto quality, canvas fallback  [Developer: web]
-- [~] 8g. Final code review · security review (SC5) · QA end-to-end incl. real-CLI quest/receptionist and runner acceptance (a)–(i) → fixes → v0.3.0
+- [~] 8g. Final code review [x] (no blockers; listener-cap warning fixed) · security review (SC5) · QA end-to-end incl. real-CLI quest/receptionist and runner acceptance (a)–(i) → fixes → v0.3.0
 
 ## Backlog
 - [ ] nginx `/assets/`: duplicate Cache-Control (expires + add_header); Firefox check of the CSP
