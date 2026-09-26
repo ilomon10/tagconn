@@ -1,4 +1,4 @@
-import { ATTRIBUTION_MAX_PROFILE_BYTES, ATTRIBUTION_SESSION_HEADER, AttributionResolveSchema } from '@tagconn/shared';
+import { ATTRIBUTION_MAX_PROFILE_BYTES, ATTRIBUTION_SESSION_HEADER, AttributionResolveSchema, AttributionSaveSchema } from '@tagconn/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { hookTokenAuth } from '../../core/http/index.js';
 import { projectIdFor } from '../projects/index.js';
@@ -46,5 +46,14 @@ export const attributionRoutes: FastifyPluginAsyncZod = async (app) => {
     '/api/attribution/export',
     { config: { access: 'public' }, schema: { querystring: AttributionExportQuerySchema } },
     async (req) => attributionService.export(req.query.cwd, projectIdFor),
+  );
+
+  // REST equivalent of socket `attribution:save` (§6.4). Same service call, same error mapping (a
+  // thrown `HttpError` — runner disabled/offline, dir not allowed, a runner-side refusal — is turned
+  // into `{ error, statusCode }` by the global error handler; success returns the runner's result).
+  app.post(
+    '/api/attribution/save',
+    { config: { access: 'admin' }, schema: { body: AttributionSaveSchema } },
+    async (req) => attributionService.save(req.body.projectId, req.body.overwrite),
   );
 };

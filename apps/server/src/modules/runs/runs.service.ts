@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
+  type AttributionWriteCommand,
+  type AttributionWriteResult,
   CLAUDE_SESSION_ID_RE,
   isTerminalRunStatus,
   type Run,
@@ -52,6 +54,8 @@ export interface RunnerConnection {
   hello: RunnerHello;
   sendStart(cmd: RunStartCommand, cb: (res: { ok: true; data: { pid: number | null } } | { ok: false; error: string }) => void): void;
   sendStop(cmd: RunStopCommand): void;
+  /** `modules/attribution`'s explicit "save profile to project" (§6.4). */
+  sendAttributionWrite(cmd: AttributionWriteCommand, cb: (res: { ok: true; data: AttributionWriteResult } | { ok: false; error: string }) => void): void;
 }
 
 interface PendingDispatch {
@@ -259,6 +263,29 @@ export class RunsService implements RunDispatcher, RunLinker {
       receptionistSandbox: hello.receptionistSandbox,
       receptionistFlags: hello.receptionistFlags,
     };
+  }
+
+  // -------------------------------------------------------------- attribution (M8 8k/8l, §6.4)
+
+  /**
+   * Forwards an explicit "save profile to project" to the verified runner's `attribution:write`,
+   * which re-checks everything by realpath (T6 defense in depth) before writing. Same server-side
+   * gates as a quest start: `runner.enabled` and `cmd.projectDir` inside `runner.allowedProjectDirs`.
+   * `modules/attribution` builds `cmd` (the profile content) and calls this instead of importing
+   * `RunnerConnection`/socket internals directly.
+   */
+  async sendAttributionWrite(cmd: AttributionWriteCommand): Promise<AttributionWriteResult> {
+    const { runner: runnerCfg } = this.deps.settings.get();
+    if (!runnerCfg.enabled) throw new HttpError(409, 'runner_disabled: settings.runner.enabled is false');
+    assertProjectDirAllowed(cmd.projectDir, runnerCfg.allowedProjectDirs);
+    if (!this.runner) throw new HttpError(409, 'No verified runner is connected');
+    const runner = this.runner;
+    return new Promise<AttributionWriteResult>((resolve, reject) => {
+      runner.sendAttributionWrite(cmd, (res) => {
+        if (!res.ok) return reject(new HttpError(502, res.error));
+        resolve(res.data);
+      });
+    });
   }
 
   // -------------------------------------------------------------- RunDispatcher (S3 receptionist port)

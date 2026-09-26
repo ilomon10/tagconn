@@ -34,5 +34,6 @@ export const attributionModule = fp(
     registerAttributionSocket(cradle);
     await app.register(attributionRoutes);
   },
-  { name: 'attribution', dependencies: ['core-di', 'core-http', 'core-realtime', 'projects', 'sessions', 'roles', 'layouts', 'heroes'] },
+  // 'runs' (§6.4): `save()` forwards `attribution:write` to the verified runner via `runsService`.
+  { name: 'attribution', dependencies: ['core-di', 'core-http', 'core-realtime', 'projects', 'sessions', 'roles', 'layouts', 'heroes', 'runs'] },
 );

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { PendingProfileImport } from '@tagconn/shared';
-import { describeImport, removePending, upsertPending } from './reducer';
+import type { AttributionWriteResult, PendingProfileImport } from '@tagconn/shared';
+import { describeImport, describeSaveResult, describeSaveTarget, removePending, upsertPending } from './reducer';
 
 const item = (patch: Partial<PendingProfileImport> = {}): PendingProfileImport => ({
   projectId: 'p1',
@@ -75,5 +75,49 @@ describe('describeImport', () => {
   it('pluralizes multiple skipped roles', () => {
     const { skipped } = describeImport(item({ unknownRoles: ['ranger', 'bard'] }));
     expect(skipped).toBe('2 heroes skipped (role not found here): ranger, bard');
+  });
+});
+
+describe('describeSaveTarget', () => {
+  it('lists the floor, layout and hero count', () => {
+    expect(describeSaveTarget('Widget HQ', true, 2)).toEqual(['Floor "Widget HQ"', 'the current layout', '2 heroes']);
+  });
+
+  it('singularizes one hero and omits the layout when absent', () => {
+    expect(describeSaveTarget('Widget HQ', false, 1)).toEqual(['Floor "Widget HQ"', '1 hero']);
+  });
+
+  it('omits heroes entirely when there are none', () => {
+    expect(describeSaveTarget('Widget HQ', false, 0)).toEqual(['Floor "Widget HQ"']);
+  });
+});
+
+describe('describeSaveResult', () => {
+  const result = (patch: Partial<AttributionWriteResult> = {}): AttributionWriteResult => ({
+    written: true,
+    existed: false,
+    relativePath: '.tagconn/office.json',
+    ...patch,
+  });
+
+  it('a fresh write needs no overwrite confirm', () => {
+    expect(describeSaveResult(result({ written: true, existed: false }))).toEqual({
+      message: 'Saved to .tagconn/office.json.',
+      needsOverwriteConfirm: false,
+    });
+  });
+
+  it('an overwritten file says so, and still needs no further confirm', () => {
+    expect(describeSaveResult(result({ written: true, existed: true }))).toEqual({
+      message: 'Saved to .tagconn/office.json (overwritten).',
+      needsOverwriteConfirm: false,
+    });
+  });
+
+  it('an existing file that was NOT written asks the caller to confirm an overwrite', () => {
+    expect(describeSaveResult(result({ written: false, existed: true }))).toEqual({
+      message: '.tagconn/office.json already exists in this project.',
+      needsOverwriteConfirm: true,
+    });
   });
 });

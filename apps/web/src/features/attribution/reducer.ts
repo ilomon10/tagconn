@@ -1,4 +1,4 @@
-import type { PendingProfileImport } from '@tagconn/shared';
+import type { AttributionWriteResult, PendingProfileImport } from '@tagconn/shared';
 
 /**
  * Pure list transforms for the pending-imports queue (M8 8j, docs/design/runner-and-helpdesk.md
@@ -35,4 +35,28 @@ export function describeImport(item: PendingProfileImport): { items: string[]; s
     ? `${item.unknownRoles.length} hero${item.unknownRoles.length === 1 ? '' : 'es'} skipped (role not found here): ${item.unknownRoles.join(', ')}`
     : null;
   return { items, skipped };
+}
+
+/**
+ * "Save profile to project" (M8 8k/8l, docs/design/runner-and-helpdesk.md §6.4). Plain-text summary
+ * of what a save WOULD write, for the confirm dialog — same style as `describeImport`, but built from
+ * local floor/hero state (there's nothing pending to describe: a save is always explicit). It never
+ * mentions the target file path itself (the caller shows `<cwd>/.tagconn/office.json` separately) and
+ * never any host path, since the written profile can't contain one either (`looksLikeHostPath`).
+ */
+export function describeSaveTarget(floorName: string, hasLayout: boolean, heroCount: number): string[] {
+  const items = [`Floor "${floorName}"`];
+  if (hasLayout) items.push('the current layout');
+  if (heroCount > 0) items.push(`${heroCount} hero${heroCount === 1 ? '' : 'es'}`);
+  return items;
+}
+
+/**
+ * Turns the runner's `AttributionWriteResult` (relayed by `attribution:save`'s ack) into the one-line
+ * toast shown after a save attempt, and whether the caller should re-ask with `overwrite: true`: the
+ * file already existed and — because the first attempt never sends `overwrite` — nothing was written.
+ */
+export function describeSaveResult(result: AttributionWriteResult): { message: string; needsOverwriteConfirm: boolean } {
+  if (result.written) return { message: `Saved to ${result.relativePath}${result.existed ? ' (overwritten)' : ''}.`, needsOverwriteConfirm: false };
+  return { message: `${result.relativePath} already exists in this project.`, needsOverwriteConfirm: true };
 }

@@ -9,6 +9,7 @@ import { defaultHeroFloor } from '../heroes/formState';
 import { useHeroPanelStore } from '../heroes/store';
 import { useRequireAdmin } from '../auth/useRequireAdmin';
 import { PendingImportsPanel } from '../attribution/PendingImportsPanel';
+import { SaveProfilePanel } from '../attribution/SaveProfilePanel';
 import { Badge, Button, Checkbox, Field, Input, Panel, Select, Textarea } from '../../components/ui';
 import { ENUM_OPTIONS, HIDDEN_SETTINGS, KEY_HINTS, NUMBER_STEP, SECTION_LABELS, envVarName, humanize } from './meta';
 import { RulesTable } from './RulesTable';
@@ -206,8 +207,9 @@ function SectionPanel({ section, values, base, set, roles }: { section: Section;
           />
         )}
         {section === 'attribution' && (
-          <div className="col-span-full">
+          <div className="col-span-full space-y-4">
             <PendingImportsPanel />
+            <SaveProfilePanel />
           </div>
         )}
         {Object.entries(values)

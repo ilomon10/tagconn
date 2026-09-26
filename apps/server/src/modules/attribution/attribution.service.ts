@@ -3,6 +3,8 @@ import {
   type AttributionImportResult,
   type AttributionProfile,
   AttributionProfileSchema,
+  AttributionWriteCommandSchema,
+  type AttributionWriteResult,
   CLAUDE_SESSION_ID_RE,
   hasLayoutErrors,
   HeroAppearanceSchema,
@@ -10,6 +12,7 @@ import {
   type OfficeLayout,
   type OfficeLayoutInput,
   type PendingProfileImport,
+  type Project,
   validateLayout,
 } from '@tagconn/shared';
 import { redactValue } from '../../core/redact/index.js';
@@ -32,6 +35,9 @@ type AttributionDeps = Deps<
   | 'settings'
   | 'bus'
   | 'logger'
+  // The runner gateway/dispatch port (`modules/runs`), used only to forward `attribution:write` (§6.4)
+  // to the verified runner — see `save()`. Not imported directly; typed via the shared DI `Cradle`.
+  | 'runsService'
 >;
 
 /** Keys `HeroAppearanceSchema` actually accepts; every other key in a hero's `look` is dropped. */
@@ -135,6 +141,27 @@ export class AttributionService {
   export(cwd: string, projectIdFor: (cwd: string) => string, now = Date.now()): AttributionProfile {
     const project = this.deps.projectsRepository.get(projectIdFor(cwd));
     if (!project) throw notFound(`Project for cwd "${cwd}"`);
+    return this.buildProfile(project, now);
+  }
+
+  /**
+   * "Save profile to project" (§6.4, M8 8k/8l), admin-gated (REST `POST /api/attribution/save` +
+   * socket `attribution:save`). Builds the same portable profile `export()` does, then forwards it to
+   * the verified host runner's `attribution:write`, which is the only thing that ever touches the
+   * repo: it re-checks `allowedProjectDirs` by realpath, refuses a symlinked `.tagconn`/`office.json`,
+   * and never overwrites without `overwrite: true`. `runsService.sendAttributionWrite` throws a
+   * client-safe `HttpError` for every refusal (runner disabled/offline, dir not allowed, runner-side
+   * refusal) — this method does no error translation of its own.
+   */
+  async save(projectId: string, overwrite: boolean, now = Date.now()): Promise<AttributionWriteResult> {
+    const project = this.deps.projectsRepository.get(projectId);
+    if (!project) throw notFound(`Project ${projectId}`);
+    const profile = this.buildProfile(project, now);
+    const cmd = AttributionWriteCommandSchema.parse({ projectDir: project.cwd, content: JSON.stringify(profile, null, 2), overwrite });
+    return this.deps.runsService.sendAttributionWrite(cmd);
+  }
+
+  private buildProfile(project: Project, now: number): AttributionProfile {
     const layout = project.layoutId ? this.deps.layoutsRepository.get(project.layoutId) : undefined;
     const heroes = this.deps.heroesRepository.list(project.id);
     return {

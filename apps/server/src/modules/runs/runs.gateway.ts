@@ -24,6 +24,10 @@ import type { RunnerConnection, RunsService } from './runs.service.js';
  * against a wedged runner process, not a normal path). */
 const RUN_START_ACK_TIMEOUT_MS = 15_000;
 
+/** `attribution:write` is a single local file write (§6.4), so a much shorter ack timeout than
+ * `run:start` (which waits on `claude` spawning) is still generous. */
+const ATTRIBUTION_WRITE_ACK_TIMEOUT_MS = 5_000;
+
 /** L8: caps sockets that have connected but not yet completed the HMAC proof (§2.2 steps 1-4). Without
  * this, a slowloris-style flood of connections that never send `runner:prove` could pile up unbounded
  * (each held open for up to RUNNER_PROOF_TIMEOUT_MS). */
@@ -219,6 +223,12 @@ export class RunnerGateway {
         });
       },
       sendStop: (cmd) => socket.emit('run:stop', cmd),
+      sendAttributionWrite: (cmd, cb) => {
+        socket.timeout(ATTRIBUTION_WRITE_ACK_TIMEOUT_MS).emit('attribution:write', cmd, (err, res) => {
+          if (err) return cb({ ok: false, error: 'runner did not acknowledge attribution:write in time' });
+          cb(res);
+        });
+      },
     };
     const { killRunIds } = this.deps.runsService.runnerConnected(connection);
     ack({ ok: true, data: { serverVersion: pkg.version, killRunIds } });
