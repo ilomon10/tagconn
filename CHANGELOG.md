@@ -7,6 +7,22 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- The Quests tab and the Receptionist now say exactly what to do next: "Pair this browser", the `pnpm office:runner` command with a Copy button when the runner is offline, the setting to change when it's disabled, and Retry when a load fails.
+- "Raise the limit" on the "+N more not shown" banner opens Settings → Office, and a "Connecting to the office…" message replaces the blank canvas while the page connects.
+- `pnpm test:perf` runs the wall-clock timing tests separately, so `pnpm test` no longer flakes on a busy machine.
+
+### Changed
+- better-sqlite3 13 (N-API rewrite); Docker images move from the Node 24.16 pin to Node 24.21.0 after a crash-free soak test.
+- Quests no longer request `TodoWrite` (the CLI ignored it).
+
+### Fixed
+- With reduced motion on, following a character no longer glides the camera.
+- A failed quest transcript load now shows an error with Retry instead of "No events yet".
+- nginx sent two conflicting `Cache-Control` headers for built assets.
+- Demo mode can start a quest again (the demo runner's allowed folders didn't match the demo floors).
+- A paired browser no longer flashes "Pair this browser" in Quests or the Receptionist while its status loads, and a late error from a previously selected quest no longer shows under the current one.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added

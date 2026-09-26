@@ -140,11 +140,16 @@ so parallel or old sessions leave extra PMs on a floor.
 - [x] 9f. Unpaired saves ask to pair at once (shared `socketEventNeedsAdmin`, used by the server gate and the web socket gate) instead of a 10s "Timed out waiting for settings:update"; `office:pair` hint when the server has no runner token; Phaser `new Function` stripped from the build (CSP console warning)
 - [x] 9d. QA (browser: tooltip, vignette bands, screen toggle, unpaired save prompt all pass) + code review (timeout no longer logs a paired user out), then rebuild the web image
 
+## M10: Hardening → v0.4.1  [released 2026-09-26]
+- [x] 10a. `TodoWrite` dropped from QUEST_TOOLS_BASELINE (the CLI silently dropped it from `--tools`)
+- [x] 10b. nginx `/assets/`: one `Cache-Control: public, max-age=31536000, immutable` (no duplicate from `expires`); the CSP eval warning was fixed in v0.4.0
+- [x] 10c. better-sqlite3 13.0.3 + Docker on node:24.21.0 (3-min hook soak, ~73k events, 0 restarts on 24.21 and 24.16; decision #26)
+- [x] 10d. Timing/perf tests moved to `pnpm test:perf` (procgen speed, hook large-body gate; `*.perf.test.ts`)
+- [x] 10e. Deferred 8f UX: no follow-glide under reduced motion, "Raise the limit" on the character-cap banner, a "Connecting…" canvas state (+ a stable `#settings-<section>` anchor)
+- [x] 10f. Quests + Receptionist empty/loading/error/offline states with the exact next step (pair, `pnpm office:runner` + copy, env var, capability, Retry on failed loads)
+- [x] 10g. QA + review (fixed: web image build after better-sqlite3 13 via a filtered install, demo quests, pair-flash while auth loads, stale run error), release v0.4.1
+
 ## Backlog
-- [ ] `TodoWrite` is silently dropped from `--tools` on claude 2.1.283; drop it from QUEST_TOOLS_BASELINE or probe tool names from init.tools
-- [ ] Upgrade better-sqlite3 to 13.x and unpin Node once 24.2x is verified (decision #24)
-- [ ] nginx `/assets/`: duplicate Cache-Control (expires + add_header); Firefox check of the CSP
-- [ ] Move timing/perf tests into a separate `pnpm test:perf` run (they flake when the machine is loaded)
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 
 ## M5 (v2): Orchestrator runner → moved into M8 (8k, 8l, 8m) for v0.3.0

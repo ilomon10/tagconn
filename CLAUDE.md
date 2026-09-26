@@ -15,6 +15,8 @@ the read-only Receptionist. User-facing docs live in `docs/guide/`; keep them cu
 - `pnpm install`: install everything. pnpm 11; native builds are allowed in `pnpm-workspace.yaml` → `allowBuilds`.
 - `pnpm dev`: server (tsx watch, :4317) + web (vite, :5173). Demo without a server: `http://localhost:5173/?demo=1`.
 - `pnpm typecheck` · `pnpm test` · `pnpm build`: turbo across all packages (`pnpm test` also runs `pnpm test:scripts`). Filter with `pnpm --filter @tagconn/server test`.
+  `pnpm test:perf` runs only the wall-clock budget tests (`*.perf.test.ts`); they are excluded from `pnpm test` because they flake
+  on a loaded machine. Name any new timing-budget test `*.perf.test.ts`.
 - `pnpm office:install` / `office:uninstall` / `office:doctor`: install hooks, role agents, and skills into `~/.claude`.
   This edits the user's real `~/.claude/settings.json` (a backup is made first). Ask before running it.
   For tests, ALWAYS sandbox: `node scripts/install.ts --claude-dir /tmp/.../.claude --repo-env-file /tmp/.../.env`
