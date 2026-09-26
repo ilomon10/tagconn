@@ -76,12 +76,22 @@ export interface QuestArgvInput extends StdinOrFallback {
   toolSet: readonly string[];
   questMcpConfigPath?: string;
   partialMessages: boolean;
+  /**
+   * SC5 re-review (recommended): probed capability (RunnerCapabilities.disableSlashCommands). A quest
+   * is a single bounded `-p` turn — it has no business invoking `/slash-commands` from the user's own
+   * `~/.claude` config — but the flag is only passed when the probe actually confirmed this `claude`
+   * build supports it, matching how every other optional flag here is gated (never assumed). Optional
+   * (defaults to omitted/false) so a caller that hasn't wired the probe result through yet still builds
+   * valid argv, just without this extra hardening.
+   */
+  disableSlashCommands?: boolean;
 }
 
 export function buildQuestArgv(input: QuestArgvInput): string[] {
   const argv = [input.claudePath, '-p', '--output-format=stream-json', '--verbose'];
   if (input.partialMessages) argv.push('--include-partial-messages');
   argv.push('--setting-sources=user', '--strict-mcp-config');
+  if (input.disableSlashCommands) argv.push('--disable-slash-commands');
   if (input.questMcpConfigPath) argv.push(`--mcp-config=${input.questMcpConfigPath}`);
   argv.push(`--permission-mode=${input.mode}`, '--permission-prompts=none', `--model=${input.model}`);
   if (input.maxTurns !== undefined) argv.push(`--max-turns=${input.maxTurns}`);

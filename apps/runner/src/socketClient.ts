@@ -1,11 +1,11 @@
 // Thin adapter from real socket.io-client to the socket-agnostic handshake.ts / runManager.ts logic.
 // This is the only file that imports 'socket.io-client'; everything it wraps is unit-tested against
 // a hand-rolled SocketLike fake (see handshake.ts and test/unit/handshake.test.ts), plus an
-// integration test against a real socket.io server (test/unit/socketClient.integration.test.ts).
+// integration test against a real socket.io server (test/unit/runnerProtocol.test.ts).
 
 import { io, type Socket } from 'socket.io-client';
 import { RUNNER_NAMESPACE, RUNNER_PROTOCOL_VERSION, type RunnerHandshakeAuth } from '@tagconn/shared';
-import { performHandshake, type SocketLike } from './handshake.js';
+import { performHandshake, type HandshakeHandle, type SocketLike } from './handshake.js';
 import { randomNonce } from './hmac.js';
 
 /** The server's ack envelope (packages/shared/src/socket.ts `Ack<T>`), unwrapped here so the rest of
@@ -34,7 +34,16 @@ function adapt(socket: Socket): SocketLike {
           }
         });
       }),
-    disconnect: () => socket.disconnect(),
+    disconnect: () => {
+      // R1 (SC5 re-review): NEVER `socket.disconnect()` here. That is a MANUAL disconnect — it calls
+      // through to the Manager's `_destroy`/`_close`, which sets `skipReconnect = true` permanently
+      // (the same path an intentional app-level "log out" takes) — so after a single bad server proof
+      // this runner would sit disconnected forever and never even exit for systemd `Restart=on-failure`
+      // to kick in. Closing only the underlying engine.io transport drops this (possibly-impersonating)
+      // peer just the same, but leaves socket.io-client's own reconnection loop running: it retries with
+      // a fresh nonce exactly as it would after an ordinary network blip.
+      socket.io.engine.close();
+    },
   };
 }
 
@@ -73,6 +82,13 @@ export interface RunnerConnection {
 export function connectRunner(opts: ConnectOptions): RunnerConnection {
   let currentNr = '';
   let verified = false;
+  // R1 (SC5 re-review): bumped on every 'connect', and captured per handshake attempt. A handshake
+  // whose result resolves after a LATER connection attempt has already started (e.g. a stale
+  // `runner:prove` ack rejection arriving after 'disconnect' already fired and a reconnect is under
+  // way) is recognized as superseded and ignored, instead of racing with — or clobbering — the newer
+  // attempt's own outcome.
+  let generation = 0;
+  let pendingHandshake: HandshakeHandle | undefined;
   const socket = io(opts.url + RUNNER_NAMESPACE, {
     auth: (cb: (data: RunnerHandshakeAuth) => void) => {
       currentNr = randomNonce();
@@ -86,12 +102,20 @@ export function connectRunner(opts: ConnectOptions): RunnerConnection {
 
   socket.on('connect', () => {
     const nr = currentNr;
-    void performHandshake(adapt(socket), opts.token, nr).then((result) => {
+    const gen = ++generation;
+    const handshake = performHandshake(adapt(socket), opts.token, nr);
+    pendingHandshake = handshake;
+    void handshake.result.then((result) => {
+      if (gen !== generation) return; // R1: superseded by a later connection attempt; ignore.
+      if (pendingHandshake === handshake) pendingHandshake = undefined;
       if (result.verified) {
         verified = true;
         opts.onVerified();
       }
-      // else: performHandshake already disconnected; socket.io will retry with a fresh nonce.
+      // else: a genuine handshake failure already closed the transport (adapt()'s `disconnect`, which
+      // is NOT a manual disconnect — see there); socket.io-client's own reconnection is still enabled
+      // and will retry with a fresh nonce. A drop mid-handshake (cancel(), below) needs no action here
+      // at all: the transport is already gone and reconnection was never disabled by it.
     });
   });
 
@@ -101,9 +125,17 @@ export function connectRunner(opts: ConnectOptions): RunnerConnection {
   // automatically on the NEXT connect (before our own re-verification), e.g. an emit that raced the
   // disconnect: sendBuffer is otherwise flushed by socket.io-client on reconnect regardless of app-level
   // verification state.
+  //
+  // R1 (SC5 re-review): also settle+clean up a still-pending handshake for the connection that just
+  // dropped (a drop before `runner:challenge` ever arrived, or after `runner:prove` was sent but before
+  // its ack). Without this, that handshake's `onAny`/'runner:challenge' listeners stay registered on
+  // this reused Socket, fire again on the NEXT (re)connection's fresh challenge, judge it against THIS
+  // attempt's stale nonce, and wrongly fail it.
   socket.on('disconnect', () => {
     verified = false;
     socket.sendBuffer.length = 0;
+    pendingHandshake?.cancel();
+    pendingHandshake = undefined;
   });
 
   return { socket, isVerified: () => verified };

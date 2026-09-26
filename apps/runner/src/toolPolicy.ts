@@ -2,6 +2,7 @@
 // This runs independently of (and in addition to) the server's own checks (defense in depth, T6).
 
 import {
+  DEFAULT_QUEST_ALWAYS_DENY,
   isBareWebFetchRule,
   permissionModeWithin,
   QUEST_NEVER_TOOLS,
@@ -109,7 +110,12 @@ export function checkQuestPolicy(
   // (never merely because the mode can execute freely); otherwise it is hard-denied here too, so a
   // permissive user-level ~/.claude/settings.json Bash rule (still in effect: --setting-sources=user)
   // cannot grant it back.
-  const disallowedTools = dedupe([...callerDisallowedTools, ...ctx.questToolPolicy.alwaysDeny, ...(hasBashRule ? [] : ['Bash'])]);
+  //
+  // SC5 re-review (recommended): DEFAULT_QUEST_ALWAYS_DENY is a FLOOR, not a ceiling. runner.json's
+  // questToolPolicy.alwaysDeny is merged IN ADDITION to it, never in place of it — a host operator who
+  // overrides alwaysDeny (e.g. to add one project-specific deny) must not thereby silently drop the
+  // built-in HOME-scoped config/secret-read denies.
+  const disallowedTools = dedupe([...callerDisallowedTools, ...DEFAULT_QUEST_ALWAYS_DENY, ...ctx.questToolPolicy.alwaysDeny, ...(hasBashRule ? [] : ['Bash'])]);
   const toolSet = buildQuestToolSet(input.allowedTools);
   if (hasBashRule) toolSet.push('Bash');
   return { ok: true, disallowedTools, requiresScope, toolSet: dedupe(toolSet) };

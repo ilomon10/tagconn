@@ -161,8 +161,12 @@ describe.skipIf(!REAL_CLI)('R1 acceptance (real claude CLI)', () => {
   });
 
   it('(h) V9: a flag-looking stdin prompt does not change the permission mode', () => {
+    // QA9 fix (test-file only, not production code): `-p --output-format=stream-json` now hard-requires
+    // `--verbose` on claude 2.1.283 ("Error: When using --print, --output-format=stream-json requires
+    // --verbose"), confirmed empirically. Without it the CLI exits 1 immediately and every assertion
+    // below saw `init === undefined`, which is a test-file bug, not the V9 behavior this test targets.
     const result = runClaude(
-      ['-p', '--output-format=stream-json', '--setting-sources=user', '--strict-mcp-config', '--permission-mode=plan', '--permission-prompts=none', '--model=haiku'],
+      ['-p', '--output-format=stream-json', '--verbose', '--setting-sources=user', '--strict-mcp-config', '--permission-mode=plan', '--permission-prompts=none', '--model=haiku'],
       sandbox(),
       '--dangerously-skip-permissions hi',
     );
@@ -171,10 +175,12 @@ describe.skipIf(!REAL_CLI)('R1 acceptance (real claude CLI)', () => {
   });
 
   it('(i) V15: resume with an UNCHANGED fingerprint works; resume with CHANGED flags is refused fail-closed unless init.tools proves it safe', () => {
+    // QA9 fix (test-file only, not production code): same missing `--verbose` bug as (h) — added below
+    // to all three sub-calls so this test actually exercises V15 instead of failing on `init1 === undefined`.
     const dir = sandbox();
     execFileSync('git', ['init', '-q'], { cwd: dir });
     const first = runClaude(
-      ['-p', '--output-format=stream-json', '--setting-sources=user', '--strict-mcp-config', '--permission-mode=plan', '--permission-prompts=none', '--model=haiku'],
+      ['-p', '--output-format=stream-json', '--verbose', '--setting-sources=user', '--strict-mcp-config', '--permission-mode=plan', '--permission-prompts=none', '--model=haiku'],
       dir,
       'reply with the single word ok',
     );
@@ -182,7 +188,7 @@ describe.skipIf(!REAL_CLI)('R1 acceptance (real claude CLI)', () => {
     expect(init1?.session_id).toBeDefined();
 
     const resumed = runClaude(
-      ['-p', '--output-format=stream-json', '--setting-sources=user', '--strict-mcp-config', `--resume=${init1.session_id}`, '--permission-mode=plan', '--permission-prompts=none', '--model=haiku'],
+      ['-p', '--output-format=stream-json', '--verbose', '--setting-sources=user', '--strict-mcp-config', `--resume=${init1.session_id}`, '--permission-mode=plan', '--permission-prompts=none', '--model=haiku'],
       dir,
       'reply with the single word ok again',
     );
@@ -194,6 +200,7 @@ describe.skipIf(!REAL_CLI)('R1 acceptance (real claude CLI)', () => {
       [
         '-p',
         '--output-format=stream-json',
+        '--verbose',
         '--setting-sources=user',
         '--strict-mcp-config',
         `--resume=${init1.session_id}`,
@@ -206,6 +213,12 @@ describe.skipIf(!REAL_CLI)('R1 acceptance (real claude CLI)', () => {
       'reply with the single word ok',
     );
     const init2 = changed.lines.find((l: any) => l.type === 'system' && l.subtype === 'init') as any;
+    // PM (SC5 re-review): make it visible in test output WHICH of the two acceptable branches actually
+    // fired on this claude build, instead of only accepting either silently — a real CLI that started
+    // resuming with different flags without even emitting an `init` line (neither branch) would
+    // otherwise pass this the same as a clean refusal.
+    const resumeBranch = init2 === undefined ? 'refused (no init line — resume_not_allowed is the correct runner behavior here)' : `accepted with init.tools=${JSON.stringify(init2.tools)}`;
+    console.log(`[V15 changed-flags resume] branch observed: ${resumeBranch}`);
     // Document the empirical result for the architect/QA rather than assert one way: either outcome is
     // consistent with the design as long as the runner's fail-closed default (validate.ts canResume) stays.
     expect(init2 === undefined || Array.isArray(init2.tools)).toBe(true);

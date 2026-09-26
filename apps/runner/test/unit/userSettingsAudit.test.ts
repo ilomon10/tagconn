@@ -26,7 +26,7 @@ describe('auditUserSettings', () => {
   });
 
   it('reports nothing for a clean settings file', () => {
-    const path = writeSettings({ permissions: { allow: ['Read', 'Edit(./**)'] } });
+    const path = writeSettings({ permissions: { allow: ['Read(./**)', 'Edit(./**)'] } });
     expect(auditUserSettings(path).findings).toEqual([]);
   });
 
@@ -52,6 +52,25 @@ describe('auditUserSettings', () => {
     const bare = writeSettings({ permissions: { allow: ['WebFetch'] } });
     expect(auditUserSettings(bare).findings).toContain('a WebFetch allow rule');
     expect(auditUserSettings(bare).bareWebFetchAllowed).toBe(true);
+  });
+
+  it('SC5 re-review: flags a bare Edit/Write/Read allow rule (each inherited by every quest too)', () => {
+    for (const rule of ['Edit', 'Write', 'Read']) {
+      const path = writeSettings({ permissions: { allow: [rule] } });
+      expect(auditUserSettings(path).findings).toContain('a bare or broad Edit/Write/Read allow rule');
+    }
+  });
+
+  it('SC5 re-review: flags an effectively-unbounded Edit/Write/Read glob (`**` or `/**`), not just a fully bare rule', () => {
+    for (const rule of ['Edit(**)', 'Write(/**)', 'Read(**)']) {
+      const path = writeSettings({ permissions: { allow: [rule] } });
+      expect(auditUserSettings(path).findings).toContain('a bare or broad Edit/Write/Read allow rule');
+    }
+  });
+
+  it('SC5 re-review: does NOT flag a project-scoped Edit/Write/Read rule (this is the safe default shape)', () => {
+    const path = writeSettings({ permissions: { allow: ['Edit(./**)', 'Write(./**)', 'Read(./src/**)'] } });
+    expect(auditUserSettings(path).findings).toEqual([]);
   });
 
   it('flags an mcp__ allow rule', () => {

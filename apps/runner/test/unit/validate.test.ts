@@ -46,6 +46,28 @@ describe('validateQuestStart', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('R2 (SC5 re-review): the stateDir deny uses a DOUBLED leading slash (`//...`), not a single one', () => {
+    // A single leading `/` in a Claude Code rule glob is relative to the settings source, not the
+    // filesystem root — `Edit(/state/**)` would silently match nothing. The deny must read
+    // `Edit(//state/**)` so it actually matches the absolute stateDir.
+    const { project, claudeJson } = setup();
+    const ledger: Ledger = new Map();
+    const result = validateQuestStart(
+      { projectDir: project, permissionMode: 'acceptEdits', allowedTools: ['Read'], disallowedTools: [] },
+      { ...cfg, allowedProjectDirs: [project], stateDir: '/state' },
+      caps,
+      claudeJson,
+      ledger,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
+        expect(result.disallowedTools).toContain(`${tool}(//state/**)`);
+        expect(result.disallowedTools).not.toContain(`${tool}(/state/**)`);
+      }
+    }
+  });
+
   it('dir_not_allowed for a dir outside allowedProjectDirs', () => {
     const { project, claudeJson } = setup();
     const ledger: Ledger = new Map();

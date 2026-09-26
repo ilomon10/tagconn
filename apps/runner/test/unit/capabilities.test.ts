@@ -45,11 +45,36 @@ describe('probePermissionModes (via the fake CLI)', () => {
     const modes = probePermissionModes(fakeClaudeSpawn, FAKE_CLAUDE_PATH, '/tmp', { ...process.env, FAKE_CLAUDE_REJECT_MODES: 'bypassPermissions' }, ['plan', 'bypassPermissions']);
     expect(modes).toEqual(['plan']);
   });
+
+  it('SC5 re-review (HIGH, real-CLI QA): still works when `cwd` does not exist yet (a brand-new runner\'s first boot)', () => {
+    // node:child_process silently fails a nonexistent cwd (status: null, no thrown error) — this used
+    // to make EVERY mode read as "not accepted" the first time a fresh runner probed (the dir was only
+    // ever created as a side effect of the LATER verifyTranscriptKeyDerivation call). Deliberately NOT
+    // pre-created here (mkSandbox() only creates its own root, not this nested path).
+    const sandbox = mkSandbox();
+    try {
+      const freshCwd = join(sandbox, 'probe'); // does not exist yet
+      const modes = probePermissionModes(fakeClaudeSpawn, FAKE_CLAUDE_PATH, freshCwd, { ...process.env });
+      expect(modes.length).toBeGreaterThan(0);
+    } finally {
+      rmSandbox(sandbox);
+    }
+  });
 });
 
 describe('probeStdinPrompt (V9)', () => {
   it('is true when a flag-looking stdin prompt does not change init.permissionMode', () => {
     expect(probeStdinPrompt(fakeClaudeSpawn, FAKE_CLAUDE_PATH, '/tmp', { ...process.env })).toBe(true);
+  });
+
+  it('SC5 re-review (HIGH, real-CLI QA): still works when `cwd` does not exist yet (a brand-new runner\'s first boot)', () => {
+    const sandbox = mkSandbox();
+    try {
+      const freshCwd = join(sandbox, 'probe'); // does not exist yet
+      expect(probeStdinPrompt(fakeClaudeSpawn, FAKE_CLAUDE_PATH, freshCwd, { ...process.env })).toBe(true);
+    } finally {
+      rmSandbox(sandbox);
+    }
   });
 });
 

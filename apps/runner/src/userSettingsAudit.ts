@@ -50,6 +50,18 @@ function isMcpAllowRule(rule: string): boolean {
 }
 
 /**
+ * SC5 re-review (recommended): a bare (unscoped) or effectively-unbounded Edit/Write/Read allow rule.
+ * Quests always run with `--setting-sources=user` too, so this is inherited by every quest exactly
+ * like a Bash/WebFetch/mcp__ rule is — but is easy to overlook since Edit/Write/Read feel mundane.
+ * `DEFAULT_QUEST_MAX_ALLOWED_TOOLS` only ever offers quests a project-scoped `Edit(./**)` by default
+ * (SC5 M1: a bare rule is NOT confined to the quest's own project dir), so a bare rule here is a real
+ * widening beyond what the runner's own defaults intend, not merely redundant with them.
+ */
+function isBroadFileToolRule(rule: string): boolean {
+  return /^(Edit|Write|Read)$/.test(rule) || /^(Edit|Write|Read)\(\/?\*\*?\)$/.test(rule);
+}
+
+/**
  * Reads and audits the user's own `~/.claude/settings.json` (never throws: a missing or unreadable
  * file, or one that fails to parse as JSON, is simply "nothing to report" — it is not this runner's
  * job to validate the user's own CLI settings, only to flag the specific risky shapes above).
@@ -73,6 +85,7 @@ export function auditUserSettings(settingsPath: string = join(homedir(), '.claud
   if (allow.some(isBashAllowRule)) findings.push('a Bash allow rule');
   if (allow.some(isWebFetchAllowRule)) findings.push('a WebFetch allow rule');
   if (allow.some(isMcpAllowRule)) findings.push('an mcp__ allow rule');
+  if (allow.some(isBroadFileToolRule)) findings.push('a bare or broad Edit/Write/Read allow rule');
   if (additionalDirectories.length > 0) findings.push('additionalDirectories');
   if (defaultMode && defaultMode !== 'default') findings.push(`defaultMode=${defaultMode}`);
 

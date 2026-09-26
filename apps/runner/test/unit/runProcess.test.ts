@@ -56,6 +56,19 @@ describe('spawnRun: plain wrapper', () => {
     expect(notices.length).toBe(3); // 2 forwarded lines + 1 cap-reached summary
   });
 
+  it('SC5 re-review: an ENOENT spawn (bad command) ends the run cleanly via onExit, instead of crashing the process', async () => {
+    // Node's child_process emits 'error' (not a synchronous throw) for a command that does not exist.
+    // An EventEmitter's 'error' event with no listener throws and crashes the whole process — this
+    // only proves spawnRun's own 'error' listener absorbs it and still reports the run as ended.
+    const c = collect();
+    const spec: SpawnSpec = { command: '/definitely/not/a/real/binary-xyz', args: [], cwd: '/tmp', env: { PATH: process.env.PATH ?? '' }, wrapper: 'plain' };
+    expect(() => spawnRun(spec, limits, 500, c.callbacks)).not.toThrow();
+    const exit = await c.waitForExit();
+    expect(exit.exitCode).toBeNull();
+    const notices = c.events.filter((e): e is Extract<RunEvent, { kind: 'notice' }> => e.kind === 'notice');
+    expect(notices.some((n) => n.message.includes('spawn error'))).toBe(true);
+  });
+
   it('stop() terminates a long-running plain process', async () => {
     const c = collect();
     const spec: SpawnSpec = {

@@ -55,10 +55,25 @@ interface FakeServer {
   close(): Promise<void>;
 }
 
+interface FakeServerOptions {
+  /**
+   * R1 (SC5 re-review): for this many of the INITIAL connection attempts, drop the transport (a real
+   * network-blip-style close, not a deliberate server-side disconnect) before ever sending
+   * `runner:challenge`. Simulates H1(a): a connection dropped before the runner ever saw a challenge.
+   */
+  dropBeforeChallengeCount?: number;
+  /**
+   * R1: for this many of the INITIAL connection attempts, after receiving a CORRECT `runner:prove`,
+   * drop the transport instead of acking it. Simulates H1(b): a connection dropped after `runner:prove`
+   * was sent but before its ack ever reached the runner.
+   */
+  dropAfterProveCount?: number;
+}
+
 /** Starts a real socket.io server on the /runner namespace, implementing the exact S2 protocol
  * (mirrors apps/server/src/modules/runs/runs.gateway.ts). `killRunIds` seeds what the FIRST
  * runner:hello is acked with. */
-function startFakeServer(token: string, killRunIds: string[] = []): Promise<FakeServer> {
+function startFakeServer(token: string, killRunIds: string[] = [], opts: FakeServerOptions = {}): Promise<FakeServer> {
   return new Promise((resolve) => {
     const httpServer: HttpServer = createServer();
     const io = new SocketIOServer(httpServer, {});
@@ -69,6 +84,7 @@ function startFakeServer(token: string, killRunIds: string[] = []): Promise<Fake
     const events: RunEventEnvelope[] = [];
     const ends: RunEnd[] = [];
     let proveAttempts = 0;
+    let connectionAttempts = 0;
     let resolveSocket: ((s: ServerSocket) => void) | undefined;
     let currentSocket: ServerSocket | undefined;
     const socketPromise = new Promise<ServerSocket>((r) => {
@@ -92,7 +108,17 @@ function startFakeServer(token: string, killRunIds: string[] = []): Promise<Fake
     });
 
     ns.on('connection', (socket: ServerSocket) => {
+      connectionAttempts += 1;
+      const attempt = connectionAttempts;
       const auth = socket.data.auth as { runnerId: string; nonce: string };
+
+      if (opts.dropBeforeChallengeCount && attempt <= opts.dropBeforeChallengeCount) {
+        // R1(a): a network-level drop (NOT socket.disconnect(true), which the client would treat as
+        // deliberate) before runner:challenge is ever sent.
+        socket.conn.close();
+        return;
+      }
+
       const Ns = randomBytes(32).toString('base64url');
       socket.emit('runner:challenge', { nonce: Ns, proof: expectedServerProof(token, auth.nonce, Ns) });
 
@@ -111,6 +137,11 @@ function startFakeServer(token: string, killRunIds: string[] = []): Promise<Fake
         if (!verifyProof(expected, p.proof)) {
           ack({ ok: false, error: 'server proof invalid: wrong token' });
           setImmediate(() => socket.disconnect(true));
+          return;
+        }
+        if (opts.dropAfterProveCount && attempt <= opts.dropAfterProveCount) {
+          // R1(b): the proof WAS correct, but the ack never reaches the runner (network drop).
+          socket.conn.close();
           return;
         }
         socket.data.verified = true;
@@ -493,6 +524,57 @@ describe('runner <-> fake /runner server protocol', () => {
       httpServer.close(() => resolve());
     });
   });
+
+  // ---------------------------------------------------------------------------------------- R1 (SC5 re-review)
+  //
+  // The H1 fix (above) stopped a reused Socket's stale command-handler registrations from double-firing,
+  // but left the runner able to go PERMANENTLY offline: a connection dropped mid-handshake left its
+  // handshake's own listeners registered, and any verified:false outcome (including one settling AFTER
+  // the drop) called a MANUAL socket.disconnect() — which stops socket.io-client's own reconnection for
+  // good (systemd Restart=on-failure never even fires, since the process keeps running, just
+  // disconnected). These regression tests drive that against a REAL socket.io server.
+
+  it('R1 regression: a connection dropped before runner:challenge arrives still recovers and verifies on the next connection', async () => {
+    server = await startFakeServer(TOKEN, [], { dropBeforeChallengeCount: 1 });
+    const stateDir = mkSandbox();
+    sandboxes.push(stateDir);
+    const { socket, connection } = connectAndWire(server, stateDir);
+
+    await server.waitForSocket();
+    expect(connection.isVerified()).toBe(true);
+    expect(server.helloSeen).toHaveLength(1);
+    // The first (dropped) attempt never got far enough to send runner:prove at all.
+    expect(server.proveAttempts).toBe(1);
+    socket.disconnect();
+  }, 10_000);
+
+  it('R1 regression: a connection dropped after runner:prove (before its ack) still recovers and verifies on the next connection', async () => {
+    server = await startFakeServer(TOKEN, [], { dropAfterProveCount: 1 });
+    const stateDir = mkSandbox();
+    sandboxes.push(stateDir);
+    const { socket, connection } = connectAndWire(server, stateDir);
+
+    await server.waitForSocket();
+    expect(connection.isVerified()).toBe(true);
+    expect(server.helloSeen).toHaveLength(1);
+    // First attempt: correct proof, verified server-side, but the ack was dropped. Second: succeeds.
+    expect(server.proveAttempts).toBe(2);
+    socket.disconnect();
+  }, 10_000);
+
+  it('R1 regression: a persistently bad-proof server never gets verified, across several real reconnects, and never wedges the client', async () => {
+    server = await startFakeServer(`${TOKEN.slice(0, -1)}f`); // wrong token -> every challenge proof is wrong
+    const stateDir = mkSandbox();
+    sandboxes.push(stateDir);
+    const { socket, connection } = connectAndWire(server, stateDir); // reconnection left enabled (the default)
+
+    // Give it several real reconnect/backoff cycles (default reconnectionDelay 1s, randomized).
+    await new Promise((r) => setTimeout(r, 4_000));
+    expect(connection.isVerified()).toBe(false);
+    expect(server.helloSeen).toHaveLength(0);
+    expect(server.proveAttempts).toBe(0); // a bad server proof must never even be proved against
+    socket.disconnect();
+  }, 10_000);
 });
 
 function fakeHello(runnerId: string): RunnerHello {

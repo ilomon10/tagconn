@@ -280,6 +280,17 @@ function checkSettingsHooks(claudeDir: string): void {
  * invocation that reads this same file. Always a warning (never a hard failure): these can be
  * legitimate, deliberate user choices; this check exists so the user can make that choice knowingly.
  */
+/**
+ * SC5 re-review (recommended): a bare (unscoped) or effectively-unbounded Edit/Write/Read allow rule.
+ * Mirrors `apps/runner/src/userSettingsAudit.ts`'s `isBroadFileToolRule` (duplicated, not imported:
+ * scripts/ stays node:-builtins-only, erasable TS, no cross-package deps — see CLAUDE.md). Quests
+ * default to a project-scoped `Edit(./**)`/`Write(./**)` (SC5 M1), so a bare user-level rule here is a
+ * real widening beyond that default, not merely redundant with it.
+ */
+function isBroadFileToolRule(rule: string): boolean {
+  return /^(Edit|Write|Read)$/.test(rule) || /^(Edit|Write|Read)\(\/?\*\*?\)$/.test(rule);
+}
+
 function checkUserPermissions(claudeDir: string): void {
   const path = join(claudeDir, 'settings.json');
   if (!existsSync(path)) return; // already reported (missing/invalid) by checkSettingsHooks
@@ -300,6 +311,17 @@ function checkUserPermissions(claudeDir: string): void {
         'in addition to whatever the runner itself allows (runner.json questToolPolicy/--tools is ' +
         'defense in depth on top of this, not a substitute for it). Narrow or remove these rules if ' +
         'you do not want quests to have them too.',
+    );
+  }
+
+  const broadFileRules = allow.filter(isBroadFileToolRule);
+  if (broadFileRules.length > 0) {
+    warn(
+      `settings.json permissions.allow has ${broadFileRules.length} bare/broad Edit, Write or Read rule(s): ${broadFileRules.join(', ')}`,
+      'Quests run with --setting-sources=user too, so a bare or `**`-style Edit/Write/Read rule here is ' +
+        "inherited by every quest, widening past the runner's own default project-scoped `Edit(./**)`/" +
+        '`Write(./**)` rules (runner.json questToolPolicy is a ceiling on top of this, not a substitute ' +
+        'for it). Scope these rules (e.g. `Edit(./**)`) if you do not want quests to edit/read anywhere on disk.',
     );
   }
 

@@ -81,6 +81,23 @@ export function isValidWebFetchAllowRule(rule: string): boolean {
 }
 
 /**
+ * SC5 R2 (re-review): Claude Code's rule-glob syntax treats a SINGLE leading `/` in a tool rule's glob
+ * as relative to the settings source (the project directory for project settings, `$HOME` for user
+ * settings), never as the filesystem root. So a naively-built rule like `` `Edit(${absPath}/**)` `` for
+ * `absPath = "/home/u/.local/state/tagconn"` does NOT deny edits under that absolute path at all — it
+ * silently gets reinterpreted as `<project-or-home>/home/u/.local/state/tagconn/**`, almost certainly
+ * matching nothing. To make the glob match the absolute path itself, the leading slash must be
+ * DOUBLED: `//home/u/...`. Apply this to ANY rule built around an absolute path, not just Edit/Write/
+ * MultiEdit/NotebookEdit — this includes a user-entered absolute glob in
+ * `settings.receptionist.extraDenyReadGlobs` (formatted as `Read(<glob>)` by
+ * apps/server/src/modules/runs/runs.validate.ts) and the runner's own `stateDir` deny
+ * (apps/runner/src/validate.ts). `absPath` must already start with `/` (see the `AbsPath` schema above).
+ */
+export function absoluteRulePath(absPath: string): string {
+  return `/${absPath}`;
+}
+
+/**
  * Backstop loopback/metadata denies (the primary control is: no bare WebFetch, domain allowlist only).
  * Domain rules cannot express every numeric/alternate loopback form, which is exactly why bare
  * WebFetch is forbidden rather than relying on this list.
@@ -570,13 +587,52 @@ export interface RunsClientToServerEvents {
 // ------------------------------------------------------------------ runner-local config (host file)
 
 /**
+ * SC5 re-review (recommended): secret/credential locations a quest must never READ, passed as
+ * `Read(<glob>)` in `DEFAULT_QUEST_ALWAYS_DENY` below. Deliberately NOT imported from
+ * `RECEPTIONIST_DENY_READ_GLOBS` (receptionist.ts): that module already imports FROM this one
+ * (`WEBFETCH_LOOPBACK_DENY_RULES`), so importing it back here would be circular. This list is a
+ * superset kept in sync by hand (it also denies `~/.config/gcloud/**`, which the Receptionist list does
+ * not yet have) — a future cleanup could hoist the shared parts of both lists to one place here.
+ * Unlike the Receptionist's list, this omits `~/.claude/{plans,projects,shell-snapshots,todos,
+ * history.jsonl,file-history,session-env}` (that is the Receptionist's own accidental-self-read
+ * history/plans concern, not a "quest touching a secret" concern); a host operator who wants those too
+ * can add them via `runner.json` `questToolPolicy.alwaysDeny`.
+ */
+export const QUEST_DENY_READ_GLOBS = [
+  '~/.ssh/**',
+  '~/.gnupg/**',
+  '~/.aws/**',
+  '~/.azure/**',
+  '~/.kube/**',
+  '~/.config/gcloud/**',
+  '~/.docker/config.json',
+  '~/.netrc',
+  '~/.npmrc',
+  '~/.pypirc',
+  '~/.git-credentials',
+  '~/.config/gh/**',
+  '~/.config/tagconn/**',
+  '~/.claude/.credentials.json',
+  '~/.claude.json',
+  '**/.env',
+  '**/.env.*',
+  '**/*.pem',
+  '**/*.key',
+] as const;
+
+/**
  * Local denies appended to every quest: settings/agent/git/MCP config stay untouchable by quests
  * (both cwd-relative, for the repo's own .claude dir, and HOME-scoped, since SC5 M1 found that a
  * cwd-relative allow rule like bare `Edit` does not protect the user's actual `~/.claude` config,
- * `~/.claude.json` or shell rc files, which a quest could otherwise reach via an absolute path or
- * `..`), plus the loopback WebFetch backstop (matters for auto/bypass modes, where no allow rule is
+ * `~/.claude.json` or shell rc/startup files a later interactive shell or git/npm/pip invocation would
+ * source, which a quest could otherwise reach via an absolute path or `..`), plus the secret-read denies
+ * above and the loopback WebFetch backstop (matters for auto/bypass modes, where no allow rule is
  * needed). The runner ALSO appends a deny for its own `stateDir` at runtime (config.ts's `stateDir`
  * is only known once resolved, so it cannot be a static entry here; see validate.ts).
+ *
+ * Treated as a FLOOR, not a ceiling: `toolPolicy.ts`'s `checkQuestPolicy` always merges this list in
+ * underneath whatever `runner.json` `questToolPolicy.alwaysDeny` configures, rather than letting a
+ * configured list silently replace it.
  */
 export const DEFAULT_QUEST_ALWAYS_DENY = [
   // Repo-local (cwd-relative): a project checked out under an allowed dir must not be able to plant
@@ -616,27 +672,65 @@ export const DEFAULT_QUEST_ALWAYS_DENY = [
   'Write(~/.profile)',
   'Edit(~/.bash_profile)',
   'Write(~/.bash_profile)',
+  // SC5 re-review (recommended): more shell/tool startup files and config dirs a later interactive
+  // shell, git, systemd user unit, autostart entry or PATH-resolved binary would trust.
+  'Edit(~/.gitconfig)',
+  'Write(~/.gitconfig)',
+  'Edit(~/.config/git/**)',
+  'Write(~/.config/git/**)',
+  'MultiEdit(~/.config/git/**)',
+  'NotebookEdit(~/.config/git/**)',
+  'Edit(~/.config/systemd/user/**)',
+  'Write(~/.config/systemd/user/**)',
+  'MultiEdit(~/.config/systemd/user/**)',
+  'NotebookEdit(~/.config/systemd/user/**)',
+  'Edit(~/.config/autostart/**)',
+  'Write(~/.config/autostart/**)',
+  'MultiEdit(~/.config/autostart/**)',
+  'NotebookEdit(~/.config/autostart/**)',
+  'Edit(~/.local/bin/**)',
+  'Write(~/.local/bin/**)',
+  'MultiEdit(~/.local/bin/**)',
+  'NotebookEdit(~/.local/bin/**)',
+  'Edit(~/.ssh/**)',
+  'Write(~/.ssh/**)',
+  'MultiEdit(~/.ssh/**)',
+  'NotebookEdit(~/.ssh/**)',
+  'Edit(~/.zshenv)',
+  'Write(~/.zshenv)',
+  'Edit(~/.zprofile)',
+  'Write(~/.zprofile)',
+  'Edit(~/.bash_login)',
+  'Write(~/.bash_login)',
+  'Edit(~/.config/fish/**)',
+  'Write(~/.config/fish/**)',
+  'MultiEdit(~/.config/fish/**)',
+  'NotebookEdit(~/.config/fish/**)',
+  'Edit(~/.npmrc)',
+  'Write(~/.npmrc)',
+  'Edit(~/.pypirc)',
+  'Write(~/.pypirc)',
+  ...QUEST_DENY_READ_GLOBS.map((g) => `Read(${g})`),
   ...WEBFETCH_LOOPBACK_DENY_RULES,
 ] as const;
 
 /**
  * Default host-side maximum quest allowlist. No Bash (needs a local entry + systemd scope AND an
  * explicit allow rule, SC5 H2), no bare WebFetch, no Agent/Task (SC5 H2: quests never get delegation
- * tools, regardless of what a caller requests — see QUEST_NEVER_TOOLS). Edit/Write/MultiEdit/
- * NotebookEdit default to a project-scoped rule (SC5 M1): a bare `Edit` allow rule is not confined to
- * the quest's own project directory, so the default only ever allows editing paths under the cwd.
+ * tools, regardless of what a caller requests — see QUEST_NEVER_TOOLS). Edit/Write/NotebookEdit
+ * default to a project-scoped rule (SC5 M1): a bare `Edit` allow rule is not confined to the quest's
+ * own project directory, so the default only ever allows editing paths under the cwd.
+ *
+ * SC5 re-review: no `MultiEdit(...)` entry here (on purpose, not an oversight — the file-editing
+ * denies elsewhere in this file still name it defensively). Probed against a real `claude 2.1.283`:
+ * `--tools=Read,MultiEdit` still spawns fine, but `init.tools` comes back as just `["Read"]` —
+ * "MultiEdit" is silently DROPPED, not a real name in the built-in `--tools` vocabulary today (nor is
+ * it documented; `Edit` alone covers multi-location edits). Granting it by default would be a no-op
+ * that misleadingly suggests quests have a MultiEdit capability they never actually get. A host
+ * operator who has verified their own `claude` build DOES expose it can still add
+ * `'MultiEdit(./**)'` via `runner.json` `questToolPolicy.maxAllowedTools`.
  */
-export const DEFAULT_QUEST_MAX_ALLOWED_TOOLS = [
-  'Read',
-  'Grep',
-  'Glob',
-  'Edit(./**)',
-  'MultiEdit(./**)',
-  'Write(./**)',
-  'NotebookEdit(./**)',
-  'WebSearch',
-  'TodoWrite',
-] as const;
+export const DEFAULT_QUEST_MAX_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Edit(./**)', 'Write(./**)', 'NotebookEdit(./**)', 'WebSearch', 'TodoWrite'] as const;
 
 /**
  * Tool NAMES a quest's exact `--tools` list may never include, however permissive `runner.json`

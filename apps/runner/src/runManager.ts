@@ -65,6 +65,23 @@ export interface RunManagerDeps {
 export function createRunManager(deps: RunManagerDeps) {
   const active = new Map<string, ActiveRun>();
 
+  /**
+   * SC5 re-review (HIGH, real-CLI QA): the standard native-installer layout makes `~/.local/bin/claude`
+   * a SYMLINK into `~/.local/share/claude/versions/<ver>/claude`. bwrap only ro-binds
+   * `dirname(claudeBinRealPath)` (the symlink's REAL target dir) into the sandbox — never
+   * `~/.local/bin` itself (an empty tmpfs `$HOME` covers it) — so spawning the bare name `claude` and
+   * relying on the sandboxed child's own PATH search to find it fails outright: `bwrap: execvp claude:
+   * No such file or directory`. Execing the RESOLVED ABSOLUTE PATH instead needs no PATH search at all
+   * (the exact dir it lives in is exactly what's bound), so this is used as argv[0] for every spawn —
+   * quests (plain and systemd-scope) too, not just the bwrapped Receptionist: an absolute path is
+   * strictly more precise than a bare name resolved via whatever PATH the child process ends up with,
+   * with no downside when `resolveClaudePath` (main.ts, at startup) succeeded. Falls back to the
+   * configured (possibly bare) `claudePath` only if that resolution failed.
+   */
+  function claudeExecPath(): string {
+    return deps.claudeBinRealPath ?? deps.cfg.claudePath;
+  }
+
   function nextSeq(runId: string): number {
     const run = active.get(runId);
     if (!run) return 1;
@@ -141,7 +158,7 @@ export function createRunManager(deps: RunManagerDeps) {
     if (!check.ok) return rejectStart(cmd.runId, check.failure);
 
     const argv = buildQuestArgv({
-      claudePath: deps.cfg.claudePath,
+      claudePath: claudeExecPath(),
       model: cmd.model,
       mode: cmd.permissionMode,
       maxTurns: cmd.maxTurns,
@@ -153,6 +170,7 @@ export function createRunManager(deps: RunManagerDeps) {
       partialMessages: cmd.partialMessages,
       stdinPrompt: deps.caps.stdinPrompt,
       prompt: cmd.prompt,
+      disableSlashCommands: deps.caps.disableSlashCommands,
     });
     const env = buildRunEnv({ runId: cmd.runId, runKind: 'quest', passEnv: deps.cfg.passEnv });
     const spec = questSpawnSpec(
@@ -206,7 +224,7 @@ export function createRunManager(deps: RunManagerDeps) {
     const webFetchDomains = deps.userSettingsRisk?.bareWebFetchAllowed ? [] : cmd.webFetchDomains;
 
     const built = buildReceptionistArgv({
-      claudePath: deps.cfg.claudePath,
+      claudePath: claudeExecPath(),
       scope: opts.scope,
       model: cmd.model,
       maxTurns: cmd.maxTurns ?? 30,
@@ -281,36 +299,49 @@ export function createRunManager(deps: RunManagerDeps) {
     // exact stop() path a server-sent run:stop{reason:'timeout'} would take.
     record.timeoutTimer = setTimeout(() => stop({ runId: cmd.runId, reason: 'timeout' }), timeoutSec * 1000);
 
-    const handle = spawnRun(
-      spec,
-      { previewChars: cmd.limits.previewChars, maxStderrLines: deps.cfg.maxStderrLines, maxLineBytes: deps.cfg.maxLineBytes },
-      deps.cfg.killGraceMs,
-      {
-        onEvent: (event) => {
-          if (receptionistToolSet) watchReceptionistEvent(cmd.runId, receptionistToolSet, event);
-          // L6: watchReceptionistEvent may have just ended THIS run (policy_violation) on this very
-          // 'init' event (init.tools/mcpServers mismatch) — never record a resumable ledger session
-          // for a run that was killed for violating policy on arrival.
-          const rec = active.get(cmd.runId);
-          if (event.kind === 'init' && rec && !rec.ended) {
-            recordSession(deps.ledger, event.sessionId, fingerprint, deps.cfg.sessionLedgerSize);
-            saveLedger(deps.ledgerPath, deps.ledger);
-          }
-          forward(cmd.runId, event);
+    let handle: RunProcessHandle;
+    try {
+      handle = spawnRun(
+        spec,
+        { previewChars: cmd.limits.previewChars, maxStderrLines: deps.cfg.maxStderrLines, maxLineBytes: deps.cfg.maxLineBytes },
+        deps.cfg.killGraceMs,
+        {
+          onEvent: (event) => {
+            if (receptionistToolSet) watchReceptionistEvent(cmd.runId, receptionistToolSet, event);
+            // L6: watchReceptionistEvent may have just ended THIS run (policy_violation) on this very
+            // 'init' event (init.tools/mcpServers mismatch) — never record a resumable ledger session
+            // for a run that was killed for violating policy on arrival.
+            const rec = active.get(cmd.runId);
+            if (event.kind === 'init' && rec && !rec.ended) {
+              recordSession(deps.ledger, event.sessionId, fingerprint, deps.cfg.sessionLedgerSize);
+              saveLedger(deps.ledgerPath, deps.ledger);
+            }
+            forward(cmd.runId, event);
+          },
+          onExit: ({ exitCode, signal }) => {
+            const rec = active.get(cmd.runId);
+            if (!rec || rec.ended) return;
+            if (rec.stopRequested) {
+              endRun(cmd.runId, { status: rec.stopRequested.status, reason: rec.stopRequested.reason, exitCode, signal });
+              return;
+            }
+            const status = exitCode === 0 ? 'succeeded' : 'failed';
+            endRun(cmd.runId, { status, reason: 'exit', exitCode, signal });
+          },
+          onParseError: (line) => deps.logger.warn('unparseable stream-json line', { runId: cmd.runId, line: line.slice(0, 200) }),
         },
-        onExit: ({ exitCode, signal }) => {
-          const rec = active.get(cmd.runId);
-          if (!rec || rec.ended) return;
-          if (rec.stopRequested) {
-            endRun(cmd.runId, { status: rec.stopRequested.status, reason: rec.stopRequested.reason, exitCode, signal });
-            return;
-          }
-          const status = exitCode === 0 ? 'succeeded' : 'failed';
-          endRun(cmd.runId, { status, reason: 'exit', exitCode, signal });
-        },
-        onParseError: (line) => deps.logger.warn('unparseable stream-json line', { runId: cmd.runId, line: line.slice(0, 200) }),
-      },
-    );
+      );
+    } catch (err) {
+      // SC5 re-review (recommended): node:child_process's `spawn()` can throw SYNCHRONOUSLY (as
+      // opposed to the far more common async 'error' event runProcess.ts now also handles) for some
+      // invalid options. `record` was already registered in `active` (with its M2 timeout timer
+      // already running) above, before this call — endRun() cleans both up and reports the run ended,
+      // instead of leaking an active-run entry / timer for a process that was never actually spawned.
+      const message = err instanceof Error ? err.message : String(err);
+      deps.logger.error('spawn() threw synchronously', { runId: cmd.runId, message });
+      endRun(cmd.runId, { status: 'failed', reason: 'spawn_failed', exitCode: null, signal: null, message });
+      return { pid: null };
+    }
     record.handle = handle;
     return { pid: handle.pid ?? null };
   }

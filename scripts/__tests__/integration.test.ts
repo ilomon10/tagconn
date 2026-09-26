@@ -141,11 +141,24 @@ describe('doctor: H2 (SC5) risky user-level settings.json permissions', () => {
     expect(res.stdout).toMatch(/permissions\.defaultMode is "bypassPermissions"/);
   });
 
-  it('does not warn about defaultMode "plan", and does not flag a plain "Read" allow rule', () => {
-    patchSettings({ permissions: { defaultMode: 'plan', allow: ['Read', 'Grep'] } });
+  it('does not warn about defaultMode "plan", and does not flag a project-scoped Read allow rule', () => {
+    patchSettings({ permissions: { defaultMode: 'plan', allow: ['Read(./**)', 'Grep'] } });
     const res = runDoctor(sandbox);
     expect(res.stdout).not.toMatch(/permissions\.allow has/);
     expect(res.stdout).not.toMatch(/permissions\.defaultMode is/);
+  });
+
+  it('SC5 re-review: warns about a bare or broad Edit/Write/Read allow rule (quests inherit these too)', () => {
+    patchSettings({ permissions: { allow: ['Edit', 'Write(**)', 'Read'] } });
+    const res = runDoctor(sandbox);
+    expect(res.stdout).toMatch(/permissions\.allow has 3 bare\/broad Edit, Write or Read rule\(s\)/);
+    expect(res.stdout).toContain('Write(**)');
+  });
+
+  it('SC5 re-review: does not warn about a project-scoped Edit/Write rule (the safe default shape)', () => {
+    patchSettings({ permissions: { allow: ['Edit(./**)', 'Write(./**)'] } });
+    const res = runDoctor(sandbox);
+    expect(res.stdout).not.toMatch(/bare\/broad Edit, Write or Read/);
   });
 
   it('does not warn at all when settings.json has no permissions section (the plain installer output)', () => {

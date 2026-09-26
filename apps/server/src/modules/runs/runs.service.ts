@@ -42,11 +42,12 @@ const RETENTION_SWEEP_MS = 60 * 60 * 1000;
 /** M5: upper bound when re-summing a run's stored event bytes at boot (`settings.runner.maxEventsPerRun` tops out at 100_000). */
 const MAX_EVENTS_TO_SEED = 200_000;
 /**
- * M2 (SC5): `apps/runner` does not enforce `cmd.timeoutSec` itself (it only stops a run when told
- * to) — this is the server's own watchdog, the only backstop against a runner that never ends a run.
- * Small headroom past `cmd.timeoutSec` for the `run:stop` to reach the runner and for it to actually
- * exit (SIGTERM, then its own SIGKILL grace) before the server gives up waiting and declares the run
- * over on its own.
+ * M2 (SC5): `apps/runner` ALSO enforces its own timeout now (capped at runner.json's
+ * questTimeoutCapSec/receptionistTimeoutCapSec, independent of the server — see runManager.ts's
+ * `spawnAndTrack`), so this is defense in depth, not the only backstop: it still matters for a runner
+ * that is unreachable, crashed without ending the run, or predates that fix. Small headroom past
+ * `cmd.timeoutSec` for the `run:stop` to reach the runner and for it to actually exit (SIGTERM, then
+ * its own SIGKILL grace) before the server gives up waiting and declares the run over on its own.
  */
 const RUN_TIMEOUT_GRACE_MS = 15_000;
 
@@ -737,12 +738,14 @@ export class RunsService implements RunDispatcher, RunLinker {
     }
   }
 
-  /** `cmd.timeoutSec` elapsed with no `run:end`. `apps/runner` never enforces this itself (only the
-   * server does), so this is the only backstop: ask the runner to stop the run, then give it
-   * `RUN_TIMEOUT_GRACE_MS` to actually do so (`onRunTimeoutGraceExpired`) before the server gives up
-   * and ends it unilaterally. Public, like `reconcileLostRunner`, so tests can trigger it directly
-   * instead of waiting out the real timer (this file's tests run against a real socket.io transport,
-   * where faking global timers would also stall the transport's own timers). */
+  /** `cmd.timeoutSec` elapsed with no `run:end`. `apps/runner` also enforces this itself now (capped
+   * at runner.json's questTimeoutCapSec/receptionistTimeoutCapSec — runManager.ts's `spawnAndTrack`),
+   * but the server cannot rely on that alone (the runner may be unreachable, crashed, or running an
+   * older build), so this remains its own independent backstop: ask the runner to stop the run, then
+   * give it `RUN_TIMEOUT_GRACE_MS` to actually do so (`onRunTimeoutGraceExpired`) before the server
+   * gives up and ends it unilaterally. Public, like `reconcileLostRunner`, so tests can trigger it
+   * directly instead of waiting out the real timer (this file's tests run against a real socket.io
+   * transport, where faking global timers would also stall the transport's own timers). */
   onRunTimedOut(runId: string): void {
     this.timeoutTimers.delete(runId);
     const run = this.deps.runsRepository.get(runId);

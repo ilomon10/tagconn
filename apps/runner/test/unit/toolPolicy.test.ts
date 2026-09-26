@@ -80,6 +80,19 @@ describe('checkQuestPolicy', () => {
     }
   });
 
+  it('SC5 re-review: DEFAULT_QUEST_ALWAYS_DENY is a FLOOR — a runner.json questToolPolicy.alwaysDeny that omits it still gets it merged in', () => {
+    // A host operator overriding alwaysDeny for one extra project-specific rule must not thereby drop
+    // the built-in HOME-scoped config/secret-read denies just because their own list doesn't repeat them.
+    const ctx = { ...baseCtx, questToolPolicy: { ...baseCtx.questToolPolicy, alwaysDeny: ['Edit(secrets/**)'] } };
+    const r = checkQuestPolicy({ mode: 'acceptEdits', allowedTools: [], availablePermissionModes: ['acceptEdits'] }, ctx);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.disallowedTools).toContain('Edit(secrets/**)'); // the operator's own configured deny
+      expect(r.disallowedTools).toContain('Edit(~/.claude/**)'); // the floor, not repeated by the operator
+      expect(r.disallowedTools).toContain('Read(~/.ssh/**)');
+    }
+  });
+
   // --------------------------------------------------------------------------------------- H2: --tools
 
   it('the exact --tools list always includes the read-only baseline, even with no allowed tools', () => {

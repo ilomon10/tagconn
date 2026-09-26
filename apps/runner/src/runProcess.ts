@@ -96,6 +96,24 @@ export function spawnRun(spec: SpawnSpec, limits: RunProcessLimits, killGraceMs:
     }
   });
 
+  // SC5 re-review (recommended): guards against calling `callbacks.onExit` twice. Node emits 'error'
+  // (ENOENT/EACCES on spawn, or a later EPIPE) either INSTEAD OF or IN ADDITION TO 'exit', depending on
+  // the failure and Node version; this makes sure the run ends exactly once either way.
+  let ended = false;
+  const finish = (info: { exitCode: number | null; signal: NodeJS.Signals | null }): void => {
+    if (ended) return;
+    ended = true;
+    callbacks.onExit(info);
+  };
+
+  child.on('error', (err) => {
+    // An EventEmitter's 'error' event with no listener THROWS, which would crash the whole runner
+    // process (every other active run too), not just this one — this listener's only job is to make
+    // sure that never happens, and that this run still ends cleanly (e.g. a bad `claudePath`: ENOENT).
+    callbacks.onEvent(stderrNotice(`spawn error: ${err.message}`));
+    finish({ exitCode: null, signal: null });
+  });
+
   child.on('exit', (exitCode, signal) => {
     const outFlush = outSplitter.flush();
     for (const line of outFlush.lines) {
@@ -105,7 +123,7 @@ export function spawnRun(spec: SpawnSpec, limits: RunProcessLimits, killGraceMs:
         callbacks.onParseError?.(line);
       }
     }
-    callbacks.onExit({ exitCode, signal });
+    finish({ exitCode, signal });
   });
 
   function stop(): void {

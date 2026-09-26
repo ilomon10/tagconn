@@ -274,6 +274,66 @@ describe('createRunManager', () => {
     }, 10_000);
   });
 
+  // -------------------------------------------------------------------------------------------- SC5 re-review
+
+  describe('SC5 re-review (recommended): a synchronous spawn() throw is handled, not left dangling', () => {
+    it('startQuest ends the run spawn_failed, clears the timeout, and does not leak an active-run entry', () => {
+      const stateDir = mkSandbox();
+      sandboxes.push(stateDir);
+      const project = trustedProject(stateDir);
+      // node:child_process's spawn() throws SYNCHRONOUSLY (as opposed to the far more common async
+      // 'error' event runProcess.ts's own handler covers) for a command string containing a NUL byte —
+      // a portable, deterministic way to trigger this path without a broken uid/gid.
+      const { deps, ends } = makeDeps(stateDir, { cfg: { claudePath: 'bad\u0000cmd' } });
+      const runManager = createRunManager(deps);
+
+      const result = runManager.startQuest(baseQuestCmd(project));
+      expect(result).toEqual({ pid: null });
+      expect(ends).toHaveLength(1);
+      expect(ends[0]?.status).toBe('failed');
+      expect(ends[0]?.reason).toBe('spawn_failed');
+      expect(runManager.activeRunIds()).toEqual([]); // removed from active, not leaked
+      expect(runManager.activeCount()).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------- HIGH (real-CLI QA)
+
+  describe('HIGH (real-CLI QA): spawns the RESOLVED absolute claude path, never a bare PATH-relative name', () => {
+    // The standard native-installer layout makes ~/.local/bin/claude a SYMLINK; bwrap only ro-binds the
+    // symlink's REAL target dir, not ~/.local/bin itself, so a bare "claude" argv[0] is unresolvable
+    // inside the sandbox ("execvp claude: No such file or directory"). These prove the runner execs
+    // `claudeBinRealPath` (when known) instead of the possibly-bare configured `claudePath`, by giving
+    // it a `cfg.claudePath` that could never resolve via any real PATH — the run can only succeed here
+    // because `claudeBinRealPath` (the real fake-claude fixture) was actually what got exec'd.
+    it('startQuest', async () => {
+      const stateDir = mkSandbox();
+      sandboxes.push(stateDir);
+      const project = trustedProject(stateDir);
+      const { deps, ends } = makeDeps(stateDir, { cfg: { claudePath: 'definitely-not-a-real-command-on-any-path-xyz' } });
+      const runManager = createRunManager({ ...deps, claudeBinRealPath: FAKE_CLAUDE_BIN_PATH });
+
+      const result = runManager.startQuest(baseQuestCmd(project));
+      expect(typeof result.pid).toBe('number');
+      for (let i = 0; i < 50 && ends.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
+      expect(ends).toHaveLength(1);
+      expect(ends[0]?.status).toBe('succeeded'); // only possible if claudeBinRealPath, not claudePath, was exec'd
+    }, 10_000);
+
+    it('startReceptionist (general scope)', async () => {
+      const stateDir = mkSandbox();
+      sandboxes.push(stateDir);
+      const { deps, ends } = makeDeps(stateDir, { cfg: { claudePath: 'definitely-not-a-real-command-on-any-path-xyz' } });
+      const runManager = createRunManager({ ...deps, claudeBinRealPath: FAKE_CLAUDE_BIN_PATH });
+
+      const result = runManager.startReceptionist(baseReceptionistCmd(), { scope: 'general' });
+      expect(typeof result.pid).toBe('number');
+      for (let i = 0; i < 50 && ends.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
+      expect(ends).toHaveLength(1);
+      expect(ends[0]?.status).toBe('succeeded');
+    }, 10_000);
+  });
+
   // -------------------------------------------------------------------------------------------- L6
 
   describe('L6: a run killed for policy_violation never gets a resumable ledger session', () => {

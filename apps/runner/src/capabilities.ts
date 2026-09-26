@@ -18,6 +18,13 @@ export interface ProbeResult {
   status: number | null;
   stdout: string;
   stderr: string;
+  /**
+   * SC5 re-review (HIGH, real-CLI QA): `child_process.spawnSync`'s own error (e.g. ENOENT from a `cwd`
+   * that does not exist yet, or from `claudePath` itself being unresolvable) — surfaced explicitly so
+   * a caller logging an unexpectedly empty/false probe result can say WHY, instead of silently getting
+   * `status: null` and empty stdout/stderr indistinguishable from "the CLI ran and just said no".
+   */
+  error?: string;
 }
 
 /** Injectable so tests can swap in the fake-claude fixture without touching PATH. */
@@ -25,7 +32,7 @@ export type Spawn = (command: string, args: string[], opts: { cwd: string; env: 
 
 export const realSpawn: Spawn = (command, args, opts) => {
   const r = spawnSync(command, args, { cwd: opts.cwd, env: opts.env, input: opts.input, encoding: 'utf8', timeout: PROBE_TIMEOUT_MS });
-  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error?.message };
 };
 
 // ---------------------------------------------------------------------------------------- help / version
@@ -88,8 +95,16 @@ export function resolveClaudePath(claudePath: string): string | undefined {
 /**
  * Probes each mode once with a trivial turn (V8: probe by trying). A mode is "accepted" if the
  * process exits 0; the CLI hard-fails (non-zero) on a mode it does not recognize.
+ *
+ * SC5 re-review (HIGH, real-CLI QA): `mkdirSync(cwd, ...)` up front is not optional. On a BRAND-NEW
+ * runner, `cwd` (`<stateDir>/probe`) does not exist yet the first time this runs — node:child_process
+ * fails a nonexistent `cwd` SILENTLY (`status: null`, no thrown error, empty stdout/stderr), which
+ * made every mode read as "not accepted" (`acceptedModes: []`) on first boot, while a manual replay
+ * (naturally run from an existing directory) looked fine. `verifyTranscriptKeyDerivation` already did
+ * this for its own probe turn; this and `probeStdinPrompt` did not.
  */
 export function probePermissionModes(spawn: Spawn, claudePath: string, cwd: string, env: NodeJS.ProcessEnv, modes: readonly string[] = RUN_PERMISSION_MODES): string[] {
+  mkdirSync(cwd, { recursive: true });
   const accepted: string[] = [];
   for (const mode of modes) {
     const r = spawn(
@@ -111,8 +126,13 @@ export function probePermissionModes(spawn: Spawn, claudePath: string, cwd: stri
   return accepted;
 }
 
-/** V9: a flag-looking stdin prompt must stay a prompt (init.permissionMode unchanged, no arg-parse error). */
+/**
+ * V9: a flag-looking stdin prompt must stay a prompt (init.permissionMode unchanged, no arg-parse
+ * error). SC5 re-review: same `mkdirSync(cwd, ...)` fix as `probePermissionModes` above, and for the
+ * same reason (a nonexistent `cwd` silently makes this read `false` on a brand-new runner).
+ */
 export function probeStdinPrompt(spawn: Spawn, claudePath: string, cwd: string, env: NodeJS.ProcessEnv): boolean {
+  mkdirSync(cwd, { recursive: true });
   const requestedMode = 'plan';
   const r = spawn(
     claudePath,

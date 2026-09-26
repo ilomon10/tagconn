@@ -12,7 +12,13 @@ describe('buildQuestArgv', () => {
     partialMessages: true,
     stdinPrompt: true,
     prompt: 'hello world',
+    disableSlashCommands: true,
   };
+
+  it('SC5 re-review: includes --disable-slash-commands only when the capability was probed', () => {
+    expect(buildQuestArgv(base)).toContain('--disable-slash-commands');
+    expect(buildQuestArgv({ ...base, disableSlashCommands: false })).not.toContain('--disable-slash-commands');
+  });
 
   it('always includes --setting-sources=user and --strict-mcp-config', () => {
     const argv = buildQuestArgv(base);
