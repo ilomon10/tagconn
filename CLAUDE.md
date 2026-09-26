@@ -20,6 +20,11 @@ the Claude Code CLI with a browser login. The planned v2 runner will spawn `clau
   (the config dir is then derived as `/tmp/.../.config/tagconn`; override with `--config-dir` / `TAGCONN_CONFIG_DIR`),
   and run `claude -p "<prompt>" ... --settings <sandbox>/.claude/settings.json`. Put the prompt right after `-p`, because
   `--allowedTools` is variadic and swallows a trailing prompt.
+  Also sandbox the runner's state: set `XDG_STATE_HOME=<sandbox>/state` (or `stateDir` in the sandbox runner.json),
+  otherwise it writes to the real `~/.local/state/tagconn`. Load sandbox `.env` files with a dotenv parser, not
+  `bash source`: JSON-array values (e.g. `OFFICE_RUNNER__ALLOWED_PROJECT_DIRS`) lose their quotes. Stop processes only by
+  exact PID after checking them; the Docker container's `node apps/server/dist/main.js` is visible in the host's `ps`,
+  so a pattern `pkill` also kills the live office.
 - `pnpm office:up` / `pnpm office:down` (not `pnpm up`, which is pnpm update): docker compose (server :4317, web :4318, bound to 127.0.0.1).
 
 ## Layout
