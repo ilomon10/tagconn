@@ -122,6 +122,7 @@ so parallel or old sessions leave extra PMs on a floor.
   - [x] P1 procgen furnishing engine + doors + reachability report (16 new furniture kinds; 3 reachability bugs fixed)  [Developer: web]
   - [~] T1 new furniture/decor kinds painted in modern, guild and rift, following the user's style references (3/4 back-wall faces, outlined walls, checker/plank/cobblestone floors, CRT desks; castle/tavern/keep for guild). References live outside the repo (third-party art, style only)  [Developer: web]
   - [x] E1 Hall Planner: furnishing inspector, door tool, reachability overlay with one-click fixes  [Developer: web]
+- [~] 8o. **Shaders** (user request): WebGL post-processing: per-style color grading, vignette, bloom on light sources (torches, braziers, monitors, windows) via a light layer so pixel art stays crisp, flame flicker (reduced-motion aware), optional CRT scanlines for modern; `office.shaders.*` settings (contract done), auto quality, canvas fallback  [Developer: web]
 - [ ] 8g. Review + security + QA → v0.3.0
 
 ## Backlog
