@@ -18,3 +18,4 @@
 | 14 | 2026-09-25 | Named Docker volume `office-data` for `/data` | A host bind of `./data` is created by Docker as root when missing, so the non-root server can't open SQLite. |
 | 15 | 2026-09-25 | Scripts are `office:up` / `office:down`, not `up` / `down` | `pnpm up` is a built-in alias of `pnpm update` and never runs the script. |
 | 20 | 2026-09-25 | Web acks use `emitWithAckTimeout` (manual timer), not socket.io `.timeout().emitWithAck()` | The built-in timeout fired false timeouts through the Vite dev proxy; a denied admin event never acks, so a timeout means "not authorized". |
+| 21 | 2026-09-26 | Visual style follows the user's pixel-art references (cozy 3/4 office; castle, tavern and keep for guild), drawn procedurally | References are third-party art: kept outside the repo, used for style only, never traced or committed. |
