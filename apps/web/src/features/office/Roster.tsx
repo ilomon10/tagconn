@@ -77,24 +77,27 @@ function RosterItem({ agent, selected, onSelect, now, offCanvas }: { agent: Agen
           {/* Guild titles read like flavor text ("Archmage"); keep the plain role title (e.g.
               "Architect") visible too, but only when it actually differs (skip the redundant
               duplicate under the modern style, where the two usually match). */}
-          {role.themedTitle !== role.title && <span className="truncate text-[10px] text-ink-400">{role.title}</span>}
+          {role.themedTitle !== role.title && <span className="truncate text-[10px] text-ink-300">{role.title}</span>}
           {agent.isMain && <Badge>main</Badge>}
           {offCanvas && (
             <span title="Not drawn in the office right now (idle, unbound, or over the character cap)">
-              <Badge className="bg-ink-700 text-ink-400">off canvas</Badge>
+              <Badge className="bg-ink-700 text-ink-400">
+                off canvas
+                <span className="sr-only"> — not drawn in the office right now (idle, unbound, or over the character cap)</span>
+              </Badge>
             </span>
           )}
-          <span className="ml-auto shrink-0 font-pixel text-[10px] text-ink-400">{elapsed(agent.startedAt, agent.endedAt ?? now)}</span>
+          <span className="ml-auto shrink-0 font-pixel text-[10px] text-ink-300">{elapsed(agent.startedAt, agent.endedAt ?? now)}</span>
         </div>
         {agent.description && <div className="mt-0.5 truncate pl-4.5 text-[11px] text-ink-300">{agent.description}</div>}
         <div className="mt-1 flex items-center gap-1.5 pl-4.5">
           <Badge className={STATUS_STYLE[agent.status]}>{agent.status === 'active' ? agent.activity : agent.status}</Badge>
-          <span className="font-pixel text-[10px] text-ink-400">{agent.toolCount} tools</span>
-          {multiFloor && project && <span className="truncate text-[10px] text-ink-400">· {project}</span>}
+          <span className="font-pixel text-[10px] text-ink-300">{agent.toolCount} tools</span>
+          {multiFloor && project && <span className="truncate text-[10px] text-ink-300">· {project}</span>}
         </div>
         {agent.usage && (
           <div className="mt-1 flex items-center gap-1.5 pl-4.5">
-            <span className="shrink-0 font-pixel text-[10px] text-ink-400">{formatTokens(totalTokens(agent.usage))} tok</span>
+            <span className="shrink-0 font-pixel text-[10px] text-ink-300">{formatTokens(totalTokens(agent.usage))} tok</span>
             <div
               className="h-1 min-w-6 flex-1 overflow-hidden rounded-full bg-ink-700"
               title={`${formatTokens(agent.usage.contextTokens)} context tokens${agent.usage.model ? ` · ${agent.usage.model}` : ''}`}
@@ -120,13 +123,13 @@ export function Roster({ agents, selectedId, onSelect }: { agents: Agent[]; sele
     <aside className="flex w-72 shrink-0 flex-col border-l border-ink-700 bg-ink-850">
       <header className="flex items-center justify-between border-b border-ink-700 px-3 py-2">
         <h2 className="text-xs font-semibold tracking-wide">Roster</h2>
-        <span className="text-[11px] text-ink-400">
+        <span className="text-[11px] text-ink-300">
           {active} working · {agents.length} total
         </span>
       </header>
       {offCanvasCount > 0 && (
         <div className="flex items-center justify-between border-b border-ink-700 px-3 py-1.5">
-          <span className="text-[11px] text-ink-400">{offCanvasCount} off canvas</span>
+          <span className="text-[11px] text-ink-300">{offCanvasCount} off canvas</span>
           <Checkbox checked={showOffCanvas} onChange={setShowOffCanvas} label="Show off-canvas" />
         </div>
       )}

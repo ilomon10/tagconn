@@ -5,6 +5,7 @@ import { MULTIVERSE_FLOOR, MULTIVERSE_ICON } from '../../lib/floors';
 import { patchProject } from '../../lib/commands';
 import { Badge, Button, Checkbox, Empty, Input, Panel, cx } from '../../components/ui';
 import { OfficeEditor } from '../editor/OfficeEditor';
+import { useModalFocus } from '../../lib/useModalFocus';
 
 function FloorRow({ project, onEdit }: { project: Project; onEdit: () => void }) {
   const [name, setName] = useState(project.name);
@@ -118,9 +119,15 @@ export function FloorManager({ onClose }: { onClose: () => void }) {
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const list = visibleProjects(projects, { selectedId: selected, showArchived });
 
+  // M9 8f: a true modal (backdrop, aria-modal) — focus moves in on open, Tab is trapped inside it,
+  // and whatever had focus before gets it back when this unmounts (`useModalFocus`).
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(true, dialogRef, { trap: true, onEscape: onClose });
+
   return (
     <>
       <div
+        ref={dialogRef}
         className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-20"
         onClick={onClose}
         data-modal="floor-manager"

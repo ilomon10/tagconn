@@ -116,3 +116,16 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 export function isModalOpen(doc: Document = document): boolean {
   return !!doc.querySelector('[aria-modal="true"], [data-modal]');
 }
+
+/**
+ * The next (`dir = 1`, `]`) or previous (`dir = -1`, `[`) index when cycling through `count` items,
+ * wrapping at the ends — the M9 8f roster-cycling hotkeys in `OfficeView` (`useFloorAgents()`'s
+ * order, the same array `Roster` renders). `current` outside `[0, count)` — nothing selected yet, or
+ * a stale index for an agent that left — starts at the first item going forward or the last item
+ * going backward. Returns -1 when `count` is 0 (nothing to select).
+ */
+export function cycleIndex(current: number, count: number, dir: 1 | -1): number {
+  if (count <= 0) return -1;
+  if (current < 0 || current >= count) return dir === 1 ? 0 : count - 1;
+  return (current + dir + count) % count;
+}

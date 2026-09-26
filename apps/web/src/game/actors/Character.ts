@@ -136,6 +136,11 @@ export class Character extends Phaser.GameObjects.Container {
   private appearanceKey = '';
   private fxKey = '';
   private phase: number;
+  /** M9 8f: the base 14×20 interactive hit rect (`setHitScale`'s scale-1 shape), kept live so
+   *  `setHitScale` can grow it around the same centre without recreating the interactive area. */
+  private hitRect: Phaser.Geom.Rectangle;
+  /** M9 8f: current scale applied to `hitRect` (1..8); tracked so `setHitScale` is a no-op when unchanged. */
+  private hitScale = 1;
   /** The role color, remembered so selection/hover glow can use it without the scene passing it
    *  again on every hover/select toggle. */
   private roleColor = 0x8e8e9e;
@@ -219,7 +224,8 @@ export class Character extends Phaser.GameObjects.Container {
     this.bubble = scene.add.container(0, -22, [this.bubbleBg, this.bubbleText]).setVisible(false);
     this.overlay = scene.add.container(x, y, [this.tag, this.leaderLine, this.bubble]);
 
-    this.setInteractive(new Phaser.Geom.Rectangle(-7, -18, 14, 20), Phaser.Geom.Rectangle.Contains);
+    this.hitRect = new Phaser.Geom.Rectangle(-7, -18, 14, 20);
+    this.setInteractive(this.hitRect, Phaser.Geom.Rectangle.Contains);
     if (this.input) this.input.cursor = 'pointer';
     scene.add.existing(this);
   }
@@ -322,7 +328,10 @@ export class Character extends Phaser.GameObjects.Container {
     }
     this.chip.setText(`+${chip.count}`);
     this.chip.setColor(chip.attention ? '#fff2f2' : '#1c1430');
-    this.chip.setBackgroundColor(chip.attention ? '#e5484dee' : '#f3c94dcc');
+    // M9 8f: the attention chip's old #e5484dee background only reached ~3.6:1 against #fff2f2
+    // text (WCAG needs 4.5:1 for normal-size text). #b3242a is a darker, still-clearly-urgent red
+    // that reaches ~6.0:1 against the same text color. The non-attention chip is unchanged.
+    this.chip.setBackgroundColor(chip.attention ? '#b3242aee' : '#f3c94dcc');
     this.chip.setVisible(this.chipTagVisible);
   }
 
@@ -576,10 +585,18 @@ export class Character extends Phaser.GameObjects.Container {
     cb?.();
   }
 
-  /** Starts (or restarts) the leave fade: walk `path` (if any) then fade to alpha 0 over 700ms. */
+  /** Starts (or restarts) the leave fade: walk `path` (if any) then fade to alpha 0 over 700ms.
+   *  M9 8f: under `prefersReducedMotion()` the fade itself is skipped — alpha jumps straight to 0
+   *  and `gone` is set immediately, reaching the same end state without the 700ms tween. */
   leave(path: Point[] | null) {
     this.leaving = true;
     const fade = () => {
+      if (prefersReducedMotion()) {
+        this.setAlpha(0);
+        this.overlay.setAlpha(0);
+        this.gone = true;
+        return;
+      }
       this.fadeTween = this.scene.tweens.add({
         targets: [this, this.overlay],
         alpha: 0,
@@ -603,6 +620,23 @@ export class Character extends Phaser.GameObjects.Container {
     this.fadeTween = undefined;
     this.onArrive = undefined;
     this.applyAlpha();
+  }
+
+  /**
+   * M9 8f: grows (or shrinks back down) ONLY the interactive hit rectangle — the 14×20 world-px
+   * rect this character was made interactive with — around its unchanged centre, by `scale`
+   * (clamped to 1..8). Purely a hit-testing aid for click/tap targeting (e.g. when zoomed out);
+   * it never touches anything visual. Cheap and idempotent: a no-op when `scale` (after clamping)
+   * matches the current one. Used by `OfficeScene` to widen small/distant characters' click targets.
+   */
+  setHitScale(scale: number): void {
+    const clamped = Math.min(8, Math.max(1, scale));
+    if (clamped === this.hitScale) return;
+    this.hitScale = clamped;
+    const w = 14 * clamped;
+    const h = 20 * clamped;
+    // Base rect (-7, -18, 14, 20) is centred at (0, -8); keep that centre as it grows.
+    this.hitRect.setTo(-w / 2, -8 - h / 2, w, h);
   }
 
   update(now: number, dt: number, speed: number) {

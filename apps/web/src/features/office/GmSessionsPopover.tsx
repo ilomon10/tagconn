@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import { elapsed, shortId } from '../../lib/format';
 import { useNow } from '../../lib/hooks';
+import { useModalFocus } from '../../lib/useModalFocus';
 import { useOfficeStore } from '../../stores/officeStore';
 import { Badge, Button, Empty, Panel } from '../../components/ui';
 
@@ -34,8 +36,19 @@ export function GmSessionsPopover({
     .filter((a) => a.projectId === projectId && a.isMain && a.status !== 'done' && sessions[a.sessionId]?.status !== 'ended')
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
+  // M9 8f: same modal focus contract as FloorManager — trap Tab inside, restore focus on close.
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocus(true, dialogRef, { trap: true, onEscape: onClose });
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-20" onClick={onClose} data-modal="gm-sessions" aria-modal="true" role="dialog">
+    <div
+      ref={dialogRef}
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-20"
+      onClick={onClose}
+      data-modal="gm-sessions"
+      aria-modal="true"
+      role="dialog"
+    >
       <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <Panel
           title={`Guild Master · ${projectName}`}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Project } from '@tagconn/shared';
 import { MULTIVERSE_FLOOR_ID } from '@tagconn/shared';
 import {
+  cycleIndex,
   firstFloor,
   floorNeighbors,
   floorsInOrder,
@@ -126,6 +127,36 @@ describe('isTypingTarget', () => {
   it('does not flag a button or a plain div', () => {
     expect(isTypingTarget({ tagName: 'BUTTON', isContentEditable: false } as unknown as EventTarget)).toBe(false);
     expect(isTypingTarget({ tagName: 'DIV', isContentEditable: false } as unknown as EventTarget)).toBe(false);
+  });
+});
+
+describe('cycleIndex', () => {
+  it('starts at the first item going forward with nothing selected', () => {
+    expect(cycleIndex(-1, 3, 1)).toBe(0);
+  });
+
+  it('starts at the last item going backward with nothing selected', () => {
+    expect(cycleIndex(-1, 3, -1)).toBe(2);
+  });
+
+  it('advances by one and wraps forward past the end', () => {
+    expect(cycleIndex(0, 3, 1)).toBe(1);
+    expect(cycleIndex(2, 3, 1)).toBe(0);
+  });
+
+  it('goes back by one and wraps backward past the start', () => {
+    expect(cycleIndex(1, 3, -1)).toBe(0);
+    expect(cycleIndex(0, 3, -1)).toBe(2);
+  });
+
+  it('returns -1 when there is nothing to select', () => {
+    expect(cycleIndex(-1, 0, 1)).toBe(-1);
+    expect(cycleIndex(-1, 0, -1)).toBe(-1);
+  });
+
+  it('treats a stale out-of-range current like nothing selected', () => {
+    expect(cycleIndex(5, 3, 1)).toBe(0);
+    expect(cycleIndex(5, 3, -1)).toBe(2);
   });
 });
 

@@ -10,7 +10,7 @@ import { sumRunUsage } from './usage';
 const STATUS_STYLE: Record<RunStatus, string> = {
   queued: 'bg-ink-700 text-ink-300',
   dispatched: 'bg-sky-900/60 text-sky-200',
-  running: 'bg-amber-900/60 text-amber-200 animate-pulse',
+  running: 'bg-amber-900/60 text-amber-200 motion-safe:animate-pulse',
   succeeded: 'bg-emerald-900/60 text-emerald-200',
   failed: 'bg-red-900/60 text-red-200',
   stopped: 'bg-ink-700 text-ink-300',

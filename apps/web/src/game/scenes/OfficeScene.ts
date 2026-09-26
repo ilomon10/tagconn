@@ -39,6 +39,7 @@ import {
 import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets } from '../camera/insets';
 import { fixedPositionForScreenPoint, zoomCameraAboutPoint } from '../camera/zoom';
 import { isDragMove } from '../camera/drag';
+import { hitScaleFor } from '../camera/hitsize';
 import { counterScale, labelVisible, layoutLabels, type LabelSubject } from '../labels';
 import { PostFxController } from '../postfx/PostFxController';
 
@@ -119,7 +120,15 @@ interface StairsSprite {
 interface RealmZoneSprite {
   zone: Phaser.GameObjects.Zone;
   outline: Phaser.GameObjects.Graphics;
+  /** The zone's un-scaled (`office.zoom` 1x, `hitScaleFor` 1x) world size, so `updateZoneHitSizes`
+   *  can recompute from a stable base instead of compounding growth onto an already-grown zone. */
+  baseW: number;
+  baseH: number;
 }
+
+/** M9 8f: the Character hit rect's smaller side (`Character`'s `hitRect` is 14x20 world px), used
+ *  to size every character's WCAG 2.5.8 minimum click target the same way. */
+const CHARACTER_HIT_WORLD_PX = 14;
 
 function rectContains(r: Rect, x: number, y: number): boolean {
   return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
@@ -252,6 +261,12 @@ export class OfficeScene extends Phaser.Scene {
   private appliedStyle: OfficeStyle | typeof MULTIVERSE_THEME_ID | null = null;
   private floorKey: string | null = null;
   private userZoom = 1;
+  /** M9 8f: the zoom `update()` last computed hit scaling for, and the character scale it derived
+   *  (`hitScaleFor(CHARACTER_HIT_WORLD_PX, zoom)`) — `0`/`1` so the very first `update()` tick
+   *  always counts as "changed" and applies real values. New characters read `currentHitScale`
+   *  directly (see `updateCast`) instead of waiting for the next zoom change. */
+  private lastHitZoom = 0;
+  private currentHitScale = 1;
   private panned = false;
   private drag: { x: number; y: number; sx: number; sy: number; moved: boolean } | null = null;
   private inputLocked = false;
@@ -350,6 +365,10 @@ export class OfficeScene extends Phaser.Scene {
     this.renderVisuals();
     this.buildStairsInteractive();
     this.buildRealmZones();
+    // M9 8f: a rebuild replaces every zone at its un-scaled size, so the current zoom's minimum
+    // click-target growth (see `updateZoneHitSizes`) needs reapplying right away rather than
+    // waiting for the next zoom change.
+    this.updateZoneHitSizes(this.cameras.main.zoom);
     this.rebuildReceptionist();
     if (this.night) this.night.setSize(this.worldW, this.worldH);
   }
@@ -536,7 +555,9 @@ export class OfficeScene extends Phaser.Scene {
         .circle(cx, cy, T * 0.55)
         .setStrokeStyle(2, spot.dir === 'up' ? 0x4ff0d0 : 0xb07aff, 0.9)
         .setDepth(spot.y * T + 3);
-      const zone = this.add.zone(cx, cy, T, T).setDepth(spot.y * T + 4).setInteractive({ cursor: 'pointer' });
+      // The zone is invisible, so its depth only ranks input: keep it below every character (depth = y >= 0)
+      // so a character standing next to the stairs still wins the click once the hit area grows at low zoom.
+      const zone = this.add.zone(cx, cy, T, T).setDepth(-1).setInteractive({ cursor: 'pointer' });
       zone.on('pointerover', () => this.hoverStairs(spot, ring));
       zone.on('pointerout', () => this.unhoverStairs(ring));
       zone.on('pointerup', () => {
@@ -611,7 +632,29 @@ export class OfficeScene extends Phaser.Scene {
         this.hideTooltip();
         this.events.emit('realmClick', realm.overflow ? null : (realm.projectIds[0] ?? null));
       });
-      this.realmZoneSprites.push({ zone, outline });
+      this.realmZoneSprites.push({ zone, outline, baseW: pw, baseH: ph });
+    }
+  }
+
+  /**
+   * M9 8f UX: keeps the stairs and realm hit zones' *interactive* area at or above the WCAG 2.5.8
+   * minimum click target (`hitScaleFor`) as the camera zoom changes, without touching the ring/
+   * outline art they're drawn with. Each zone's `Zone#setSize` also resizes its default (non-custom)
+   * input hit area (see `Zone.setSize`'s `resizeInput` — true by default), and a Zone's origin stays
+   * 0.5, so growing it keeps it centered on the same point for free. Realm zones are already large
+   * (a multi-tile cell), so this is normally a no-op for them — only the stairs' single-tile zones
+   * routinely need the growth. Called once per rebuild (zones lose any prior growth) and once per
+   * frame from `update()` when the zoom has actually changed.
+   */
+  private updateZoneHitSizes(zoom: number) {
+    const T = this.map.tileSize;
+    const stairsScale = hitScaleFor(T, zoom);
+    for (const { zone } of this.stairsSprites) {
+      zone.setSize(T * stairsScale, T * stairsScale);
+    }
+    for (const { zone, baseW, baseH } of this.realmZoneSprites) {
+      const scale = hitScaleFor(Math.min(baseW, baseH), zoom);
+      zone.setSize(baseW * scale, baseH * scale);
     }
   }
 
@@ -914,6 +957,9 @@ export class OfficeScene extends Phaser.Scene {
         if (!c) {
           c = new Character(this, key, 0, 0);
           this.attachCharacterHandlers(c);
+          // M9 8f: a character created between zoom changes still needs the current minimum
+          // click-target scale, not just whatever `Character`'s constructor defaults to.
+          c.setHitScale(this.currentHitScale);
           this.characters.set(key, c);
           c.teleport(this.map.spawn);
         }
@@ -1232,10 +1278,21 @@ export class OfficeScene extends Phaser.Scene {
 
   update(time: number, delta: number) {
     this.postFx.sampleFrame(delta);
+    const zoom = this.cameras.main.zoom;
     // Pixel-vignette blocks and the LCD grid follow the camera zoom (incl. transition tweens); a field set.
-    this.postFx.setZoom(this.cameras.main.zoom);
+    this.postFx.setZoom(zoom);
+    // M9 8f: cheaply (once per frame, only on an actual change) keep every hit target's rendered
+    // size at or above the WCAG 2.5.8 minimum as the camera zooms — covers the wheel handler,
+    // `fitCamera` and the stairs transition's zoom tween alike, since they all just move `cam.zoom`.
+    const hitZoomChanged = zoom !== this.lastHitZoom;
+    if (hitZoomChanged) {
+      this.lastHitZoom = zoom;
+      this.currentHitScale = hitScaleFor(CHARACTER_HIT_WORLD_PX, zoom);
+      this.updateZoneHitSizes(zoom);
+    }
     const speed = this.state?.settings.office.walkSpeed ?? 120;
     for (const [key, c] of this.characters) {
+      if (hitZoomChanged) c.setHitScale(this.currentHitScale);
       c.update(time, delta, speed);
       if (c.gone) {
         c.destroyAll();

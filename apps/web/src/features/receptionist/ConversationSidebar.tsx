@@ -108,7 +108,7 @@ export function ConversationSidebar({
                 {c.busy ? ' · thinking…' : ''}
               </span>
             </span>
-            {c.busy && <span className="mt-0.5 size-1.5 shrink-0 animate-pulse rounded-full bg-amber-400" title="A turn is in flight" />}
+            {c.busy && <span className="mt-0.5 size-1.5 shrink-0 motion-safe:animate-pulse rounded-full bg-amber-400" title="A turn is in flight" />}
             <span
               role="button"
               tabIndex={0}

@@ -10,8 +10,8 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { resolveScreenFx, useDisplayPrefsStore } from '../../stores/displayPrefsStore';
 import { useReceptionistStore } from '../../stores/receptionistStore';
 import { useReceptionistUiStore } from '../receptionist/uiStore';
-import { useFloorAgents } from '../../lib/hooks';
-import { firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isMultiverseFloor, isTypingTarget, neighborFloor, topProjectFloor } from '../../lib/floors';
+import { useFloorAgents, useRoleLookup } from '../../lib/hooks';
+import { cycleIndex, firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isMultiverseFloor, isTypingTarget, neighborFloor, topProjectFloor } from '../../lib/floors';
 import { layoutForProject, useLayoutStore } from '../../stores/layoutStore';
 import { ZERO_INSETS, insetsFromOverlay } from '../../game/camera/insets';
 import { Roster } from './Roster';
@@ -192,6 +192,10 @@ export function OfficeView({ active }: { active: boolean }) {
   const maxCharacters = useSettingsStore((s) => s.settings.office.maxCharacters);
   const connection = useOfficeStore((s) => s.connection);
   const overflow = Math.max(0, agents.length - maxCharacters);
+  const roleLookup = useRoleLookup();
+  // M9 8f: what the `[`/`]` cycling hotkeys below announce to screen readers — mirrors the drawer's
+  // own header (`AgentDrawer.tsx`: hero name when bound via a "Hero" row, else the plain role title).
+  const [announcement, setAnnouncement] = useState('');
 
   const closePanel = () => {
     setSelected(null);
@@ -306,6 +310,37 @@ export function OfficeView({ active }: { active: boolean }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [game]);
 
+  // M9 8f: `[`/`]` cycle the character selection through this floor's visible agents, in the same
+  // order the Roster shows them (`useFloorAgents()`'s `agents` array — `Roster` only filters it for
+  // off-canvas actors, it never reorders it), wrapping at the ends (`cycleIndex`). Nothing selected
+  // yet: `]` starts at the first agent, `[` at the last. Same guards as the floor hotkeys above
+  // (ignored while typing or while a modal covers the screen); selecting goes through the same
+  // `setSelected`/`focus` path a roster or scene click uses, so the character glows and the drawer
+  // opens identically. The announced label mirrors the drawer's header (`AgentDrawer.tsx`): the
+  // bound hero's name, else the plain role title.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '[' && e.key !== ']') return;
+      if (isTypingTarget(e.target) || isModalOpen()) return;
+      if (agents.length === 0) return;
+      e.preventDefault();
+      const dir = e.key === ']' ? 1 : -1;
+      const current = selected ? agents.findIndex((a) => a.id === selected) : -1;
+      const idx = cycleIndex(current, agents.length, dir);
+      const agent = agents[idx];
+      if (!agent) return;
+      setSelected(agent.id);
+      setFollow(false);
+      game?.focus(agent.id);
+      const heroes = useHeroStore.getState().heroes;
+      const hero = Object.values(heroes).find((h) => h.boundAgentId === agent.id);
+      const label = hero?.name ?? roleLookup(agent.role).title;
+      setAnnouncement(`${label} selected, ${idx + 1} of ${agents.length}`);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [agents, selected, game, roleLookup]);
+
   // M8 8h: a Multiverse realm was clicked in the scene — travel there with the normal stairs
   // transition. `null` (the overflow realm) opens the floor picker instead (design section 6.3).
   useEffect(() => {
@@ -403,6 +438,8 @@ export function OfficeView({ active }: { active: boolean }) {
       const tag = target?.tagName;
       const isTyping = tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !NON_TEXT_INPUT_TYPES.has((target as HTMLInputElement).type));
       if (isTyping) return;
+      // A dialog on top (help, Manage floors…) takes this Esc; don't close the panel underneath too.
+      if (isModalOpen()) return;
       closePanel();
     };
     window.addEventListener('keydown', onKey);
@@ -426,6 +463,10 @@ export function OfficeView({ active }: { active: boolean }) {
 
   return (
     <div className="flex h-full min-h-0">
+      {/* M9 8f: visually hidden, announces `[`/`]` selection changes to screen readers. */}
+      <div aria-live="polite" className="sr-only">
+        {announcement}
+      </div>
       <div ref={wrap} className="relative min-w-0 flex-1 bg-ink-900">
         <div ref={host} className="absolute inset-0" />
         <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-2">

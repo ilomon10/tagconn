@@ -14,6 +14,9 @@ import { ReceptionistButton } from '../features/receptionist/ReceptionistButton'
 import { AdminBadge } from '../features/auth/AdminBadge';
 import { defaultHeroFloor } from '../features/heroes/formState';
 import { useHeroPanelStore } from '../features/heroes/store';
+import { shouldOpenHelp } from '../features/help/hotkeys';
+import { useHelpOverlayStore } from '../features/help/store';
+import { HelpOverlay } from '../features/help/HelpOverlay';
 import { Button, Select, cx } from '../components/ui';
 
 export type Tab = 'office' | 'board' | 'log' | 'roles' | 'quests' | 'settings';
@@ -28,7 +31,7 @@ export const TABS: { id: Tab; label: string }[] = [
 
 const CONNECTION: Record<ConnectionState, { label: string; dot: string }> = {
   idle: { label: 'Idle', dot: 'bg-ink-400' },
-  connecting: { label: 'Connecting…', dot: 'bg-amber-400 animate-pulse' },
+  connecting: { label: 'Connecting…', dot: 'bg-amber-400 motion-safe:animate-pulse' },
   connected: { label: 'Live', dot: 'bg-emerald-400' },
   disconnected: { label: 'Offline', dot: 'bg-red-500' },
   demo: { label: 'Demo', dot: 'bg-fuchsia-400' },
@@ -84,7 +87,7 @@ function FloorIndicator() {
       <Button variant="ghost" className="px-1.5" disabled={!n.below} onClick={() => officeNavBus.requestFloorNav('down')} aria-label="Floor down" title="Floor down (PageDown)">
         ↓
       </Button>
-      <span className="whitespace-nowrap px-1 text-[11px] text-ink-400">
+      <span className="whitespace-nowrap px-1 text-[11px] text-ink-300">
         Floor {n.index + 1} / {n.count} — {current.name}
       </span>
       <Button variant="ghost" className="px-1.5" disabled={!n.above} onClick={() => officeNavBus.requestFloorNav('up')} aria-label="Floor up" title="Floor up (PageUp)">
@@ -107,7 +110,7 @@ function FloorUsage() {
   if (usage.messages === 0) return null;
   return (
     <span
-      className="hidden items-center gap-1 rounded-full bg-ink-800 px-2.5 py-1 text-[11px] text-ink-400 sm:flex"
+      className="hidden items-center gap-1 rounded-full bg-ink-800 px-2.5 py-1 text-[11px] text-ink-300 sm:flex"
       title={`${formatTokens(usage.contextTokens)} context tokens in the fullest session · ${usage.messages} messages this floor`}
     >
       {formatTokens(totalTokens(usage))} tok
@@ -308,6 +311,33 @@ function NotifyButton() {
   );
 }
 
+/**
+ * The `?` hotkey help overlay (M9 8f): lists every hotkey in the app, grouped by area
+ * (`features/help/hotkeys.ts`'s `HOTKEY_GROUPS`). The `?` key itself is registered here alongside
+ * `HeroesButton`'s `H` and `ScreenEffectButton`'s `V` — `shouldOpenHelp` folds in the same
+ * ignored-while-typing / ignored-while-a-modal-is-open guards those use (`isTypingTarget`/
+ * `isModalOpen`), so it never stacks on top of, say, the Hall Planner's own `?` shortcut.
+ */
+function HelpButton() {
+  const openHelp = useHelpOverlayStore((s) => s.openHelp);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!shouldOpenHelp(e)) return;
+      e.preventDefault();
+      openHelp();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [openHelp]);
+
+  return (
+    <Button variant="ghost" className="px-2" onClick={openHelp} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+      ?
+    </Button>
+  );
+}
+
 export function TopBar({ tab, onTab, onOpenPlanner }: { tab: Tab; onTab: (t: Tab) => void; onOpenPlanner: () => void }) {
   return (
     <>
@@ -326,7 +356,7 @@ export function TopBar({ tab, onTab, onOpenPlanner }: { tab: Tab; onTab: (t: Tab
               onClick={() => onTab(t.id)}
               className={cx(
                 'rounded-md px-3 py-1 text-xs transition',
-                tab === t.id ? 'bg-ink-600 text-ink-100 shadow' : 'text-ink-400 hover:text-ink-100',
+                tab === t.id ? 'bg-ink-600 text-ink-100 shadow' : 'text-ink-300 hover:text-ink-100',
               )}
             >
               {t.label}
@@ -339,6 +369,7 @@ export function TopBar({ tab, onTab, onOpenPlanner }: { tab: Tab; onTab: (t: Tab
         <Button variant="ghost" onClick={onOpenPlanner} title="Draw and edit floor plans">
           Hall Planner
         </Button>
+        <HelpButton />
         <div className="ml-auto flex items-center gap-2">
           <FloorUsage />
           <NotifyButton />
@@ -350,6 +381,7 @@ export function TopBar({ tab, onTab, onOpenPlanner }: { tab: Tab; onTab: (t: Tab
           tab, and the panel is opened from three subtrees that share no closer common parent — see
           `features/heroes/store.ts`. */}
       <HeroPanel />
+      <HelpOverlay />
     </>
   );
 }

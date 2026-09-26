@@ -1,10 +1,11 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useRef, type ReactNode } from 'react';
 import { useOfficeStore } from '../../stores/officeStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useHeroPanelStore } from '../heroes/store';
 import { useNow, useRoleLookup } from '../../lib/hooks';
 import { clock, elapsed, formatTokens } from '../../lib/format';
 import { contextRatio, contextWindowFor } from '../../lib/tokens';
+import { useModalFocus } from '../../lib/useModalFocus';
 import { Badge, Button, Checkbox, Dot } from '../../components/ui';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
@@ -46,18 +47,29 @@ export function AgentDrawer({
   // this agent, if any — heroes are broadcast to every client, so a plain scan of the store is cheap.
   const hero = useMemo(() => Object.values(heroes).find((h) => h.boundAgentId === agentId), [heroes, agentId]);
 
+  // M9 8f: not a modal (the map stays clickable behind it, so no Tab trap) — but opening it should
+  // still move focus onto the drawer, and give it back to whatever had it once the drawer closes.
+  const containerRef = useRef<HTMLElement | null>(null);
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+  useModalFocus(true, containerRef, { initialFocusRef: headingRef });
+
   const role = lookup(agent?.role);
   return (
     // Docked to the right on wide screens; collapses to a bottom sheet on narrow ones. Either way
     // this is a plain edge-docked panel with its own scroll — no full-screen backdrop, so the rest
     // of the canvas stays clickable and draggable.
     <aside
-      ref={rootRef}
+      ref={(el) => {
+        containerRef.current = el;
+        rootRef?.(el);
+      }}
       className="absolute inset-x-0 bottom-0 z-10 flex max-h-[70vh] flex-col rounded-t-xl border-t border-ink-700 bg-ink-850/95 shadow-2xl backdrop-blur sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:top-0 sm:bottom-0 sm:w-80 sm:max-h-none sm:rounded-none sm:border-l sm:border-t-0"
     >
       <header className="flex items-center gap-2 border-b border-ink-700 px-3 py-2">
         <Dot color={role.color} />
-        <h2 className="truncate text-sm font-semibold">{agent ? role.title : 'Agent left'}</h2>
+        <h2 ref={headingRef} tabIndex={-1} className="truncate text-sm font-semibold">
+          {agent ? role.title : 'Agent left'}
+        </h2>
         <div className="ml-auto flex items-center gap-2">
           {agent && <Checkbox checked={follow} onChange={onFollowChange} label="Follow" />}
           <Button variant="ghost" onClick={onClose} aria-label="Close details">
