@@ -19,6 +19,8 @@
     "build": "turbo run build",
     "test": "turbo run test && pnpm run test:scripts",
     "test:scripts": "vitest run --config scripts/vitest.config.ts",
+    "test:perf": "turbo run test:perf && pnpm run test:scripts:perf",
+    "test:scripts:perf": "vitest run --config scripts/vitest.perf.config.ts",
     "typecheck": "turbo run typecheck",
     "office:install": "node scripts/install.ts",
     "office:uninstall": "node scripts/install.ts --uninstall",

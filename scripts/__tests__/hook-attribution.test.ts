@@ -10,66 +10,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { repoRoot } from './support/sandbox.ts';
+import { createHookSandbox, hookScript, makeFakeCurlBin, runHook as runHookWith, type HookSandbox } from './support/hook-harness.ts';
 
-const hookScript = join(repoRoot, 'packages', 'hook', 'office-hook.sh');
 const readmeTemplate = join(repoRoot, 'packages', 'agent-templates', 'attribution', 'README.md.tmpl');
+
+type Sandbox = HookSandbox;
 
 let binDir: string;
 
 beforeAll(() => {
-  // A fake `curl` that never touches the network: it appends its argv and
-  // stdin to $FAKE_CURL_LOG, then exits 0 (mirroring a real successful POST).
-  binDir = mkdtempSync(join(tmpdir(), 'tagconn-fake-bin-'));
-  const fakeCurl = [
-    '#!/bin/sh',
-    'log="${FAKE_CURL_LOG:?FAKE_CURL_LOG not set}"',
-    '{',
-    '  echo "=== invocation ==="',
-    '  for a in "$@"; do echo "ARG: $a"; done',
-    '  echo "--- stdin ---"',
-    '  cat',
-    '  echo "--- end ---"',
-    '} >> "$log"',
-    'exit 0',
-    '',
-  ].join('\n');
-  writeFileSync(join(binDir, 'curl'), fakeCurl, { mode: 0o755 });
+  binDir = makeFakeCurlBin();
 });
-
-interface Sandbox {
-  home: string;
-  configDir: string;
-  curlConf: string;
-  projectDir: string;
-  logFile: string;
-}
-
-function createHookSandbox(): Sandbox {
-  const root = mkdtempSync(join(tmpdir(), 'tagconn-hook-test-'));
-  const home = join(root, 'home');
-  const configDir = join(root, 'config');
-  const projectDir = join(root, 'project');
-  mkdirSync(home, { recursive: true });
-  mkdirSync(configDir, { recursive: true });
-  mkdirSync(projectDir, { recursive: true });
-  const curlConf = join(configDir, 'curl.conf');
-  writeFileSync(curlConf, 'header = "x-office-token: testtoken"\nurl = "http://127.0.0.1:4317/api/hooks"\n', {
-    mode: 0o600,
-  });
-  return { home, configDir, curlConf, projectDir, logFile: join(root, 'fake-curl.log') };
-}
 
 /** Runs the hook with a JSON body on stdin, returning once the (synchronous, foreground) part exits. */
 function runHook(sandbox: Sandbox, body: unknown, extraEnv: NodeJS.ProcessEnv = {}) {
-  const env: NodeJS.ProcessEnv = {
-    PATH: `${binDir}:${process.env.PATH}`,
-    HOME: sandbox.home,
-    TAGCONN_CURL_CONF: sandbox.curlConf,
-    FAKE_CURL_LOG: sandbox.logFile,
-    CLAUDE_PROJECT_DIR: sandbox.projectDir,
-    ...extraEnv,
-  };
-  return spawnSync('sh', [hookScript], { input: JSON.stringify(body), encoding: 'utf8', env });
+  return runHookWith(binDir, sandbox, body, extraEnv);
 }
 
 /** Polls for the background attribution subshell to finish (it forks off the foreground POST). */
@@ -311,37 +266,9 @@ describe('.tagconn/office.json import (opt-in via attribution.conf)', () => {
   });
 });
 
-describe('SC4 hardening: perf gate for the hook_event_name check (M1)', () => {
-  it('stays fast on a large non-SessionStart body (no sed forked over megabytes of data)', async () => {
-    sandbox = createHookSandbox();
-    // No attribution-README.md / attribution.conf installed, so this only
-    // exercises the foreground POST + the is_session_start gate - exactly
-    // the path that used to fork `sed` over the whole body on every event.
-    const bigBody = { session_id: 's', hook_event_name: 'PostToolUse', tool_response: 'x'.repeat(8_000_000) };
-    const start = Date.now();
-    const res = runHook(sandbox, bigBody);
-    const elapsedMs = Date.now() - start;
-    expect(res.status).toBe(0);
-    // Generous budget (CI can be slow) but meaningful: the regression this
-    // guards against measured ~1.2s for an 8MB body; a healthy run is a few
-    // hundred ms (dominated by piping 8MB through the fake curl itself).
-    expect(elapsedMs).toBeLessThan(1000);
-  });
-
-  it('also stays fast when the body contains the literal string "SessionStart" but is large', async () => {
-    sandbox = createHookSandbox();
-    const bigBody = {
-      session_id: 's',
-      hook_event_name: 'PostToolUse',
-      tool_response: `mentions SessionStart once, then: ${'x'.repeat(8_000_000)}`,
-    };
-    const start = Date.now();
-    const res = runHook(sandbox, bigBody);
-    const elapsedMs = Date.now() - start;
-    expect(res.status).toBe(0);
-    expect(elapsedMs).toBeLessThan(1000);
-  });
-});
+// The "SC4 hardening: perf gate for the hook_event_name check (M1)" timing-budget tests
+// moved to hook-attribution.perf.test.ts (run via `pnpm test:perf`, not the default suite):
+// they assert real elapsed time against a budget, which flakes on a loaded machine.
 
 describe('SC4 hardening: canonicalized $HOME/project-dir guard (L1)', () => {
   it('never writes when CLAUDE_PROJECT_DIR has a trailing slash equal to $HOME', async () => {
