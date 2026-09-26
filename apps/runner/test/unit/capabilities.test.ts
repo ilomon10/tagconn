@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { guessTranscriptKey } from '../../src/bwrap.js';
 import {
   bwrapAvailable,
   capabilitiesCachePath,
@@ -123,6 +124,18 @@ describe('verifyTranscriptKeyDerivation', () => {
     expect(verifyTranscriptKeyDerivation(fakeClaudeSpawn, FAKE_CLAUDE_PATH, probeCwd, projectsDir, env)).toBe(false);
   });
 
+  it('QA10 (HIGH): is still true after earlier probes already created a transcript dir for the same probe cwd', () => {
+    const stateDir = mkSandbox();
+    sandboxes.push(stateDir);
+    const probeCwd = join(stateDir, 'probe');
+    const projectsDir = join(stateDir, 'claude-projects');
+    const env = { ...process.env, FAKE_CLAUDE_TRANSCRIPT_MODE: 'correct', FAKE_CLAUDE_PROJECTS_DIR: projectsDir };
+    // Simulates probePermissionModes/probeStdinPrompt (or a previous boot) running in probeCwd first.
+    mkdirSync(join(projectsDir, guessTranscriptKey(probeCwd)), { recursive: true });
+    expect(verifyTranscriptKeyDerivation(fakeClaudeSpawn, FAKE_CLAUDE_PATH, probeCwd, projectsDir, env)).toBe(true);
+    expect(verifyTranscriptKeyDerivation(fakeClaudeSpawn, FAKE_CLAUDE_PATH, probeCwd, projectsDir, env)).toBe(true);
+  });
+
   it('is false when the CLI creates nothing at all', () => {
     const stateDir = mkSandbox();
     sandboxes.push(stateDir);
@@ -162,6 +175,6 @@ describe('capabilities cache', () => {
   });
 
   it('sanitizes the version string in the cache filename', () => {
-    expect(capabilitiesCachePath('/state', '2.1.282 (beta)')).toBe('/state/capabilities-2.1.282__beta_.json');
+    expect(capabilitiesCachePath('/state', '2.1.282 (beta)')).toBe('/state/capabilities-v2-2.1.282__beta_.json');
   });
 });

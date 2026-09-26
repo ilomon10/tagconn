@@ -29,6 +29,7 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 ### Fixed
 - Stale agents whose stop event was lost now leave the floor after `agents.staleAfterSec`, and an idle PM leaves after `sessions.pmIdleLeaveSec`. A floor no longer shows several PMs for one project.
 - The Hall Planner button no longer covers the roster panel.
+- With `receptionistSandbox: auto`, the runner no longer wrongly reports bwrap as unavailable on a fresh start, which had left the Receptionist unsandboxed. Cached capability results are re-probed once.
 - Docker images pin Node 24.16 to avoid a better-sqlite3 crash on newer Node 24 releases.
 
 ## [0.2.0] - 2026-09-25

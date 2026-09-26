@@ -6,7 +6,7 @@
 //  - stdinPrompt (V9), the sandboxed probe turn (bwrap) and systemdScope are functional probes too.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { RUN_PERMISSION_MODES, type RunnerCapabilities } from '@tagconn/shared';
 import { guessTranscriptKey } from './bwrap.js';
@@ -169,24 +169,25 @@ export function bwrapAvailable(spawn: Spawn = realSpawn): boolean {
 }
 
 /**
- * Runs one UNSANDBOXED probe turn in `probeCwd` (a fresh scratch dir under stateDir), then diffs
- * `<claudeProjectsDir>` before/after to find the transcript directory the CLI actually created.
- * Compares it with `guessTranscriptKey(probeCwd)`; a mismatch means the runner's bwrap `--bind` for
+ * Runs one UNSANDBOXED probe turn in a new unique dir under `probeCwd`, then checks that the CLI
+ * created exactly the transcript directory `guessTranscriptKey` predicts for it; a mismatch means the runner's bwrap `--bind` for
  * the transcript dir would target the wrong path, so bwrap must be disabled (falls back to `none`).
  */
 export function verifyTranscriptKeyDerivation(spawn: Spawn, claudePath: string, probeCwd: string, claudeProjectsDir: string, env: NodeJS.ProcessEnv): boolean {
   mkdirSync(probeCwd, { recursive: true });
   mkdirSync(claudeProjectsDir, { recursive: true });
-  const before = new Set(safeReaddir(claudeProjectsDir));
+  // A fresh, unique cwd: the other probes (and earlier boots) already created a transcript dir for
+  // `probeCwd` itself, so a before/after diff on it would never see a new entry.
+  const keyCwd = mkdtempSync(join(probeCwd, 'key-'));
+  const expected = guessTranscriptKey(keyCwd);
+  if (safeReaddir(claudeProjectsDir).includes(expected)) return false;
   spawn(claudePath, ['-p', '--output-format=stream-json', '--verbose', '--setting-sources=user', '--strict-mcp-config', '--permission-mode=plan', '--permission-prompts=none', '--model=haiku'], {
-    cwd: probeCwd,
+    cwd: keyCwd,
     env,
     input: 'reply with the single word ok',
   });
-  const after = safeReaddir(claudeProjectsDir);
-  const created = after.find((d) => !before.has(d));
-  if (!created) return false;
-  return created === guessTranscriptKey(probeCwd);
+  // Look for the exact predicted key rather than "the first new dir": another session may create one meanwhile.
+  return safeReaddir(claudeProjectsDir).includes(expected);
 }
 
 function safeReaddir(dir: string): string[] {
@@ -199,8 +200,11 @@ function safeReaddir(dir: string): string[] {
 
 // ---------------------------------------------------------------------------------------- caching
 
+/** Bump when probing logic changes so a cached result from the old logic is re-probed. */
+const CAPABILITIES_CACHE_VERSION = 2;
+
 export function capabilitiesCachePath(stateDir: string, claudeVersion: string): string {
-  return join(stateDir, `capabilities-${claudeVersion.replace(/[^A-Za-z0-9._-]/g, '_')}.json`);
+  return join(stateDir, `capabilities-v${CAPABILITIES_CACHE_VERSION}-${claudeVersion.replace(/[^A-Za-z0-9._-]/g, '_')}.json`);
 }
 
 export function loadCachedCapabilities(stateDir: string, claudeVersion: string): RunnerCapabilities | undefined {
