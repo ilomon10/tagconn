@@ -293,3 +293,93 @@ describe('request gating (DNS rebinding / CSRF)', () => {
     expect((await app.inject({ url: '/api/health' })).headers['cache-control']).toBeUndefined();
   });
 });
+
+// QA: a rejected Host/Origin used to return a bare 403 (REST) / connect_error (socket.io) with
+// nothing in the server log, so a misconfigured server.corsOrigins/allowedHosts looked like a
+// silent, unexplained failure. core/http/index.ts and core/realtime/index.ts now each log one
+// warn line, rate-limited per distinct header value.
+describe('rejected Host/Origin logging (core/http + core/realtime)', () => {
+  let app: App | undefined;
+  let socket: ClientSocket | undefined;
+  afterEach(async () => {
+    socket?.disconnect();
+    await app?.close();
+    app = socket = undefined;
+  });
+
+  /** Replaces the real Fastify logger's `warn` with a spy. With `logger: false` (buildTestApp's
+   * default), Fastify falls back to `abstract-logging`, whose `.child()` returns the very same
+   * object back - so `req.log` (used in core/http) and `app.log` (used in core/realtime, which has
+   * no per-request logger) are one and the same instance, and patching one catches both. */
+  function spyOnWarn(target: App): unknown[][] {
+    const calls: unknown[][] = [];
+    (target.log as unknown as { warn: (...a: unknown[]) => void }).warn = (...a: unknown[]) => calls.push(a);
+    return calls;
+  }
+
+  it('logs a rejected Host once, naming the header value and the setting to change, then rate-limits repeats', async () => {
+    app = await buildTestApp();
+    const calls = spyOnWarn(app);
+
+    await app.inject({ url: '/api/health', headers: { host: 'evil.example.com' } });
+    await app.inject({ url: '/api/health', headers: { host: 'evil.example.com' } });
+    expect(calls.length).toBe(1);
+
+    const [meta, msg] = calls[0] as [{ host?: string }, string];
+    expect(meta.host).toBe('evil.example.com');
+    expect(msg).toMatch(/allowedHosts/);
+    expect(msg).toMatch(/OFFICE_SERVER__ALLOWED_HOSTS/);
+
+    // A different Host value is a distinct rate-limit key, so it still gets its own log line.
+    await app.inject({ url: '/api/health', headers: { host: 'other.example.com' } });
+    expect(calls.length).toBe(2);
+  });
+
+  it('logs a rejected Origin once, naming the header value and the setting to change, then rate-limits repeats', async () => {
+    app = await buildTestApp();
+    const calls = spyOnWarn(app);
+
+    await app.inject({ method: 'PATCH', url: '/api/settings', payload: {}, headers: { origin: 'http://evil.example.com' } });
+    await app.inject({ method: 'PATCH', url: '/api/settings', payload: {}, headers: { origin: 'http://evil.example.com' } });
+    expect(calls.length).toBe(1);
+
+    const [meta, msg] = calls[0] as [{ origin?: string }, string];
+    expect(meta.origin).toBe('http://evil.example.com');
+    expect(msg).toMatch(/corsOrigins/);
+    expect(msg).toMatch(/OFFICE_SERVER__CORS_ORIGINS/);
+  });
+
+  it('never logs the request Authorization header or any token when rejecting a foreign Origin', async () => {
+    app = await buildTestApp();
+    const calls = spyOnWarn(app);
+    const secretToken = 'tca_totally-secret-admin-token-value';
+
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/settings',
+      payload: {},
+      headers: { origin: 'http://evil.example.com', authorization: `Bearer ${secretToken}` },
+    });
+
+    expect(calls.length).toBe(1);
+    expect(JSON.stringify(calls[0])).not.toContain(secretToken);
+  });
+
+  it('logs a rejected socket.io handshake Origin once, naming the header value and the setting to change', async () => {
+    app = await buildTestApp();
+    const calls = spyOnWarn(app);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('no address');
+    const base = `http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`;
+
+    socket = connect(base, { transports: ['websocket'], forceNew: true, extraHeaders: { Origin: 'http://evil.example.com' } });
+    await new Promise<void>((resolve) => socket?.on('connect_error', () => resolve()));
+
+    expect(calls.length).toBe(1);
+    const [meta, msg] = calls[0] as [{ origin?: string }, string];
+    expect(meta.origin).toBe('http://evil.example.com');
+    expect(msg).toMatch(/corsOrigins/);
+    expect(msg).toMatch(/handshake/);
+  });
+});

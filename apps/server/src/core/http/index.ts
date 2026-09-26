@@ -14,6 +14,12 @@ export * from './host.js';
 /** Methods Fastify parses a body for; these must arrive as `application/json`. */
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 
+// QA: a rejected Host/Origin previously returned a bare 403 with nothing in the server log, so a
+// misconfigured `server.corsOrigins`/`allowedHosts` looked like a silent, unexplained failure.
+// Rate-limited to once per distinct header value per minute so a scanner/retry storm can't flood
+// the log; never logs tokens (Host/Origin values never contain any).
+const REJECTED_HEADER_LOG_INTERVAL_MS = 60_000;
+
 /**
  * Zod type provider, uniform `{ error }` JSON errors, CORS, and defense-in-depth request gating
  * (settings are read live, so config/GUI changes apply without a restart):
@@ -25,6 +31,17 @@ export const httpPlugin = fp(
   async (app) => {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
+
+    // Keyed by `${kind}:${headerValue}`, fresh per app build (not module-level) so tests don't
+    // leak rate-limit state between separate app instances.
+    const lastRejectionLoggedAt = new Map<string, number>();
+    const logRejectionOnce = (key: string, log: () => void): void => {
+      const now = Date.now();
+      const last = lastRejectionLoggedAt.get(key);
+      if (last !== undefined && now - last < REJECTED_HEADER_LOG_INTERVAL_MS) return;
+      lastRejectionLoggedAt.set(key, now);
+      log();
+    };
 
     const { settings } = app.diContainer.cradle;
     const origins = settings.get().server.corsOrigins;
@@ -52,6 +69,12 @@ export const httpPlugin = fp(
       const hostHeader = req.headers.host;
       const hostname = hostHeader ? hostnameFromHostHeader(hostHeader) : undefined;
       if (!hostname || !allowedHosts.includes(hostname)) {
+        logRejectionOnce(`host:${hostHeader}`, () =>
+          req.log.warn(
+            { host: hostHeader },
+            'rejected request: untrusted Host header (add it to server.allowedHosts / OFFICE_SERVER__ALLOWED_HOSTS if this is expected)',
+          ),
+        );
         return reply.code(403).send({ error: 'Forbidden: untrusted Host header', statusCode: 403 });
       }
 
@@ -59,6 +82,12 @@ export const httpPlugin = fp(
       if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
         const origin = req.headers.origin;
         if (origin && !corsOrigins.includes('*') && !corsOrigins.includes(origin)) {
+          logRejectionOnce(`origin:${origin}`, () =>
+            req.log.warn(
+              { origin },
+              'rejected request: untrusted Origin header (add it to server.corsOrigins / OFFICE_SERVER__CORS_ORIGINS if this is expected)',
+            ),
+          );
           return reply.code(403).send({ error: 'Forbidden: untrusted Origin header', statusCode: 403 });
         }
       }

@@ -102,6 +102,17 @@ export interface Args {
   attribution?: 'yes' | 'no';
   /** `--allow-dir` may repeat; each becomes a runner.json `allowedProjectDirs` entry. */
   allowDirs: string[];
+  /**
+   * True when the operator explicitly asked for a non-default location - `--config-dir`,
+   * `TAGCONN_CONFIG_DIR`, or a non-default `--claude-dir`/`CLAUDE_CONFIG_DIR`/`--project` (any of
+   * `resolveConfigDir`'s branches other than its final `DEFAULT_CONFIG_DIR` fallback). Unlike
+   * comparing the resolved `configDir` to `DEFAULT_CONFIG_DIR` by value (see `isDefaultConfigDir` in
+   * main()), this stays accurate even when $HOME/$CLAUDE_CONFIG_DIR are themselves overridden (e.g. a
+   * sandboxed test run) and happen to derive the same path a real default install would - see
+   * `ensureRunnerConfig`'s `sandboxed` param, which needs "did the operator ask for this", not "does
+   * this path happen to equal the default one".
+   */
+  configDirExplicit: boolean;
 }
 
 const DEFAULT_CLAUDE_DIR = join(homedir(), '.claude');
@@ -154,6 +165,7 @@ export function parseArgs(argv: string[]): Args {
     help: false,
     attribution: undefined,
     allowDirs: [],
+    configDirExplicit: false, // resolved below, once all flags are parsed
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -216,12 +228,10 @@ export function parseArgs(argv: string[]): Args {
   }
 
   // See resolveConfigDir for the precedence.
-  args.configDir = resolveConfigDir({
-    configDirFlag,
-    configDirEnv: process.env.TAGCONN_CONFIG_DIR,
-    claudeDirExplicit,
-    claudeDir: args.claudeDir,
-  });
+  const configDirEnv = process.env.TAGCONN_CONFIG_DIR;
+  args.configDir = resolveConfigDir({ configDirFlag, configDirEnv, claudeDirExplicit, claudeDir: args.claudeDir });
+  args.configDirExplicit =
+    Boolean(configDirFlag) || Boolean(configDirEnv) || (claudeDirExplicit && resolve(args.claudeDir) !== DEFAULT_CLAUDE_DIR);
   validateNoSingleQuote(args.configDir, '--config-dir');
   return args;
 }
@@ -729,8 +739,24 @@ export interface RunnerConfigResult {
  * or written by a newer installer version this one doesn't know about). `url` is only overwritten when
  * `--url` was actually passed this run (`urlExplicit`) — otherwise the existing file's url wins, same
  * idempotence `token`/`allowedProjectDirs` already had.
+ *
+ * QA: `stateDir` is left unset for a DEFAULT install (`sandboxed` false), so the runner falls back to
+ * its own default (`$XDG_STATE_HOME/tagconn` or `~/.local/state/tagconn`, see apps/runner/src/config.ts) -
+ * unchanged behavior. For a SANDBOXED install (`args.configDirExplicit` at the call site: a `--config-dir`/
+ * `TAGCONN_CONFIG_DIR`, or a non-default `--claude-dir`/`CLAUDE_CONFIG_DIR`/`--project` that derives one),
+ * the runner would otherwise still default to that real, un-sandboxed state dir; this defaults `stateDir`
+ * to `<configDir>/state` instead, so a runner started against a sandboxed runner.json never writes outside
+ * the sandbox. Only a default (unset) `stateDir` is ever overwritten - an existing explicit value
+ * (hand-edited, or from an earlier install) wins.
  */
-function ensureRunnerConfig(configDir: string, url: string, urlExplicit: boolean, allowDirsFlag: string[], dryRun: boolean): RunnerConfigResult {
+export function ensureRunnerConfig(
+  configDir: string,
+  url: string,
+  urlExplicit: boolean,
+  allowDirsFlag: string[],
+  dryRun: boolean,
+  sandboxed: boolean,
+): RunnerConfigResult {
   const path = join(configDir, 'runner.json');
   let existing: Record<string, unknown> = {};
   if (existsSync(path)) {
@@ -754,7 +780,9 @@ function ensureRunnerConfig(configDir: string, url: string, urlExplicit: boolean
         ? existing.allowedProjectDirs.filter((d): d is string => typeof d === 'string')
         : [];
   const resolvedUrl = urlExplicit ? url : typeof existing.url === 'string' ? existing.url : url;
-  const config = { ...existing, url: resolvedUrl, token, allowedProjectDirs };
+  const existingStateDir = typeof existing.stateDir === 'string' ? existing.stateDir : undefined;
+  const stateDir = existingStateDir ?? (sandboxed ? join(configDir, 'state') : undefined);
+  const config = { ...existing, url: resolvedUrl, token, allowedProjectDirs, ...(stateDir ? { stateDir } : {}) };
   const text = JSON.stringify(config, null, 2) + '\n';
   if (dryRun) {
     log(`  [dry-run] would write ${path} (mode 600)`);
@@ -1183,7 +1211,7 @@ export async function main(): Promise<void> {
   }
 
   log('\n[runner]');
-  const runnerConfig = ensureRunnerConfig(args.configDir, args.url, args.urlExplicit, args.allowDirs, args.dryRun);
+  const runnerConfig = ensureRunnerConfig(args.configDir, args.url, args.urlExplicit, args.allowDirs, args.dryRun, args.configDirExplicit);
   warnBroadAllowDirs(runnerConfig.allowedProjectDirs);
   ensureRunnerTokenEnv(args.envFile, runnerConfig.token, runnerConfig.allowedProjectDirs, args.dryRun);
 

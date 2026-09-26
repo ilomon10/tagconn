@@ -12,6 +12,13 @@
 // Usage:
 //   node scripts/pair.ts [--config-dir <path>] [--url <server url>] [--web-url <web url>]
 //                         [--label <text>] [--no-squatter-check]
+//
+// NOTE on --label: this script only mints a pairing code (POST /api/auth/pairing-codes), which
+// per its contract (PairingCodeRequestSchema in packages/shared/src/auth.ts) takes no label - it
+// is a strictObject of {challengeId, proof} and rejects unknown keys. The label is attached later,
+// when the code is REDEEMED for a session (POST /api/auth/pair {code, label}), which happens in the
+// browser when the user opens the printed URL. So --label here is accepted for convenience but is
+// never sent to the server; main() prints a reminder to enter it in the browser instead.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -90,7 +97,9 @@ Options:
   --url <server url>     Office server URL (default: http://127.0.0.1:4317).
   --web-url <web url>    Browser-facing origin, for the :4318 squatter check
                          (default: http://localhost:4318).
-  --label <text>         Label shown in the session list (e.g. "Firefox on laptop").
+  --label <text>         Accepted for convenience but NOT sent when minting the code (the
+                         pairing-codes endpoint takes no label); enter it in the browser's
+                         pairing form when you redeem the code instead.
   --no-squatter-check    Skip comparing the web origin's instanceId to the server's.
   --help                 Show this help.
 `);
@@ -210,12 +219,15 @@ export interface PairResult {
  * already refuses to continue on any mismatch. This one is reported back for the caller (main()) to
  * act on: SC4 M3 requires refusing to print/reveal the code on a mismatch, fail-closed, unless the
  * caller explicitly opted out with `skipSquatterCheck`.
+ *
+ * Takes no `label`: PairingCodeRequestSchema (packages/shared/src/auth.ts) is a strictObject of
+ * {challengeId, proof} and rejects unknown keys. A label is attached later, when the code is
+ * redeemed (POST /api/auth/pair {code, label}) - see main()'s note for --label.
  */
 export async function mintPairingCode(
   baseUrl: string,
   webUrl: string,
   token: string,
-  label: string | undefined,
   skipSquatterCheck: boolean,
 ): Promise<PairResult> {
   const base = baseUrl.replace(/\/+$/, '');
@@ -236,7 +248,6 @@ export async function mintPairingCode(
   const code = await postJson<PairingCodeResponse>(`${base}/api/auth/pairing-codes`, {
     challengeId: challenge.challengeId,
     proof: clientProof,
-    ...(label ? { label } : {}),
   });
 
   let squatterCheckPassed: boolean | undefined;
@@ -276,8 +287,14 @@ export async function main(): Promise<void> {
     return;
   }
 
+  if (args.label) {
+    // See the header comment: --label is not sent to /api/auth/pairing-codes (it takes no
+    // label). It is entered in the browser's pairing form instead, when the code is redeemed.
+    console.log(`Note: --label is not sent when minting a code; enter "${args.label}" in the browser's pairing form.`);
+  }
+
   const token = readRunnerToken(args.configDir);
-  const result = await mintPairingCode(args.url, args.webUrl, token, args.label, args.noSquatterCheck);
+  const result = await mintPairingCode(args.url, args.webUrl, token, args.noSquatterCheck);
 
   if (result.squatterCheckPassed === false) {
     // SC4 M3: fail closed - never print the code/URL when the web origin doesn't check out.

@@ -2,11 +2,11 @@
 // prompt (default "no"), the attribution.conf/runner.json files, the
 // --allow-dir broad-dir warning, and their unit-level helpers. Always
 // sandboxed (see CLAUDE.md) - never the real ~/.config/tagconn.
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { countGitReposBelow, isBroadAllowDir, isValidRunnerToken } from '../install.ts';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { countGitReposBelow, ensureRunnerConfig, isBroadAllowDir, isValidRunnerToken, parseArgs } from '../install.ts';
 import { createSandbox, runInstall, type Sandbox } from './support/sandbox.ts';
 
 /** Temporarily overrides $HOME for the current (in-process) test only - never touches real files. */
@@ -296,6 +296,89 @@ describe('installer: runner.json + OFFICE_RUNNER__TOKEN', () => {
     const runnerPath = join(sandbox.configDir, 'runner.json');
     expect((statSync(runnerPath).mode & 0o777).toString(8)).toBe('600');
     expect(() => JSON.parse(readFileSync(runnerPath, 'utf8'))).not.toThrow();
+  });
+});
+
+// QA: for a sandboxed install, an unset runner.json `stateDir` would let a runner started against
+// it default to the REAL ~/.local/state/tagconn (apps/runner/src/config.ts's own default) - outside
+// the sandbox entirely. `runInstall`'s sandbox always passes an explicit --config-dir (never the
+// real one), so every CLI-level install below is itself a "sandboxed" install per `isDefaultConfigDir`.
+describe('installer: runner.json stateDir sandboxing', () => {
+  it('a sandboxed install (--config-dir under a temp HOME) defaults stateDir to <configDir>/state', () => {
+    const sandbox = createSandbox();
+    const res = runInstall(sandbox, ['--attribution', 'no']);
+    expect(res.status, res.stderr).toBe(0);
+    const config = JSON.parse(readFileSync(join(sandbox.configDir, 'runner.json'), 'utf8'));
+    expect(config.stateDir).toBe(join(sandbox.configDir, 'state'));
+  });
+
+  it('a reinstall keeps an existing stateDir untouched (idempotent, respects hand-edits)', () => {
+    const sandbox = createSandbox();
+    runInstall(sandbox, ['--attribution', 'no']);
+    const runnerPath = join(sandbox.configDir, 'runner.json');
+    const before = JSON.parse(readFileSync(runnerPath, 'utf8'));
+    const customStateDir = join(sandbox.home, 'somewhere-else', 'state');
+    writeFileSync(runnerPath, JSON.stringify({ ...before, stateDir: customStateDir }, null, 2) + '\n', { mode: 0o600 });
+
+    const res = runInstall(sandbox, ['--attribution', 'no']);
+    expect(res.status, res.stderr).toBe(0);
+    const after = JSON.parse(readFileSync(runnerPath, 'utf8'));
+    expect(after.stateDir).toBe(customStateDir);
+  });
+
+  it('ensureRunnerConfig unit: leaves stateDir unset for a default (non-sandboxed) install, sets it for a sandboxed one', () => {
+    const sandbox = createSandbox('tagconn-statedir-unit-test-');
+    const configDir = join(sandbox.home, 'unit-config-dir');
+
+    const notSandboxed = ensureRunnerConfig(configDir, 'http://127.0.0.1:4317', true, [], false, false);
+    expect(JSON.parse(readFileSync(notSandboxed.path, 'utf8')).stateDir).toBeUndefined();
+    rmSync(configDir, { recursive: true, force: true });
+
+    const sandboxed = ensureRunnerConfig(configDir, 'http://127.0.0.1:4317', true, [], false, true);
+    expect(JSON.parse(readFileSync(sandboxed.path, 'utf8')).stateDir).toBe(join(configDir, 'state'));
+  });
+
+  // parseArgs' `configDirExplicit` must track "the operator asked for this location", not "the
+  // resolved path happens to differ from DEFAULT_CONFIG_DIR" - the latter can coincidentally be
+  // equal under a faked $HOME (exactly what every sandboxed test in this suite does), which would
+  // otherwise silently disable the stateDir sandboxing this whole describe block is about.
+  describe('parseArgs: configDirExplicit', () => {
+    const savedEnv = { CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, TAGCONN_CONFIG_DIR: process.env.TAGCONN_CONFIG_DIR };
+
+    beforeEach(() => {
+      delete process.env.CLAUDE_CONFIG_DIR;
+      delete process.env.TAGCONN_CONFIG_DIR;
+    });
+
+    afterAll(() => {
+      if (savedEnv.CLAUDE_CONFIG_DIR !== undefined) process.env.CLAUDE_CONFIG_DIR = savedEnv.CLAUDE_CONFIG_DIR;
+      if (savedEnv.TAGCONN_CONFIG_DIR !== undefined) process.env.TAGCONN_CONFIG_DIR = savedEnv.TAGCONN_CONFIG_DIR;
+    });
+
+    // Note: install.ts computes DEFAULT_CLAUDE_DIR/DEFAULT_CONFIG_DIR from `homedir()` once, at
+    // module load - which already happened (against the REAL home) before this test file's
+    // `withFakeHome` could take effect, in-process. So these three checks use plain paths instead of
+    // faking $HOME; the "coincides with the real default under an overridden HOME" scenario itself
+    // (what --config-dir/--claude-dir look like once install.ts runs as its own child process with
+    // HOME overridden, exactly as `runInstall` does above) is covered end-to-end by the "a sandboxed
+    // install ... defaults stateDir" CLI-level test earlier in this describe block.
+    it('is true for an explicit --config-dir', () => {
+      const args = parseArgs(['--config-dir', '/tmp/tagconn-configdirexplicit-flag']);
+      expect(args.configDir).toBe('/tmp/tagconn-configdirexplicit-flag');
+      expect(args.configDirExplicit).toBe(true);
+    });
+
+    it('is true for a non-default --claude-dir with no --config-dir', () => {
+      const args = parseArgs(['--claude-dir', '/tmp/tagconn-configdirexplicit-claude/.claude']);
+      expect(args.configDir).toBe('/tmp/tagconn-configdirexplicit-claude/.config/tagconn');
+      expect(args.configDirExplicit).toBe(true);
+    });
+
+    it('is false with no flags at all (a genuine default install)', () => {
+      const args = parseArgs([]);
+      expect(args.configDir).toBe(join(homedir(), '.config', 'tagconn'));
+      expect(args.configDirExplicit).toBe(false);
+    });
   });
 });
 

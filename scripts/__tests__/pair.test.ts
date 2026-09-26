@@ -123,7 +123,7 @@ describe('mintPairingCode', () => {
   });
 
   it('completes the two-step HMAC handshake, returns the pairing code + URL, and passes the squatter check', async () => {
-    const result = await mintPairingCode(url, webUrl, REAL_TOKEN, 'test session', false);
+    const result = await mintPairingCode(url, webUrl, REAL_TOKEN, false);
     expect(result.code).toBe('ABCD-EFGH-JKMN');
     expect(result.url).toBe(`${webUrl}#pair=ABCD-EFGH-JKMN`);
     expect(result.expiresAt).toBeGreaterThan(Date.now());
@@ -131,13 +131,13 @@ describe('mintPairingCode', () => {
   });
 
   it('refuses (throws) when the runner token is wrong: the server proof cannot be verified', async () => {
-    await expect(mintPairingCode(url, webUrl, WRONG_TOKEN, undefined, true)).rejects.toThrow(/server proof invalid/);
+    await expect(mintPairingCode(url, webUrl, WRONG_TOKEN, true)).rejects.toThrow(/server proof invalid/);
   });
 
   it('fails the squatter check on a mismatched instanceId, but still returns the code', async () => {
     const squatter = await startFakeHealthServer('a-different-instance', VERSION);
     try {
-      const result = await mintPairingCode(url, squatter.url, REAL_TOKEN, undefined, false);
+      const result = await mintPairingCode(url, squatter.url, REAL_TOKEN, false);
       expect(result.squatterCheckPassed).toBe(false);
       expect(result.code).toBe('ABCD-EFGH-JKMN');
     } finally {
@@ -151,7 +151,7 @@ describe('mintPairingCode', () => {
     const mismatchedVersion = await startFakeHealthServer(INSTANCE_ID, '0.0.1-different');
     const serverB = await startFakeServer({ codeUrl: mismatchedVersion.url });
     try {
-      const result = await mintPairingCode(serverB.url, mismatchedVersion.url, REAL_TOKEN, undefined, false);
+      const result = await mintPairingCode(serverB.url, mismatchedVersion.url, REAL_TOKEN, false);
       expect(result.squatterCheckPassed).toBe(false);
     } finally {
       serverB.server.close();
@@ -163,7 +163,7 @@ describe('mintPairingCode', () => {
     // codeUrl deliberately does NOT match webUrl's real origin, even though health matches.
     const serverB = await startFakeServer({ codeUrl: 'http://evil.example:9999' });
     try {
-      const result = await mintPairingCode(serverB.url, webUrl, REAL_TOKEN, undefined, false);
+      const result = await mintPairingCode(serverB.url, webUrl, REAL_TOKEN, false);
       expect(result.squatterCheckPassed).toBe(false);
     } finally {
       serverB.server.close();
@@ -171,7 +171,7 @@ describe('mintPairingCode', () => {
   });
 
   it('skips the squatter check when asked, leaving it undefined', async () => {
-    const result = await mintPairingCode(url, 'http://127.0.0.1:1', REAL_TOKEN, undefined, true);
+    const result = await mintPairingCode(url, 'http://127.0.0.1:1', REAL_TOKEN, true);
     expect(result.squatterCheckPassed).toBeUndefined();
   });
 
@@ -183,7 +183,7 @@ describe('mintPairingCode', () => {
       return originalFetch(input, init);
     }) as typeof fetch;
     try {
-      await mintPairingCode(url, webUrl, REAL_TOKEN, undefined, true);
+      await mintPairingCode(url, webUrl, REAL_TOKEN, true);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -191,6 +191,26 @@ describe('mintPairingCode', () => {
       expect(body).not.toContain(REAL_TOKEN);
     }
     expect(seenBodies.length).toBeGreaterThan(0);
+  });
+
+  it('never sends a "label" key to /api/auth/pairing-codes (QA regression: the endpoint is a strictObject of {challengeId, proof} and rejects unknown keys)', async () => {
+    const seenBodies: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof input === 'string' && input.includes('/api/auth/pairing-codes') && init?.body) {
+        seenBodies.push(String(init.body));
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
+    try {
+      await mintPairingCode(url, webUrl, REAL_TOKEN, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(seenBodies.length).toBeGreaterThan(0);
+    for (const body of seenBodies) {
+      expect(JSON.parse(body)).not.toHaveProperty('label');
+    }
   });
 });
 
@@ -204,7 +224,7 @@ describe('main(): fail-closed on a squatter mismatch (SC4 M3)', () => {
     const webB = await startFakeHealthServer('someone-elses-instance', VERSION);
     const server = await startFakeServer({ codeUrl: webA.url });
     try {
-      const result = await mintPairingCode(server.url, webB.url, REAL_TOKEN, undefined, false);
+      const result = await mintPairingCode(server.url, webB.url, REAL_TOKEN, false);
       expect(result.squatterCheckPassed).toBe(false);
     } finally {
       server.server.close();

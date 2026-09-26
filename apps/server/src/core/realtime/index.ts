@@ -45,6 +45,22 @@ export const realtimePlugin = fp(
   async (app) => {
     const { settings, bus } = app.diContainer.cradle;
     const origins = settings.get().server.corsOrigins;
+
+    // QA: a rejected handshake previously returned a bare engine.io error with nothing in the
+    // server log. Rate-limited to once per distinct header value per minute (fresh Map per plugin
+    // build, so tests don't leak state across app instances); never logs tokens (Host/Origin
+    // values never contain any - the socket.io `auth` payload, which can carry the admin token,
+    // is not touched here).
+    const REJECTED_HEADER_LOG_INTERVAL_MS = 60_000;
+    const lastRejectionLoggedAt = new Map<string, number>();
+    const logRejectionOnce = (key: string, log: () => void): void => {
+      const now = Date.now();
+      const last = lastRejectionLoggedAt.get(key);
+      if (last !== undefined && now - last < REJECTED_HEADER_LOG_INTERVAL_MS) return;
+      lastRejectionLoggedAt.set(key, now);
+      log();
+    };
+
     const io: OfficeServer = new Server(app.server, {
       cors: { origin: origins.includes('*') ? true : origins },
       serveClient: false,
@@ -56,11 +72,23 @@ export const realtimePlugin = fp(
         const origin = req.headers.origin;
         // No Origin header means a non-browser client (tests, curl, the future host runner): allow it.
         if (origin && !corsOrigins.includes('*') && !corsOrigins.includes(origin)) {
+          logRejectionOnce(`origin:${origin}`, () =>
+            app.log.warn(
+              { origin },
+              'rejected socket.io handshake: untrusted Origin header (add it to server.corsOrigins / OFFICE_SERVER__CORS_ORIGINS if this is expected)',
+            ),
+          );
           return callback('origin not allowed', false);
         }
         const hostHeader = req.headers.host;
         const hostname = hostHeader ? hostnameFromHostHeader(hostHeader) : undefined;
         if (!hostname || !allowedHosts.includes(hostname)) {
+          logRejectionOnce(`host:${hostHeader}`, () =>
+            app.log.warn(
+              { host: hostHeader },
+              'rejected socket.io handshake: untrusted Host header (add it to server.allowedHosts / OFFICE_SERVER__ALLOWED_HOSTS if this is expected)',
+            ),
+          );
           return callback('host not allowed', false);
         }
         callback(null, true);
