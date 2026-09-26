@@ -7,6 +7,18 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- **Screen effects**: a top-bar **Screen** button (hotkey `V`) puts a CRT, LCD or VHS monitor look over the office. The choice is saved per browser (no pairing needed); `office.shaders.screen` / `screenStrength` set the default for everyone.
+- **Edge vignette in pixel style**: the vignette now darkens only a thin frame along the screen edges (`vignetteSize`, default 12% of the shorter side), drawn as 4 hard pixel-art bands (25/50/75/100%). `vignetteStyle: smooth` gives a soft fade instead; `vignetteSteps` and `vignettePixel` tune the bands.
+- **User guide** in `docs/guide/`: getting started, pairing your browser, runner and quests, the Receptionist, the office, attribution, display, configuration and troubleshooting.
+
+### Fixed
+- Saving in a browser that isn't paired now asks you to pair straight away (and opens the pairing dialog) instead of failing after 10 seconds with "Timed out waiting for settings:update".
+- The hover tooltip ("Travel to …", stairs) now sits right next to the cursor at every zoom level, and no longer stays on screen after you travel.
+- `pnpm office:pair` explains what to do when the server has no runner token yet (run `pnpm office:install`, then `pnpm office:up`).
+- The web build no longer triggers a Content-Security-Policy "eval" warning in the console (a Phaser helper used `new Function`).
+- The vignette no longer darkens most of the screen.
+
 ## [0.3.0] - 2026-09-26
 
 ### Added

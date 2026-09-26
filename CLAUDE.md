@@ -3,7 +3,8 @@
 tagconn shows Claude Code sessions and their subagents as characters in a 2D "Sims-style" software
 office. It is an **observer**: Claude Code hooks POST events to a local server, and the server
 streams state over socket.io to a React + Phaser web app. **No Anthropic API key is used.** The user runs
-the Claude Code CLI with a browser login. The planned v2 runner will spawn `claude -p` on the host.
+the Claude Code CLI with a browser login. The host runner (`apps/runner`, v0.3.0) spawns `claude -p` for browser quests and
+the read-only Receptionist. User-facing docs live in `docs/guide/`; keep them current when a feature changes.
 
 ## Start here in a new session
 1. Read `ROADMAP.md`: the live checklist of what is done, in progress, or todo. Keep it updated as you work.
@@ -31,7 +32,7 @@ the Claude Code CLI with a browser login. The planned v2 runner will spawn `clau
 ```
 apps/server      Fastify modular monolith (core/ + modules/<feature>/), socket.io, SQLite via Drizzle
 apps/web         React + Vite + Tailwind 4 + Phaser 3 (features/, game/, stores/, lib/)
-apps/runner      (v2, not started) host daemon spawning `claude -p --output-format stream-json`
+apps/runner      host daemon spawning `claude -p --output-format stream-json` (quests + Receptionist; HMAC-paired to the server)
 packages/shared  THE CONTRACT: zod hook schema, domain types, roles, settings schema, typed socket events
 packages/hook    office-hook.sh (sh + curl; always exits 0 and prints nothing)
 packages/agent-templates  roles/*.md (default staff) + skills/*/SKILL.md

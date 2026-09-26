@@ -9,6 +9,22 @@ matching what it's doing - typing at a desk, testing in the QA lab, reviewing in
 with a speech bubble showing its current tool, and a task board tracking work from each subagent's
 handoff report.
 
+## User guide
+
+Using a running tagconn day to day? Start with the **[user guide](docs/guide/README.md)**:
+
+- [Getting started](docs/guide/getting-started.md) — install, start the stack, dev mode, uninstall.
+- [Pairing your browser](docs/guide/pairing.md) — why viewing is public but changes need an admin session.
+- [Runner & quests](docs/guide/runner-and-quests.md) — run Claude from the browser on your machine.
+- [The Receptionist](docs/guide/receptionist.md) — the read-only chat help desk.
+- [Using the office](docs/guide/office.md) — floors, heroes, the Hall Planner, notifications.
+- [Attribution](docs/guide/attribution.md) — sharing a project's floor via `.tagconn/`.
+- [Display & shaders](docs/guide/display.md) — visual styles and WebGL post-processing.
+- [Configuration](docs/guide/configuration.md) — settings layering and the most useful keys.
+- [Troubleshooting](docs/guide/troubleshooting.md) — the doctor script and common problems.
+
+The rest of this README covers the project itself: how it's built and how to set it up.
+
 ## How it works without an API key
 
 tagconn is an **observer**, not a runner: it never calls the Claude API. You log in to the Claude
@@ -19,9 +35,10 @@ hook event. That script POSTs the raw event JSON to a local server, which normal
 projects/sessions/agents/tasks and streams state to the web UI over socket.io. No API key, no token
 spend, no change to how you use Claude Code.
 
-A planned v2 **runner** (`apps/runner`, not built yet) will let you assign tasks to characters from
-the GUI; it spawns `claude -p --output-format stream-json` as a subprocess on your host (still your
-CLI login, still no API key) rather than using the Agent SDK.
+The **runner** (`apps/runner`, a small daemon you start on your host) lets you assign quests to
+characters from the GUI, and chat with the read-only Receptionist; it spawns `claude -p
+--output-format stream-json` as a subprocess (still your CLI login, still no API key) rather than
+using the Agent SDK. See the [user guide](docs/guide/runner-and-quests.md) for how to enable it.
 
 ## Architecture
 
@@ -34,7 +51,7 @@ claude (any project dir)
 ~/.claude/projects ─── transcripts (ro bind mount) ─────────────────▶┤
                                                                      │ socket.io namespace /office
 browser ◀── web :4318 (nginx: static + proxy /api, /socket.io) ◀─────┘
-runner (v2, host) ◀── socket.io client ──▶ server; spawns `claude -p --output-format stream-json`
+runner (host daemon) ◀── socket.io client ──▶ server; spawns `claude -p --output-format stream-json`
 ```
 
 The hook is deliberately dumb (POSIX `sh` + `curl`, always exits `0`, prints nothing to stdout, ~1s
@@ -83,21 +100,10 @@ scripted simulation entirely in the browser, no hooks or backend required.
 
 ## Configuration
 
-Settings layer in this order, each overriding the previous:
-
-1. **Schema defaults** - `packages/shared/src/settings.ts` (`SettingsSchema`), the single source of truth.
-2. **`config/office.yaml`** (path from env `OFFICE_CONFIG`, default `./config/office.yaml`) - a fully
-   commented example of every section at its default value; uncomment what you want to change.
-3. **Environment variables** - `OFFICE_<SECTION>__<KEY_SNAKE>`, e.g. `OFFICE_SERVER__PORT=4317`,
-   `OFFICE_STORAGE__DB_PATH=/data/office.db`, `OFFICE_PATHS__AGENTS_DIR=/claude/agents`,
-   `OFFICE_PATHS__PROJECTS_DIR=/claude/projects`. Shortcut: `OFFICE_HOOK_TOKEN` for
-   `server.hookToken`.
-4. **Runtime overrides** saved to SQLite via the web GUI's settings page (socket `settings:update`).
-   Keys in `RESTART_REQUIRED_SETTINGS` only take effect after the server restarts.
-
-`OFFICE_TEMPLATES_DIR` points at the directory containing `roles/` (default the repo's
-`packages/agent-templates`; the server image sets it to `/app/templates`), used when the GUI syncs
-roles to `~/.claude/agents`.
+Settings layer schema defaults → `config/office.yaml` → `OFFICE_<SECTION>__<KEY_SNAKE>` env vars →
+runtime overrides saved from the web GUI, with a handful of network/secret/path keys that only the
+config file or env can ever set. See the **[Configuration guide](docs/guide/configuration.md)** for
+the full layering, file locations and a table of the most useful keys.
 
 ## Security model
 
@@ -115,10 +121,15 @@ tagconn is built to be local-only, single-user:
   sends as `x-office-token`. `office:install` generates one and writes it to
   `~/.config/tagconn/curl.conf`, mode `0600`, read by `curl -K` - it is never passed as a
   command-line argument, so it never shows up in `ps` output for other users on the machine.
-- **GUI-immutable settings.** The whole `server.*` section, `storage.dbPath`, `paths.*`,
-  `runner.permissionMode` and `runner.allowedProjectDirs` can only be changed via the config file or
-  env vars, never from the web GUI or its socket API - they control network exposure, secrets,
-  filesystem paths, or (for the planned runner) what gets executed.
+- **GUI-immutable settings.** The whole `server`, `paths`, `runner` and `auth` sections,
+  `storage.dbPath`, and the Receptionist's safety keys (`webSearch`, `webFetch`,
+  `webFetchAllowDomains`, `extraDenyReadGlobs`, `allowTagconnDocs`, `projectSafeMode`) can only be
+  changed via the config file or env vars, never from the web GUI or its socket API - they control
+  network exposure, secrets, filesystem paths, or code execution. See
+  [`GUI_IMMUTABLE_SETTINGS`](packages/shared/src/settings.ts) for the exact list.
+- **Admin sessions.** Viewing the office is always public, but running Claude from the browser
+  (quests, the Receptionist) or changing anything requires pairing the browser with a one-time code
+  first - see the [pairing guide](docs/guide/pairing.md).
 
 ## Roles & skills
 
@@ -149,7 +160,7 @@ directory with the same name is left untouched and a warning is printed.
 ```
 apps/server                 Fastify + socket.io + SQLite (Drizzle) - the office backend
 apps/web                    React + Vite + Phaser 3 - the office UI
-apps/runner                 (v2, not started) host daemon spawning `claude -p`
+apps/runner                 host daemon (not in Docker) spawning `claude -p` for quests + the Receptionist
 packages/shared              THE CONTRACT: zod hook schema, domain types, roles, settings, socket events
 packages/hook                office-hook.sh - the Claude Code hook handler (sh + curl)
 packages/agent-templates     roles/*.md (default staff) + skills/*/SKILL.md
@@ -168,36 +179,20 @@ pnpm office:uninstall
 pnpm office:down
 ```
 
-Removes only the hook entries tagconn added to `~/.claude/settings.json` (a timestamped backup is
-made first either way), and only the role/skill files it manages - anything you wrote yourself is
-left alone. `~/.config/tagconn/curl.conf` (the hook token) is deleted too. The hook script and the
-repo `.env` are left in place (harmless if unused); delete `~/.config/tagconn` yourself if you want
-them gone too.
+Removes only the hooks, role/skill files and config tagconn itself manages - anything you wrote
+yourself is left alone, and a settings.json backup is made first. See
+[Getting started § Uninstall](docs/guide/getting-started.md#uninstall) for exactly what's removed
+and what's left behind.
 
 ## Troubleshooting
-
-Run the doctor:
 
 ```sh
 pnpm office:doctor
 ```
 
-It checks: `curl` is installed, `~/.config/tagconn/curl.conf` exists, is mode `600`, and holds the
-token/URL directives, the hook script is installed and executable, `~/.claude/settings.json` has
-tagconn's entry for every hook event, the server's `/api/health` is reachable, and (optionally)
-whether `docker compose` shows the services running - printing a ✔/✖ (or ○ for optional/soft checks)
-line with a fix hint for each failure.
-
-Other common issues:
-- **Characters never appear**: confirm `pnpm office:doctor` is all green, then confirm the server is
-  actually up (`pnpm office:up` or `pnpm dev`) - the hook silently drops events when it can't reach the
-  server, by design (it must never block or fail a Claude Code session).
-- **`docker compose up` can't write to `~/.claude/agents`**: if that directory doesn't exist yet on
-  the host, Docker creates it as root on first bind-mount, which the container's non-root user then
-  can't write to. Run `mkdir -p ~/.claude/agents` (or `pnpm office:install` once, which creates it)
-  before `pnpm office:up`.
-- **Re-running `office:install` didn't pick up a new server URL**: pass `--url <server url>` again;
-  it rewrites `~/.config/tagconn/curl.conf` every run (your hook token is preserved).
+Checks the hook, its config, `settings.json`, the runner, pairing and more, printing a ✔/✖/○ line
+with a fix hint for each failure. See the **[Troubleshooting guide](docs/guide/troubleshooting.md)**
+for what each check means and fixes for common issues.
 
 ## License
 
