@@ -219,6 +219,15 @@ export const ADMIN_SOCKET_EVENTS_EXECUTION = [
   'auth:revoke',
 ] as const;
 
+/** Mirrors the server's per-packet socket gate (`core/realtime/admin-guard.ts`), so the web client can
+ *  ask for pairing up front instead of waiting for a denied event's ack to time out. Fail closed: any
+ *  event not in the public or cosmetic-write lists needs an admin session. */
+export function socketEventNeedsAdmin(event: string, protect: AuthProtectLevel): boolean {
+  if ((PUBLIC_SOCKET_EVENTS as readonly string[]).includes(event)) return false;
+  if ((ADMIN_SOCKET_EVENTS_WRITES as readonly string[]).includes(event)) return protect === 'all-writes';
+  return true;
+}
+
 export interface AuthServerToClientEvents {
   /** Sent to one socket after its session expires or is revoked (the client drops the token). */
   'auth:changed': (s: AuthStatus) => void;

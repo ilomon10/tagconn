@@ -21,10 +21,11 @@ const { apiMock, ApiErrorMock } = vi.hoisted(() => {
 
 vi.mock('../lib/api', () => ({ api: apiMock, ApiError: ApiErrorMock }));
 
-const { authSocketMock, reconnectSocketAuthMock, AckTimeoutErrorMock } = vi.hoisted(() => ({
+const { authSocketMock, reconnectSocketAuthMock, AckTimeoutErrorMock, gateRef } = vi.hoisted(() => ({
   authSocketMock: { status: vi.fn(), sessions: vi.fn(), revoke: vi.fn() },
   reconnectSocketAuthMock: vi.fn(),
   AckTimeoutErrorMock: class AckTimeoutErrorMock extends Error {},
+  gateRef: { current: null as null | { isGated(e: string): boolean; isAdmin(): boolean; onDenied(e: string, r: 'precheck' | 'timeout'): void } },
 }));
 
 vi.mock('../lib/socket', () => ({
@@ -32,6 +33,9 @@ vi.mock('../lib/socket', () => ({
   reconnectSocketAuth: reconnectSocketAuthMock,
   authSocket: authSocketMock,
   AckTimeoutError: AckTimeoutErrorMock,
+  setSocketAuthGate: (g: typeof gateRef.current) => {
+    gateRef.current = g;
+  },
 }));
 
 const demoState = vi.hoisted(() => ({ demo: false }));
@@ -235,6 +239,56 @@ describe('authStore', () => {
 
       expect(authSocketMock.sessions).toHaveBeenCalledTimes(1);
       expect(useAuthStore.getState().status.admin).toBe(true);
+    });
+  });
+
+  describe('socket auth gate', () => {
+    it('is registered and reflects protect + admin status', () => {
+      const gate = gateRef.current!;
+      expect(gate).toBeTruthy();
+      useAuthStore.setState({ statusLoaded: true, status: status({ protect: 'all-writes' }) });
+      expect(gate.isGated('settings:update')).toBe(true);
+      expect(gate.isGated('settings:get')).toBe(false);
+      expect(gate.isAdmin()).toBe(false);
+      useAuthStore.setState({ status: status({ protect: 'execution' }) });
+      expect(gate.isGated('settings:update')).toBe(false);
+      expect(gate.isGated('runs:start')).toBe(true);
+      useAuthStore.setState({ status: status({ admin: true }) });
+      expect(gate.isAdmin()).toBe(true);
+    });
+
+    it('lets the emit through while the status is still unknown', () => {
+      useAuthStore.setState({ statusLoaded: false, status: status() });
+      expect(gateRef.current!.isAdmin()).toBe(true);
+    });
+
+    it('precheck denial drops admin, shows the pair prompt and opens the pairing dialog', () => {
+      useAuthStore.setState({ statusLoaded: true, status: status() });
+      gateRef.current!.onDenied('settings:update', 'precheck');
+      const st = useAuthStore.getState();
+      expect(st.status.admin).toBe(false);
+      expect(st.toast).toBe(PAIR_TO_CHANGE_MESSAGE);
+      expect(st.pairingOpen).toBe(true);
+    });
+
+    it('a timeout on a still-valid session (slow server) does not log out or prompt', async () => {
+      useAuthStore.setState({ statusLoaded: true, status: status({ admin: true }) });
+      apiMock.authStatus.mockResolvedValue(status({ admin: true }));
+      gateRef.current!.onDenied('settings:update', 'timeout');
+      await vi.waitFor(() => expect(apiMock.authStatus).toHaveBeenCalled());
+      await Promise.resolve();
+      const st = useAuthStore.getState();
+      expect(st.status.admin).toBe(true);
+      expect(st.pairingOpen).toBe(false);
+      expect(st.toast).toBeNull();
+    });
+
+    it('a timeout on an expired session asks to pair once the server confirms it', async () => {
+      useAuthStore.setState({ statusLoaded: true, status: status({ admin: true }) });
+      apiMock.authStatus.mockResolvedValue(status({ admin: false }));
+      gateRef.current!.onDenied('settings:update', 'timeout');
+      await vi.waitFor(() => expect(useAuthStore.getState().pairingOpen).toBe(true));
+      expect(useAuthStore.getState().toast).toBe(PAIR_TO_CHANGE_MESSAGE);
     });
   });
 });

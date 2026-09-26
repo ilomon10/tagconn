@@ -191,6 +191,55 @@ describe('emitWithAck / emitWithAckTimeout: timeout-as-unauthorized', () => {
   });
 });
 
+describe('socket auth gate (pair before a gated write)', () => {
+  const gate = (admin: boolean, onDenied = vi.fn()) => ({ isGated: (e: string) => e === 'settings:update', isAdmin: () => admin, onDenied });
+
+  it('rejects a gated write up front when not paired, without emitting, and asks for pairing', async () => {
+    const { getSocket, emitWithAck, setSocketAuthGate, NotAuthorizedError, AckTimeoutError } = await import('./socket');
+    getSocket();
+    const onDenied = vi.fn();
+    setSocketAuthGate(gate(false, onDenied));
+    const p = emitWithAck('settings:update', {});
+    await expect(p).rejects.toBeInstanceOf(NotAuthorizedError);
+    await expect(p).rejects.toBeInstanceOf(AckTimeoutError);
+    await expect(p).rejects.toThrow('Pair this browser to make changes');
+    expect(onDenied).toHaveBeenCalledWith('settings:update', 'precheck');
+    expect(fakeSocket.emit).not.toHaveBeenCalled();
+  });
+
+  it('public events and paired browsers still emit', async () => {
+    const { getSocket, emitWithAck, setSocketAuthGate } = await import('./socket');
+    getSocket();
+    setSocketAuthGate(gate(false));
+    void emitWithAck('layouts:list');
+    setSocketAuthGate(gate(true));
+    void emitWithAck('settings:update', {});
+    expect(fakeSocket.emit).toHaveBeenCalledTimes(2);
+  });
+
+  it('a gated event that times out hands the check to the gate (reason timeout) with a clear message', async () => {
+    const { getSocket, emitWithAckTimeout, setSocketAuthGate } = await import('./socket');
+    getSocket();
+    const onDenied = vi.fn();
+    setSocketAuthGate(gate(true, onDenied));
+    const p = emitWithAckTimeout(4000, 'settings:update', {});
+    vi.advanceTimersByTime(4000);
+    await expect(p).rejects.toThrow(/No response from the server for settings:update/);
+    expect(onDenied).toHaveBeenCalledWith('settings:update', 'timeout');
+  });
+
+  it('a public event that times out keeps the plain timeout message', async () => {
+    const { getSocket, emitWithAckTimeout, setSocketAuthGate } = await import('./socket');
+    getSocket();
+    const onDenied = vi.fn();
+    setSocketAuthGate(gate(true, onDenied));
+    const p = emitWithAckTimeout(4000, 'layouts:list');
+    vi.advanceTimersByTime(4000);
+    await expect(p).rejects.toThrow('Timed out waiting for layouts:list');
+    expect(onDenied).not.toHaveBeenCalled();
+  });
+});
+
 describe('authSocket', () => {
   it('sends status/sessions/revoke as real emits', async () => {
     const { getSocket, authSocket } = await import('./socket');

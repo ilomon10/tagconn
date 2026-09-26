@@ -319,10 +319,23 @@ export async function main(): Promise<void> {
   console.log(`Expires in ${expiresInSec}s.`);
 }
 
+/** A next step for failures a user can fix themselves (the server's runner token is set from `.env`). */
+export function pairFailureHint(message: string): string | undefined {
+  if (!/runner\.token is not configured/.test(message)) return undefined;
+  return [
+    'The server has no runner token yet. Run `pnpm office:install` (it writes OFFICE_RUNNER__TOKEN to .env),',
+    'then recreate the server with `pnpm office:up` (`docker compose restart` keeps the old environment).',
+    'Or pair with the code printed in the server log: `docker compose logs server | grep "pairing code"`.',
+  ].join('\n');
+}
+
 // Only run when this file is the entry point (not when imported by tests).
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   main().catch((err: unknown) => {
-    console.error(`tagconn pair failed: ${(err as Error).message}`);
+    const message = (err as Error).message;
+    console.error(`tagconn pair failed: ${message}`);
+    const hint = pairFailureHint(message);
+    if (hint) console.error(hint);
     process.exitCode = 1;
   });
 }

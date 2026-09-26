@@ -1,17 +1,13 @@
 import {
   ADMIN_ROOM,
   ADMIN_ROOM_SWEEP_MS,
-  ADMIN_SOCKET_EVENTS_WRITES,
-  PUBLIC_SOCKET_EVENTS,
+  socketEventNeedsAdmin,
   type AuthStatus,
   type OfficeHandshakeAuth,
 } from '@tagconn/shared';
 import type { FastifyInstance } from 'fastify';
 import type { AdminSessionCheck } from '../http/index.js';
 import type { OfficeNamespace } from './index.js';
-
-const PUBLIC = new Set<string>(PUBLIC_SOCKET_EVENTS);
-const WRITES = new Set<string>(ADMIN_SOCKET_EVENTS_WRITES);
 
 /**
  * M1: implemented by `modules/auth`'s `AuthService` (registered under this DI key alongside
@@ -90,10 +86,7 @@ export function registerAdminGuard(app: FastifyInstance, office: OfficeNamespace
   office.on('connection', (socket) => {
     socket.use((packet, next) => {
       const [event] = packet;
-      if (PUBLIC.has(event)) return next();
-
-      const protect = app.diContainer.cradle.settings.get().auth.protect;
-      if (WRITES.has(event) && protect !== 'all-writes') return next();
+      if (!socketEventNeedsAdmin(String(event), app.diContainer.cradle.settings.get().auth.protect)) return next();
 
       // M1: this packet is the actual gated action the user just took — real activity, so it touches.
       const status = authStatusOf(app, socket.data.adminToken as string | undefined, true);

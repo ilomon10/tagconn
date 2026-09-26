@@ -8,7 +8,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mintPairingCode, parseArgs, readRunnerToken } from '../pair.ts';
+import { mintPairingCode, pairFailureHint, parseArgs, readRunnerToken } from '../pair.ts';
 
 const REAL_TOKEN = 'a'.repeat(64);
 const WRONG_TOKEN = 'b'.repeat(64);
@@ -304,5 +304,18 @@ describe('parseArgs', () => {
 
   it('rejects a --web-url containing whitespace/quotes', () => {
     expect(() => parseArgs(['--web-url', 'http://evil.example/ "x'])).toThrow(/whitespace or quotes/);
+  });
+});
+
+describe('pairFailureHint', () => {
+  it('explains a server without a runner token (install, then office:up, or the log code)', () => {
+    const hint = pairFailureHint('http://127.0.0.1:4317/api/auth/pairing-challenge failed: Pairing is disabled: settings.runner.token is not configured');
+    expect(hint).toMatch(/office:install/);
+    expect(hint).toMatch(/office:up/);
+    expect(hint).toMatch(/logs server/);
+  });
+
+  it('adds nothing for other failures', () => {
+    expect(pairFailureHint('server proof invalid')).toBeUndefined();
   });
 });

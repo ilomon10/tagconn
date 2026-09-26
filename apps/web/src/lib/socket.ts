@@ -10,7 +10,7 @@ import {
   type OfficeLayoutInput,
   type ServerToClientEvents,
 } from '@tagconn/shared';
-import { readStoredToken } from './auth';
+import { PAIR_TO_CHANGE_MESSAGE, readStoredToken } from './auth';
 
 export type OfficeSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -70,6 +70,23 @@ export class AckTimeoutError extends AckError {}
 
 const DEFAULT_ACK_TIMEOUT_MS = 10_000;
 
+/** Raised up front, without emitting, when the gate knows this browser isn't paired for `event`.
+ *  Extends `AckTimeoutError` so every existing "timeout = not authorized" handler covers it too. */
+export class NotAuthorizedError extends AckTimeoutError {}
+
+/** Registered by `stores/authStore.ts` (kept as a hook to avoid an import cycle). `isGated` = the event
+ *  needs an admin session under the current `auth.protect`; `isAdmin` = the last known auth status says
+ *  this browser is paired; `onDenied` shows the pairing prompt. */
+export interface SocketAuthGate {
+  isGated(event: string): boolean;
+  isAdmin(): boolean;
+  onDenied(event: string, reason: 'precheck' | 'timeout'): void;
+}
+let authGate: SocketAuthGate | null = null;
+export function setSocketAuthGate(gate: SocketAuthGate | null): void {
+  authGate = gate;
+}
+
 /**
  * Same as `emitWithAck`, but with an explicit ack timeout. Deliberately a plain `setTimeout` (rather
  * than socket.io's own `.timeout()`/ack-timeout option) plus a one-shot `disconnect` listener, instead
@@ -79,6 +96,10 @@ const DEFAULT_ACK_TIMEOUT_MS = 10_000;
  * `AckTimeoutError` vs a plain `AckError` on disconnect.
  */
 export function emitWithAckTimeout<E extends keyof C2S>(ms: number, event: E, ...args: AckArgs<C2S[E]>): Promise<AckPayload<C2S[E]>> {
+  if (authGate && authGate.isGated(String(event)) && !authGate.isAdmin()) {
+    authGate.onDenied(String(event), 'precheck');
+    return Promise.reject(new NotAuthorizedError(PAIR_TO_CHANGE_MESSAGE));
+  }
   const s = getSocket();
   if (!s.connected) return Promise.reject(new AckError('Not connected to the office server'));
   return new Promise((resolve, reject) => {
@@ -93,6 +114,13 @@ export function emitWithAckTimeout<E extends keyof C2S>(ms: number, event: E, ..
       if (settled) return;
       settled = true;
       s.off('disconnect', onDisconnect);
+      // A gated event that never acks may have been denied (fail closed) — e.g. the session expired
+      // since the last status. The gate re-checks with the server and asks to pair only if so.
+      if (authGate?.isGated(String(event))) {
+        authGate.onDenied(String(event), 'timeout');
+        reject(new AckTimeoutError(`No response from the server for ${String(event)}. If this browser's pairing expired, you'll be asked to pair again.`));
+        return;
+      }
       reject(new AckTimeoutError(`Timed out waiting for ${String(event)}`));
     }, ms);
     s.once('disconnect', onDisconnect);

@@ -1,9 +1,9 @@
 import { create } from 'zustand';
-import type { AdminSessionInfo, AuthStatus } from '@tagconn/shared';
+import { socketEventNeedsAdmin, type AdminSessionInfo, type AuthStatus } from '@tagconn/shared';
 import { api, ApiError } from '../lib/api';
 import { isDemo } from '../lib/connection';
 import { clearStoredToken, consumePairingFragment, onAuthEvent, PAIR_TO_CHANGE_MESSAGE, tokenIsRemembered, writeStoredToken } from '../lib/auth';
-import { AckTimeoutError, authSocket, getSocket, reconnectSocketAuth } from '../lib/socket';
+import { AckTimeoutError, authSocket, getSocket, reconnectSocketAuth, setSocketAuthGate } from '../lib/socket';
 
 /**
  * M8 8m admin auth, browser side. Holds the *result* of an admin session (`status`, the sessions
@@ -88,7 +88,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const res = await api.pair({ code, label });
       writeStoredToken(res.token, get().remember);
       reconnectSocketAuth();
-      set({ pairingOpen: false, prefilledCode: '' });
+      // Paired now: flip admin right away so a write fired before the status round-trip isn't
+      // precheck-denied (refreshStatus confirms or corrects it).
+      set((s) => ({ pairingOpen: false, prefilledCode: '', status: { ...s.status, admin: true } }));
       await get().refreshStatus();
     } catch (err) {
       set({ pairError: err instanceof ApiError ? err.message : 'Could not pair — check the code and try again.' });
@@ -102,7 +104,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const res = await api.bootstrap({ label });
       writeStoredToken(res.token, get().remember);
       reconnectSocketAuth();
-      set({ pairingOpen: false, prefilledCode: '' });
+      // Paired now: flip admin right away so a write fired before the status round-trip isn't
+      // precheck-denied (refreshStatus confirms or corrects it).
+      set((s) => ({ pairingOpen: false, prefilledCode: '', status: { ...s.status, admin: true } }));
       await get().refreshStatus();
     } catch (err) {
       set({ pairError: err instanceof ApiError ? err.message : 'Bootstrap is unavailable.' });
@@ -165,4 +169,29 @@ getSocket().on('auth:changed', (status) => {
 // read-only view and show the same gentle prompt everywhere, instead of each write path doing its own.
 onAuthEvent((e) => {
   useAuthStore.setState((s) => ({ status: { ...s.status, admin: false }, toast: e.message }));
+});
+
+// Gated socket writes: ask for pairing up front (no 10s wait for a denied ack) and open the dialog.
+// Until the first status load we can't know, so the emit goes out and the timeout path covers it.
+setSocketAuthGate({
+  isGated: (event) => socketEventNeedsAdmin(event, useAuthStore.getState().status.protect),
+  isAdmin: () => {
+    const { status, statusLoaded } = useAuthStore.getState();
+    return status.admin || !statusLoaded;
+  },
+  onDenied: (_event, reason) => {
+    const askToPair = () => {
+      useAuthStore.setState((s) => ({ status: { ...s.status, admin: false }, toast: PAIR_TO_CHANGE_MESSAGE }));
+      useAuthStore.getState().openPairing();
+    };
+    if (reason === 'precheck') return askToPair();
+    // A timeout alone isn't proof the session is gone (it may just be a slow server): ask the server,
+    // and only prompt for pairing if it confirms this browser isn't paired (expired or revoked).
+    void useAuthStore
+      .getState()
+      .refreshStatus()
+      .then(() => {
+        if (!useAuthStore.getState().status.admin) askToPair();
+      });
+  },
 });
