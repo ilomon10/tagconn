@@ -64,11 +64,18 @@ function FloorRow({ project, onEdit }: { project: Project; onEdit: () => void })
           onChange={(e) => setName(e.target.value)}
           onBlur={rename}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
+            // Blurring would drop focus on <body>, outside the dialog's focus trap and Esc handler;
+            // hand it to the dialog itself so Tab and a second Esc keep working.
+            const finish = (input: HTMLInputElement) => {
+              const dialog = input.closest<HTMLElement>('[role="dialog"]');
+              input.blur();
+              dialog?.focus();
+            };
+            if (e.key === 'Enter') finish(e.currentTarget);
             if (e.key === 'Escape') {
               cancelledRef.current = true;
               setName(project.name);
-              e.currentTarget.blur();
+              finish(e.currentTarget);
             }
           }}
         />
@@ -133,6 +140,8 @@ export function FloorManager({ onClose }: { onClose: () => void }) {
         data-modal="floor-manager"
         aria-modal="true"
         role="dialog"
+        tabIndex={-1}
+        style={{ outline: 'none' }}
       >
         <div className="w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
           <Panel
