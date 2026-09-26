@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MULTIVERSE_THEME_ID, type Agent, type MultiverseProjectInput, type Project, type Settings, type OfficeLayout } from '@tagconn/shared';
 import { OfficeGame, officeNavBus, type FloorNavDirection, type OfficeState } from '../../game/OfficeGame';
-import { getTheme } from '../../game/themes';
+import { getTheme, prefersReducedMotion } from '../../game/themes';
 import { planMultiverse } from '../../game/multiverse/plan';
 import { onFloor, useOfficeStore } from '../../stores/officeStore';
 import { useHeroStore } from '../../stores/heroStore';
@@ -164,6 +164,27 @@ function floorLabelForEntry(entry: Project, index: number, layouts: Record<strin
  */
 function canNavigateFloors(game: OfficeGame | null): boolean {
   return !isModalOpen() && !game?.isTransitioning;
+}
+
+/**
+ * The character-cap overflow banner's "Raise the limit" action (M9 8f follow-up): jump to the
+ * Settings tab. `App.tsx` drives which tab shows purely off `window.location.hash` (its own
+ * `hashchange` listener, no store) so navigating there from outside the tab bar is just setting the
+ * hash — same tab id `TopBar.tsx`'s `TABS` uses. There's no per-section anchor to target more
+ * precisely without touching `SettingsPanel.tsx` (out of scope here), so this best-effort-scrolls
+ * to the "Office" section's heading once Settings has rendered; if that heading's text or the DOM
+ * shape ever changes, it just silently stays at the top of Settings instead of failing.
+ */
+function openSettingsAtOffice() {
+  window.location.hash = 'settings';
+  // Two frames: one for the `hashchange` listener's `setTab` to commit, one for the newly-mounted
+  // Settings panel to actually paint its sections before we look for the heading.
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      const heading = document.getElementById('settings-office');
+      heading?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+    }),
+  );
 }
 
 /** Runs the stairs transition (fade via the scene), then re-selects the floor and toasts its label. */
@@ -471,8 +492,16 @@ export function OfficeView({ active }: { active: boolean }) {
         <div ref={host} className="absolute inset-0" />
         <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-2">
           {overflow > 0 && (
-            <span className="rounded-full bg-amber-500/90 px-2.5 py-1 text-[11px] font-semibold text-ink-950 shadow">
+            <span className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-amber-500/90 px-2.5 py-1 text-[11px] font-semibold text-ink-950 shadow">
               +{overflow} more not shown (max {maxCharacters})
+              <button
+                type="button"
+                onClick={openSettingsAtOffice}
+                className="rounded-full bg-ink-950/15 px-1.5 py-0.5 underline decoration-dotted underline-offset-2 hover:bg-ink-950/25"
+                aria-label={`Raise the character limit above ${maxCharacters} in Settings`}
+              >
+                Raise the limit
+              </button>
             </span>
           )}
           {agents.length === 0 && connection !== 'connecting' && (
@@ -481,6 +510,19 @@ export function OfficeView({ active }: { active: boolean }) {
             </span>
           )}
         </div>
+        {/* M9 8f follow-up: a bare dark canvas while the socket connects reads as broken. Only while
+            there's no data yet — once agents arrive there's already a populated office to look at.
+            Demo mode never reaches `connection === 'connecting'` (it's its own `'demo'` state), so
+            this never shows there. The dot uses Tailwind's `motion-safe:` variant (matching the
+            connection dot in `TopBar.tsx`) so it simply doesn't render under reduced motion. */}
+        {connection === 'connecting' && agents.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <span className="flex items-center gap-2 rounded-md bg-ink-850/90 px-3 py-2 text-xs text-ink-300 shadow">
+              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-amber-400 motion-safe:animate-pulse" />
+              Connecting to the office…
+            </span>
+          </div>
+        )}
         {toast && (
           <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
             <span className="rounded-full bg-ink-850/95 px-3 py-1.5 text-xs font-semibold text-ink-100 shadow-lg">{toast}</span>

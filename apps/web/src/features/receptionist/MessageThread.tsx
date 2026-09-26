@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ReceptionistMessage, ReceptionistToolCall } from '@tagconn/shared';
 import { renderMarkdown } from '../../lib/markdown';
 import { Button, Textarea, cx } from '../../components/ui';
@@ -62,7 +62,8 @@ export function MessageThread({
   busy: boolean;
   /** Sending is unavailable for a reason other than "busy" (runner offline, not admin, disabled). */
   disabled: boolean;
-  disabledReason?: string;
+  /** A plain string, or richer content (e.g. the runner-offline reason includes a copy-command button). */
+  disabledReason?: ReactNode;
   onSend: (text: string) => void;
   onStop: () => void;
   sendBusy: boolean;

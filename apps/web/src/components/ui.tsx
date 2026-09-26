@@ -67,9 +67,9 @@ export function Dot({ color, className }: { color: string; className?: string })
   return <span className={cx('inline-block size-2.5 shrink-0 rounded-full ring-1 ring-black/40', className)} style={{ backgroundColor: color }} />;
 }
 
-export function Panel({ title, actions, children, className }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
+export function Panel({ id, title, actions, children, className }: { id?: string; title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cx('rounded-lg border border-ink-700 bg-ink-850', className)}>
+    <section id={id} className={cx('rounded-lg border border-ink-700 bg-ink-850', className)}>
       {(title || actions) && (
         <header className="flex items-center justify-between gap-2 border-b border-ink-700 px-3 py-2">
           <h2 className="text-xs font-semibold tracking-wide text-ink-100">{title}</h2>

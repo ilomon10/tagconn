@@ -271,10 +271,11 @@ function SectionPanel({ section, values, base, set, roles }: { section: Section;
     );
   return (
     <Panel
+      id={`settings-${section}`}
       title={meta.title}
       actions={
         <>
-          <span className="text-[10px] text-ink-400">{meta.hint}</span>
+          <span className="text-[10px] text-ink-300">{meta.hint}</span>
           {section === 'heroes' && <EditNamePoolsButton />}
         </>
       }

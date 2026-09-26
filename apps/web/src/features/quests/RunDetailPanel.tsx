@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Run } from '@tagconn/shared';
 import { isTerminalRunStatus } from '@tagconn/shared';
 import { useOfficeStore } from '../../stores/officeStore';
@@ -21,12 +21,29 @@ export function RunDetailPanel({ run, onClose }: { run: Run; onClose: () => void
   const selectFloor = useOfficeStore((s) => s.selectProject);
   const { guard } = useRequireAdmin();
 
+  const detailLoading = useRunsStore((s) => s.detailLoading[run.id]);
+
   const [followUpText, setFollowUpText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Bumped on every load and run switch: a late rejection from an earlier load (or another run) must
+  // not show its error under the run now on screen.
+  const loadSeq = useRef(0);
+  const load = () => {
+    const seq = ++loadSeq.current;
+    setLoadError(null);
+    loadDetail(run.id).catch((err) => {
+      if (seq === loadSeq.current) setLoadError(err instanceof Error ? guidanceForError(err.message) : String(err));
+    });
+  };
 
   useEffect(() => {
-    void loadDetail(run.id);
+    load();
+    return () => {
+      loadSeq.current++;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id]);
 
@@ -88,7 +105,18 @@ export function RunDetailPanel({ run, onClose }: { run: Run; onClose: () => void
         )}
         {run.error && !rejectionText && <p className="rounded-md border border-red-800 bg-red-950/30 px-3 py-2 text-[11px] text-red-100">{run.error}</p>}
 
-        <Transcript events={events} />
+        {loadError ? (
+          <div className="rounded-md border border-red-800 bg-red-950/30 px-3 py-2 text-[11px] leading-relaxed text-red-100">
+            <p className="mb-1.5">Couldn't load this quest's transcript: {loadError}</p>
+            <Button variant="subtle" onClick={load}>
+              Retry
+            </Button>
+          </div>
+        ) : detailLoading && events.length === 0 ? (
+          <p className="text-xs text-ink-300">Loading transcript…</p>
+        ) : (
+          <Transcript events={events} />
+        )}
       </div>
 
       <footer className="space-y-2 border-t border-ink-700 p-3">

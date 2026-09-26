@@ -13,6 +13,8 @@ import { AckError, AckTimeoutError, receptionistApi } from './receptionistApi';
 import { DEMO_CONVERSATION, DEMO_CONVERSATION_ID, DEMO_MESSAGES } from './demoData';
 import { ConversationSidebar } from './ConversationSidebar';
 import { MessageThread } from './MessageThread';
+import { receptionistPanelGate, receptionistSendGate } from './gate';
+import { CopyRunnerCommand, GuideLink, RECEPTIONIST_GUIDE_URL, RUNNER_AND_QUESTS_GUIDE_URL } from './guideLinks';
 
 function errorMessage(err: unknown): string {
   if (err instanceof AckTimeoutError) return 'Pair this browser to make changes';
@@ -34,6 +36,8 @@ export function ReceptionistPanel() {
 
   const demo = isDemo();
   const admin = useAuthStore((s) => s.status.admin);
+  const authLoaded = useAuthStore((s) => s.statusLoaded);
+  const openPairing = useAuthStore((s) => s.openPairing);
   const projectsMap = useOfficeStore((s) => s.projects);
   const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
   const receptionistEnabled = useSettingsStore((s) => s.settings.receptionist.enabled);
@@ -50,6 +54,9 @@ export function ReceptionistPanel() {
 
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  /** Which load the Retry button next to `listError` should re-run — the list itself, or the active
+   *  conversation's history, whichever most recently failed. */
+  const [lastFailedLoad, setLastFailedLoad] = useState<'list' | 'active' | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -62,7 +69,7 @@ export function ReceptionistPanel() {
   const activeMessages = activeConversationId ? (messagesByConversation[activeConversationId] ?? []) : [];
 
   const allowed = demo || admin;
-  const gateReason = !receptionistEnabled ? 'The Receptionist is disabled in settings.' : !allowed ? 'Pair this browser to talk to the Receptionist.' : null;
+  const panelGate = receptionistPanelGate({ settingsLoaded, allowed, receptionistEnabled, authLoaded });
 
   // Demo mode: seed the canned conversation once and select it; no socket, no server.
   useEffect(() => {
@@ -75,14 +82,20 @@ export function ReceptionistPanel() {
 
   // Live mode: subscribe to admin-room pushes, load the conversation list and the runner's status
   // while the panel is open. Nothing here runs in demo mode or before an admin session exists.
-  useEffect(() => {
-    if (!open || demo || !allowed || !receptionistEnabled) return;
-    const unregister = registerReceptionistEvents(getSocket());
+  const loadList = () => {
     setListError(null);
     receptionistApi
       .list()
       .then(setConversations)
-      .catch((err) => setListError(errorMessage(err)));
+      .catch((err) => {
+        setListError(errorMessage(err));
+        setLastFailedLoad('list');
+      });
+  };
+  useEffect(() => {
+    if (!open || demo || !allowed || !receptionistEnabled) return;
+    const unregister = registerReceptionistEvents(getSocket());
+    loadList();
     receptionistApi
       .runnerStatus()
       .then(setRunnerStatus)
@@ -92,15 +105,23 @@ export function ReceptionistPanel() {
   }, [open, demo, allowed, receptionistEnabled]);
 
   // Load one conversation's history when it becomes active (skip the canned demo one — already seeded).
-  useEffect(() => {
-    if (!open || demo || !allowed || !activeConversationId) return;
+  const loadActive = () => {
+    if (!activeConversationId) return;
+    setListError(null);
     receptionistApi
       .get(activeConversationId)
       .then(({ conversation, messages }) => {
         upsertConversation(conversation);
         setMessages(activeConversationId, messages);
       })
-      .catch((err) => setListError(errorMessage(err)));
+      .catch((err) => {
+        setListError(errorMessage(err));
+        setLastFailedLoad('active');
+      });
+  };
+  useEffect(() => {
+    if (!open || demo || !allowed || !activeConversationId) return;
+    loadActive();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, demo, allowed, activeConversationId]);
 
@@ -130,7 +151,10 @@ export function ReceptionistPanel() {
         removeConversation(id);
         if (activeConversationId === id) setActiveConversationId(null);
       })
-      .catch((err) => setListError(errorMessage(err)))
+      .catch((err) => {
+        setListError(errorMessage(err));
+        setLastFailedLoad(null); // a delete failure isn't retried by re-running a load
+      })
       .finally(() => setDeletingId(null));
   };
 
@@ -164,15 +188,26 @@ export function ReceptionistPanel() {
     }
   };
 
-  const runnerOffline = !demo && allowed && runnerStatus !== null && !runnerStatus.connected;
-  const sendDisabledReason = !allowed
-    ? 'Pair this browser to send a message.'
-    : !receptionistEnabled
-      ? 'The Receptionist is disabled in settings.'
-      : runnerOffline
-        ? 'The runner is offline — new turns cannot start right now.'
-        : undefined;
-  const sendDisabled = !allowed || !receptionistEnabled || runnerOffline || !activeConversationId;
+  const sendGate = receptionistSendGate({ demo, allowed, receptionistEnabled, runnerStatus });
+  const runnerOffline = sendGate === 'runner_offline';
+  const capabilityMissing = sendGate === 'capability_missing';
+  const sendDisabledReason =
+    sendGate === 'not_paired' ? (
+      'Pair this browser to send a message.'
+    ) : sendGate === 'disabled' ? (
+      'The Receptionist is disabled in settings.'
+    ) : sendGate === 'runner_offline' ? (
+      <>
+        The runner is offline — new turns can&apos;t start right now. Run <CopyRunnerCommand /> on the host.{' '}
+        <GuideLink href={RUNNER_AND_QUESTS_GUIDE_URL}>Runner &amp; quests guide</GuideLink>
+      </>
+    ) : sendGate === 'capability_missing' ? (
+      <>
+        The connected runner is missing a Claude CLI capability every turn needs. Update Claude Code on the host and restart
+        the runner. <GuideLink href={RUNNER_AND_QUESTS_GUIDE_URL}>Runner &amp; quests guide</GuideLink>
+      </>
+    ) : undefined;
+  const sendDisabled = sendGate !== 'ready' || !activeConversationId;
 
   return (
     <div
@@ -192,6 +227,7 @@ export function ReceptionistPanel() {
           Can read, never change anything
         </span>
         {runnerOffline && <span className="rounded-full bg-amber-900/40 px-2 py-0.5 text-[10px] font-medium text-amber-300">Runner offline</span>}
+        {capabilityMissing && <span className="rounded-full bg-red-900/40 px-2 py-0.5 text-[10px] font-medium text-red-300">Capability missing</span>}
         <div className="ml-auto flex items-center gap-2">
           <Button variant="ghost" onClick={requestClose} aria-label="Close">
             ✕
@@ -199,10 +235,17 @@ export function ReceptionistPanel() {
         </div>
       </header>
 
-      {!settingsLoaded ? (
+      {panelGate === 'loading' ? (
         <div className="grid flex-1 place-items-center text-xs text-ink-400">Loading…</div>
-      ) : gateReason ? (
-        <div className="grid flex-1 place-items-center p-6 text-center text-xs text-ink-400">{gateReason}</div>
+      ) : panelGate === 'disabled' ? (
+        <div className="grid flex-1 place-items-center p-6 text-center text-xs text-ink-300">The Receptionist is disabled in settings.</div>
+      ) : panelGate === 'not_paired' ? (
+        <div className="grid flex-1 place-items-center p-6 text-center text-xs text-ink-300">
+          <p className="mb-2">Pair this browser to talk to the Receptionist.</p>
+          <Button variant="primary" onClick={() => openPairing()}>
+            Pair this browser
+          </Button>
+        </div>
       ) : (
         <div className="flex min-h-0 flex-1">
           <ConversationSidebar
@@ -218,7 +261,16 @@ export function ReceptionistPanel() {
             createError={createError}
           />
           <div className="flex min-h-0 flex-1 flex-col">
-            {listError && <p className="border-b border-ink-700 bg-red-950/40 px-3 py-1.5 text-[11px] text-red-300">{listError}</p>}
+            {listError && (
+              <p className="flex flex-wrap items-center gap-2 border-b border-ink-700 bg-red-950/40 px-3 py-1.5 text-[11px] text-red-300">
+                <span>{listError}</span>
+                {lastFailedLoad && (
+                  <Button variant="subtle" onClick={lastFailedLoad === 'list' ? loadList : loadActive}>
+                    Retry
+                  </Button>
+                )}
+              </p>
+            )}
             {!activeConversationId ? (
               <div className="grid flex-1 place-items-center text-xs text-ink-400">
                 {conversationsLoaded || demo ? 'Select a conversation, or start a new one.' : 'Loading conversations…'}

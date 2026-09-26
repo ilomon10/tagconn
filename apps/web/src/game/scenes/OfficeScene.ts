@@ -40,6 +40,7 @@ import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets
 import { fixedPositionForScreenPoint, zoomCameraAboutPoint } from '../camera/zoom';
 import { isDragMove } from '../camera/drag';
 import { hitScaleFor } from '../camera/hitsize';
+import { ReducedMotionWatcher } from '../camera/reducedMotion';
 import { counterScale, labelVisible, layoutLabels, type LabelSubject } from '../labels';
 import { PostFxController } from '../postfx/PostFxController';
 
@@ -298,6 +299,9 @@ export class OfficeScene extends Phaser.Scene {
   private endDragOnBlur = () => {
     this.drag = null;
   };
+  /** M9 8f deferred: cached "prefers-reduced-motion" for `update()`'s per-frame follow-camera
+   *  read, so that hot path never calls `matchMedia` itself (see `camera/reducedMotion.ts`). */
+  private reducedMotion = new ReducedMotionWatcher();
 
   constructor(private onReady?: (scene: OfficeScene) => void) {
     super('office');
@@ -336,6 +340,7 @@ export class OfficeScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.themeTimer?.remove();
       window.removeEventListener('blur', this.endDragOnBlur);
+      this.reducedMotion.destroy();
       this.postFx.destroy();
       this.receptionistNpc?.destroy();
     });
@@ -1299,7 +1304,9 @@ export class OfficeScene extends Phaser.Scene {
         this.characters.delete(key);
       }
     }
-    if (this.followId) this.recenterFollow(false);
+    // M9 8f deferred: under reduced motion, snap to the follow target every frame instead of
+    // lerping toward it — `reducedMotion.value` is a cached read, not a per-frame `matchMedia` call.
+    if (this.followId) this.recenterFollow(this.reducedMotion.value);
     this.labelTimer -= delta;
     if (this.labelTimer <= 0) {
       this.labelTimer = LABEL_REFRESH_MS;

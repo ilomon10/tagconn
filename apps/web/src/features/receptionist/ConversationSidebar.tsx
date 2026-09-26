@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Project, ReceptionistConversation, ReceptionistScope } from '@tagconn/shared';
 import { Button, Select, cx } from '../../components/ui';
 import { PROJECT_SCOPE_DISABLED_REASON, projectScopeOptions } from './scope';
+import { GuideLink, RECEPTIONIST_GUIDE_URL } from './guideLinks';
 
 const SCOPE_LABEL: Record<ReceptionistScope, string> = { general: 'General', project: 'This project' };
 
@@ -90,7 +91,12 @@ export function ConversationSidebar({
         {createError && <p className="text-[10px] text-red-300">{createError}</p>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {conversations.length === 0 && <p className="p-3 text-[11px] text-ink-400">No conversations yet.</p>}
+        {conversations.length === 0 && (
+          <div className="space-y-1 p-3 text-[11px] text-ink-300">
+            <p>No conversations yet. Ask about this project or tagconn itself — it can read, but never change, anything.</p>
+            <GuideLink href={RECEPTIONIST_GUIDE_URL}>Learn more</GuideLink>
+          </div>
+        )}
         {conversations.map((c) => (
           <button
             key={c.id}

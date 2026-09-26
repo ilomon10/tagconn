@@ -63,7 +63,9 @@ export function demoRunnerStatus(): RunnerStatus {
     activeRuns: 0,
     queuedRuns: 0,
     connectedAt: Date.now(),
-    allowedProjectDirs: ['/home/demo/projects/tagconn'],
+    // Matches the demo floors in lib/mock.ts; sunken-keep is left out on purpose so the demo also
+    // shows a floor the runner may not use.
+    allowedProjectDirs: ['/home/you/code/tagconn', '/home/you/code/pixel-garden'],
     questMaxAllowedTools: [...DEFAULT_QUEST_MAX_ALLOWED_TOOLS],
     receptionistSandbox: 'bwrap',
     receptionistFlags: { restricted: true, safeModeProjectScope: false },
