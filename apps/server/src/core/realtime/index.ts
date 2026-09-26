@@ -67,6 +67,9 @@ export const realtimePlugin = fp(
       },
     });
     const office: OfficeNamespace = io.of(OFFICE_NAMESPACE);
+    // Every feature module adds its own 'connection' listener to this shared namespace (10+ by M8);
+    // raise the cap so Node doesn't report a false memory-leak warning on every boot.
+    office.setMaxListeners(32);
     app.diContainer.register({ io: asValue(io), office: asValue(office) });
 
     // Admin auth gating (M8 8m): handshake + per-packet guard + 60s ADMIN_ROOM sweep. Reads
