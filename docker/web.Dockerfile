@@ -6,7 +6,8 @@
 # Build from the repo root:
 #   docker build -f docker/web.Dockerfile -t tagconn-web .
 
-ARG NODE_IMAGE=node:24-bookworm-slim
+# Pinned: Node 24.21 crashes in better-sqlite3 statement finalizers (see docs/decisions.md #24).
+ARG NODE_IMAGE=node:24.16-bookworm-slim
 ARG PNPM_VERSION=11.20.0
 
 # ---------------------------------------------------------------------------
