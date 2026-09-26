@@ -125,7 +125,7 @@ so parallel or old sessions leave extra PMs on a floor.
 - [x] 8p. **3/4 back wall + appliances** (from the style references): a tall north-wall face per room, north-wall decor slots (windows, clocks, pictures, shelves) and standing appliances (printer, fridge, water cooler, filing cabinet, fireplace, barred cells for the guild vault). Design: `docs/design/back-wall.md` (tall face over the wall tile + walkable overdraw band, 10 appliance kinds on the top row, wall-decor slots, seat/walkability parity, no scene change)
   - [x] T0+T1 procgen contracts + back-wall/appliance placement (parity over 300 seeds; +25-30% generation time, within the hard budget)  [Developer: web]
   - [x] T2+T3 paint back wall, wall decor, appliances in modern/guild/rift  [Developer: web]
-  - [~] T4 fireplace/window bloom in postfx
+  - [x] T4 fireplace/window bloom in postfx
 - [x] W3b place the Receptionist NPC at each floor's entrance / the Nexus gate (after 8o touches OfficeScene)
 - [x] 8o. **Shaders** (user request): WebGL post-processing: per-style color grading, vignette, bloom on light sources (torches, braziers, monitors, windows) via a light layer so pixel art stays crisp, flame flicker (reduced-motion aware), optional CRT scanlines for modern; `office.shaders.*` settings (contract done), auto quality, canvas fallback  [Developer: web]
 - [~] 8g. Final code review · security review (SC5) · QA end-to-end incl. real-CLI quest/receptionist and runner acceptance (a)–(i) → fixes → v0.3.0
