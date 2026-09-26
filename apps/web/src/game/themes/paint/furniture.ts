@@ -384,6 +384,133 @@ const MODERN: Record<FurnitureKind, Painter> = {
     rect(c, x + 8, y + 1, 6, 5, 0.9);
     rect(lighten(c, 0.3), x + 8, y + 1, 6, 1);
   },
+  // M8 8p (back wall + appliances, docs/design/back-wall.md): standing appliances always placed
+  // against a north wall (`againstNorthWall: true`), anchored to the footprint bottom (`y*T + T`)
+  // and overdrawing upward by at most `APPLIANCE_SPECS[kind].overdrawPx` (see backWallSpec.ts).
+  printer: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 6;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.25);
+    rect(0x8a8a92, x, top, w, y + 14 - top);
+    rect(0x6a6a72, x, top, w, 3);
+    rect(0xd8d4cc, x + 2, y + 6, w - 4, 5);
+    rect(0x4bffa0, x + w - 4, top + 4, 2, 2, 0.9);
+  },
+  fridge: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 11;
+    const h = y + 15 - top;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(0xe8e8e0, x, top, w, h);
+    rect(0xcfcfc4, x, top + h / 2, w, 1);
+    rect(0x8a8a82, x + 2, top + 3, 2, 3);
+    rect(0x8a8a82, x + 2, top + h / 2 + 3, 2, 3);
+  },
+  'water-cooler': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const standTop = y + 2;
+    rect(0x000000, x + 3, y + 14, w - 6, 2, 0.2);
+    rect(0xd8d4cc, x + 3, standTop, w - 6, y + 15 - standTop);
+    const jugTop = y - 9;
+    rect(0x5fb8ff, x + 2, jugTop, w - 4, standTop - jugTop + 2, 0.85);
+    rect(lighten(0x5fb8ff, 0.3), x + 3, jugTop + 2, w - 6, 3, 0.6);
+    rect(0x2a2e35, x + w / 2 - 1, standTop - 1, 2, 2);
+  },
+  'filing-cabinet': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 6;
+    const rowH = (y + 14 - top) / 3;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.25);
+    rect(0x5a6068, x, top, w, y + 15 - top);
+    for (let i = 0; i < 3; i++) {
+      const dy = top + 1 + i * rowH;
+      rect(0x424850, x + 1, dy, w - 2, rowH - 1);
+      rect(0xb8c0c8, x + w / 2 - 1, dy + 2, 2, 1);
+    }
+  },
+  'coffee-machine': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.2);
+    rect(0x3a3a44, x + 2, y + 2, w - 4, 12);
+    const top = y - 4;
+    rect(0x22252e, x + 3, top, w - 6, y + 2 - top);
+    rect(0xff8a3a, x + w / 2 - 1, top + 1, 2, 2, 0.85);
+    rect(0xffffff, x + 3, y + 9, 3, 3);
+  },
+  bookcase: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 11;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(0x6b4424, x, top, w, y + 15 - top);
+    for (let row = 0; row < 3; row++) {
+      const sy = top + 2 + row * 7;
+      rect(0x4a2c14, x + 1, sy + 5, w - 2, 1);
+      let bx = x + 2;
+      let i = 0;
+      while (bx < x + w - 2) {
+        const bw2 = 1 + (i % 3);
+        const bh = 3 + ((i + row) % 3);
+        rect(pick(BOOK_COLORS, f.variant + i + row * 3), bx, sy + 5 - bh, bw2, bh);
+        bx += bw2 + (i % 5 === 0 ? 2 : 0);
+        i++;
+      }
+    }
+  },
+  fireplace: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 11;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(0x3a3a44, x, top, w, y + 15 - top);
+    rect(0x1c1c22, x + 3, top + 2, w - 6, 10);
+    rect(0xff8a3a, x + 4, top + 8, w - 8, 4, 0.85);
+    rect(lighten(0xff8a3a, 0.3), x + 5, top + 8, w - 10, 1, 0.6);
+  },
+  'coat-rack': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const top = y - 9;
+    rect(0x000000, x + 5, y + 14, 6, 2, 0.2);
+    rect(0x3a2e24, x + 7, top + 2, 2, y + 14 - (top + 2));
+    rect(0x2a2e35, x + 4, top, 8, 3);
+    rect(0x3a4a5a, x + 3, top + 3, 10, 7, 0.9);
+    rect(0x51697c, x + 3, top + 3, 10, 2);
+  },
+  'supply-stack': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 7;
+    const c = pick(CRATE_COLORS, f.variant);
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.2);
+    rect(c, x + 2, top, w - 4, y + 14 - top);
+    rect(darken(c, 0.25), x + 2, top, w - 4, 2);
+    rect(darken(c, 0.25), x + 2, top + (y + 14 - top) / 2, w - 4, 1);
+  },
+  cage: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 11;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.25);
+    rect(0x1b1e26, x, top, w, y + 15 - top);
+    for (let gx = x + 2; gx < x + w - 2; gx += 3) rect(0x2e3440, gx, top + 1, 1, y + 13 - top);
+    for (let gy = top + 2; gy < y + 13; gy += 3) rect(0x2e3440, x + 1, gy, w - 2, 1);
+    rect(0xffd84a, x + w / 2 - 1, y + 8, 2, 2, 0.9);
+  },
 };
 
 function paintModernStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn, up: boolean): void {
@@ -841,6 +968,144 @@ const GUILD: Record<FurnitureKind, Painter> = {
     rect(c, x + 8, y + 1, 6, 9, 0.92);
     rect(GOLD, x + 9, y + 3, 4, 1, 0.8);
     rect(GOLD, x + 10, y + 5, 2, 1, 0.8);
+  },
+  // M8 8p (back wall + appliances): the guild's counterparts of the same standing appliances,
+  // anchored to the footprint bottom and overdrawing upward by at most `overdrawPx` (backWallSpec.ts).
+  printer: (g, f, T, rect) => {
+    // A scribe's press / lectern with scrolls.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 6;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(WOOD_DARK, x, top, w, y + 15 - top);
+    rect(WOOD, x + 1, top + 2, w - 2, 4);
+    rect(0xe8d9b0, x + 2, top + 3, w - 4, 2);
+    rect(0xb5433a, x + w / 2 - 1, top + 3, 1, 2, 0.6);
+  },
+  fridge: (g, f, T, rect) => {
+    // An ice chest with frost runes — a tall stone-blue larder.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 11;
+    const h = y + 15 - top;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(0x2c3a4a, x, top, w, h);
+    rect(0x1c2430, x, top + h / 2, w, 1);
+    rect(0x6ff5ff, x + 2, top + 3, w - 4, 1, 0.5);
+    rect(0x6ff5ff, x + 2, top + h / 2 + 3, w - 4, 1, 0.5);
+  },
+  'water-cooler': (g, f, T, rect) => {
+    // A water barrel on a stand, with a ladle.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const standTop = y + 3;
+    rect(0x000000, x + 3, y + 14, w - 6, 2, 0.2);
+    rect(WOOD_DARK, x + 3, standTop, w - 6, y + 15 - standTop);
+    const barrelTop = y - 8;
+    rect(0x6b4424, x + 2, barrelTop, w - 4, standTop - barrelTop + 2);
+    rect(0x8a5a2b, x + 2, barrelTop, w - 4, 2);
+    rect(0x4a2c14, x + 2, barrelTop + (standTop - barrelTop) / 2, w - 4, 1);
+    rect(GOLD, x + w - 5, standTop - 2, 3, 2);
+  },
+  'filing-cabinet': (g, f, T, rect) => {
+    // An iron-bound chest of drawers.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 6;
+    const rowH = (y + 14 - top) / 3;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(WOOD_DARK, x, top, w, y + 15 - top);
+    for (let i = 0; i < 3; i++) {
+      const dy = top + 1 + i * rowH;
+      rect(WOOD, x + 1, dy, w - 2, rowH - 1, 0.85);
+      rect(0x2a2a33, x + w / 2 - 1, dy + 2, 2, 1);
+    }
+  },
+  'coffee-machine': (g, f, T, rect) => {
+    // A kettle over a small brazier.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.2);
+    rect(0x2a2a33, x + 3, y + 9, w - 6, 5);
+    const top = y - 4;
+    rect(0x4a4f58, x + 3, top, w - 6, y + 9 - top);
+    rect(0xff8a3a, x + w / 2 - 1, y + 8, 2, 2, 0.85);
+  },
+  bookcase: (g, f, T, rect) => {
+    // A tall bookcase, coloured spines, and a reading candle.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 11;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(WOOD_DARK, x, top, w, y + 15 - top);
+    for (let row = 0; row < 3; row++) {
+      const sy = top + 2 + row * 7;
+      rect(0x4a2c14, x + 1, sy + 5, w - 2, 1);
+      let bx = x + 2;
+      let i = 0;
+      while (bx < x + w - 2) {
+        const bw2 = 1 + (i % 3);
+        const bh = 3 + ((i + row) % 3);
+        rect(pick(BOOK_COLORS, f.variant + i + row * 3), bx, sy + 5 - bh, bw2, bh);
+        bx += bw2 + (i % 5 === 0 ? 2 : 0);
+        i++;
+      }
+    }
+    candleAndScroll(rect, x + w - 6, top);
+  },
+  fireplace: (g, f, T, rect) => {
+    // A stone fireplace; the flame flicker itself is a separate `animate()` sprite (guild.ts),
+    // matching the sigil/pedestal pattern, disabled when ambient effects are off.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 11;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(0x3a3446, x, top, w, y + 15 - top);
+    rect(0x1c1c22, x + 3, top + 3, w - 6, 9);
+    rect(0xff8a3a, x + 4, top + 9, w - 8, 3, 0.85);
+  },
+  'coat-rack': (g, f, T, rect) => {
+    // A weapon rack (swords).
+    const x = f.x * T;
+    const y = f.y * T;
+    const top = y - 9;
+    rect(0x000000, x + 5, y + 14, 6, 2, 0.2);
+    rect(WOOD_DARK, x + 6, top + 2, 4, y + 14 - (top + 2));
+    rect(WOOD_DARK, x + 3, top + 2, 10, 2);
+    rect(0xc9d6e8, x + 4, top, 1, 8);
+    rect(GOLD, x + 4, top + 7, 3, 1);
+    rect(0xc9d6e8, x + 10, top + 1, 1, 7);
+    rect(GOLD, x + 9, top + 7, 3, 1);
+  },
+  'supply-stack': (g, f, T, rect) => {
+    // A barrel pair.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 6;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.2);
+    rect(0x6b4424, x + 2, top, w - 4, y + 14 - top);
+    rect(0x8a5a2b, x + 2, top, w - 4, 2);
+    rect(0x4a2c14, x + 2, top + (y + 14 - top) / 2, w - 4, 1);
+  },
+  cage: (g, f, T, rect) => {
+    // An iron-barred cell with straw.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = y - 11;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.25);
+    rect(0x2a1f14, x, top, w, y + 15 - top);
+    rect(0xd6c48a, x + 2, y + 11, w - 4, 3, 0.7);
+    for (let gx = x + 2; gx < x + w - 2; gx += 3) rect(0x1c1c22, gx, top + 1, 1, y + 13 - top);
+    rect(0x2a2a33, x, top, w, 2);
   },
 };
 

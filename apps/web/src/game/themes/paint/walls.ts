@@ -1,8 +1,10 @@
 import type * as Phaser from 'phaser';
 import type { RoomType } from '@tagconn/shared';
+import type { BackWallCtx } from '../types';
 import { paintGuildFloor, paintModernFloor } from './floors';
 import { darken, lighten, rectFn, T, tileOf } from './util';
 
+export type { BackWallCtx };
 type FloorKind = RoomType | 'corridor';
 
 // ------------------------------------------------------------------ modern (port of renderMap.ts)
@@ -24,6 +26,30 @@ export function paintModernWall(g: Phaser.GameObjects.Graphics, px: number, py: 
     rect(lighten(WALL_FACE, 0.4), px, py + 8, T, 1, 0.7);
     rect(WALL_BASEBOARD, px, py + 14, T, 2);
   }
+}
+
+/**
+ * The tall 3/4 back-wall face (M8 8p): a thin cap (the top `ctx.capPx` px stay the plain wall
+ * colour, already painted by `paintModernWall`), a cream face down to the tile bottom, and — when
+ * `ctx.band` — an overdraw band into the top `ctx.bandPx` px of the floor tile below, with the
+ * baseboard as its bottom 2px. No band under a door tile: the face simply ends at the wall tile's
+ * bottom, so the door reads as a gap. `openLeft`/`openRight` add a darker jamb edge.
+ */
+export function paintModernBackWall(g: Phaser.GameObjects.Graphics, px: number, py: number, ctx: BackWallCtx, _rand: () => number): void {
+  const rect = rectFn(g);
+  const faceTop = py + ctx.capPx;
+  const faceH = T - ctx.capPx;
+  rect(WALL_FACE, px, faceTop, T, faceH);
+  rect(lighten(WALL_FACE, 0.4), px, faceTop, T, 1, 0.7);
+  let totalH = faceH;
+  if (ctx.band) {
+    const bandTop = py + T;
+    rect(WALL_FACE, px, bandTop, T, ctx.bandPx);
+    rect(WALL_BASEBOARD, px, bandTop + ctx.bandPx - 2, T, 2);
+    totalH += ctx.bandPx;
+  }
+  if (ctx.openLeft) rect(darken(WALL_FACE, 0.15), px, faceTop, 1, totalH, 0.7);
+  if (ctx.openRight) rect(darken(WALL_FACE, 0.15), px + T - 1, faceTop, 1, totalH, 0.7);
 }
 
 export function paintModernVoid(g: Phaser.GameObjects.Graphics, px: number, py: number, rand: () => number): void {
@@ -67,6 +93,38 @@ export function paintGuildWall(g: Phaser.GameObjects.Graphics, px: number, py: n
     rect(lighten(GUILD_WALL_FACE, 0.25), px, py + 10, T, 1);
     if (rand() < 0.15) rect(MOSS, px + Math.floor(rand() * T), py + 11 + Math.floor(rand() * 4), 1, 1, 0.5);
   }
+}
+
+/**
+ * The tall 3/4 back-wall face for the ashlar keep (M8 8p): the same 4px staggered-joint coursing as
+ * `paintGuildWall`'s own face branch, but stretched across the full `capPx..T` height plus (when
+ * `ctx.band`) an overdraw band into the floor tile below, ending in a dark plinth. No band under a
+ * door tile. `openLeft`/`openRight` add a darker jamb edge.
+ */
+export function paintGuildBackWall(g: Phaser.GameObjects.Graphics, px: number, py: number, ctx: BackWallCtx, rand: () => number): void {
+  const rect = rectFn(g);
+  const faceTop = py + ctx.capPx;
+  const faceH = T - ctx.capPx;
+  for (let y = 0, row = 0; y < faceH; y += 4, row++) {
+    const rowH = Math.min(4, faceH - y);
+    rect(GUILD_WALL_FACE, px, faceTop + y, T, rowH);
+    rect(darken(GUILD_WALL_FACE, 0.18), px, faceTop + y, T, 1);
+    if (rowH > 1) rect(darken(GUILD_WALL_FACE, 0.12), px + (row % 2 === 0 ? 8 : 6), faceTop + y + 1, 1, Math.max(1, rowH - 1));
+  }
+  rect(lighten(GUILD_WALL_FACE, 0.25), px, faceTop, T, 1);
+  if (rand() < 0.15) rect(MOSS, px + Math.floor(rand() * T), faceTop + Math.floor(rand() * faceH), 1, 1, 0.5);
+  let totalH = faceH;
+  if (ctx.band) {
+    const bandTop = py + T;
+    for (let y = 0, row = 0; y < ctx.bandPx; y += 4, row++) {
+      rect(GUILD_WALL_FACE, px, bandTop + y, T, Math.min(4, ctx.bandPx - y));
+      rect(darken(GUILD_WALL_FACE, 0.12), px + (row % 2 === 0 ? 8 : 6), bandTop + y, 1, Math.min(3, ctx.bandPx - y));
+    }
+    rect(darken(GUILD_WALL_FACE, 0.35), px, bandTop + ctx.bandPx - 2, T, 2);
+    totalH += ctx.bandPx;
+  }
+  if (ctx.openLeft) rect(darken(GUILD_WALL_FACE, 0.2), px, faceTop, 1, totalH, 0.7);
+  if (ctx.openRight) rect(darken(GUILD_WALL_FACE, 0.2), px + T - 1, faceTop, 1, totalH, 0.7);
 }
 
 export function paintGuildVoid(g: Phaser.GameObjects.Graphics, px: number, py: number, rand: () => number): void {

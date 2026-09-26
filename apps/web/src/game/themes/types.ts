@@ -5,7 +5,7 @@
 // port of the pre-M7 office art) and `guild.ts` (the magic guild hall).
 import type { Activity, MULTIVERSE_THEME_ID, OfficeStyle, RoomType, Zone } from '@tagconn/shared';
 import type * as Phaser from 'phaser';
-import type { DecorSlot, GeneratedMap, PlacedFurniture } from '../procgen/types';
+import type { DecorSlot, GeneratedMap, PlacedFurniture, WallDecorSlot } from '../procgen/types';
 
 export interface Palette {
   bg: number;
@@ -31,6 +31,20 @@ export interface Costume {
   goggles?: boolean;
 }
 
+/** M8 8p: per-theme back-wall face numbers (docs/design/back-wall.md section 1). */
+export interface BackWallStyle {
+  capPx: number;
+  bandPx: number;
+}
+export interface BackWallCtx {
+  kind: RoomType | 'corridor'; // floor kind of the tile below (palette hook)
+  band: boolean; // tile below is floor (false under a door)
+  openLeft: boolean; // left neighbour is not a face tile (door, side wall, void): draw a jamb/edge
+  openRight: boolean;
+  capPx: number;
+  bandPx: number;
+}
+
 export interface ThemeDefinition {
   /** Widened for the Multiverse's web-only `rift` theme (M8 8h), which is never a user-selectable
    *  `OfficeStyle` — see `MULTIVERSE_THEME_ID` and `game/themes/rift.ts`. */
@@ -40,6 +54,14 @@ export interface ThemeDefinition {
   paintFloor(g: Phaser.GameObjects.Graphics, kind: RoomType | 'corridor', px: number, py: number, rand: () => number): void;
   paintWall(g: Phaser.GameObjects.Graphics, px: number, py: number, faceVisible: boolean, rand: () => number): void;
   paintVoid(g: Phaser.GameObjects.Graphics, px: number, py: number, rand: () => number): void;
+  /** M8 8p: per-theme back-wall face numbers (docs/design/back-wall.md). Optional so rift/tests
+   *  compile until painted; a theme without it renders exactly as before (no tall face). */
+  backWall?: BackWallStyle;
+  /** Paint the tall face for a face tile: wall tile from capPx down, plus (ctx.band) the top bandPx of
+   *  the tile below, baseboard at the bottom. Called AFTER all tiles, so it overdraws the floor row. */
+  paintBackWall?(g: Phaser.GameObjects.Graphics, px: number, py: number, ctx: BackWallCtx, rand: () => number): void;
+  /** Static wall decor baked into the base texture. `faceTop`/`faceBottom` are absolute px of the face. */
+  paintWallDecor?(g: Phaser.GameObjects.Graphics, slot: WallDecorSlot, T: number, face: { top: number; bottom: number }): void;
   /**
    * A door tile: the floor under it plus a threshold. Not in the original section-3 sketch (which
    * had no per-tile door hook) — added because `GeneratedMap.tiles` has a `door` tile kind that

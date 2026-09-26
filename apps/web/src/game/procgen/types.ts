@@ -52,13 +52,27 @@ export type FurnitureKind =
   | 'bin'
   | 'cabinet'
   | 'chair'
-  | 'banner';
+  | 'banner'
+  // M8 8p: standing appliances, always against a north wall (docs/design/back-wall.md).
+  | 'printer'
+  | 'fridge'
+  | 'water-cooler'
+  | 'filing-cabinet'
+  | 'coffee-machine'
+  | 'bookcase'
+  | 'fireplace'
+  | 'coat-rack'
+  | 'supply-stack'
+  | 'cage';
 export interface PlacedFurniture extends Rect {
   kind: FurnitureKind;
   blocking: boolean;
   roomId: string;
   roomType: RoomType;
   variant: number;
+  /** M8 8p: true when y === room.interior.y and every tile directly north of the footprint is a wall.
+   *  Only then may a painter draw above the footprint (at most MAX_OVERDRAW_PX). Omitted = false. */
+  againstNorthWall?: boolean;
 }
 export interface Seat extends Point {
   zone: Zone;
@@ -87,6 +101,18 @@ export interface StairsSpot extends Point {
 export interface DecorSlot extends Point {
   kind: 'wall-light' | 'wall-hanging' | 'floor-scatter';
   roomId: string | null;
+  variant: number;
+}
+/** M8 8p: semantic wall-mounted decor on a north-wall face (style-agnostic, D2). */
+export type WallDecorKind = 'window' | 'clock' | 'picture' | 'board' | 'chart' | 'wall-shelf' | 'banner';
+export interface WallDecorSlot {
+  kind: WallDecorKind;
+  /** Left-most wall tile; `y` is the WALL row (room.interior.y - 1). */
+  x: number;
+  y: number;
+  /** Width in tiles, 1-3 (see WALL_DECOR_SPANS). */
+  span: number;
+  roomId: string;
   variant: number;
 }
 export interface GeneratedRoom {
@@ -138,6 +164,9 @@ export interface GeneratedMap {
   doors: Door[];
   stairs: StairsSpot[];
   decor: DecorSlot[];
+  /** M8 8p: static wall decor, baked into the base texture. North-wall LIGHTS are not here: they are
+   *  emitted as ordinary `decor` `wall-light` slots, so torch sprites and 8o bloom pick them up unchanged. */
+  northWall: WallDecorSlot[];
   spawn: Point; // inside the entrance
   frontDoor: Point | null; // outer-wall gate tile (visual only)
   issues: LayoutIssue[]; // generation issues (validateLayout issues are included too)

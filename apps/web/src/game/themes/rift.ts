@@ -6,7 +6,7 @@ import { guildTheme } from './guild';
 import { paintRiftDecorTextures, riftDecorFor, RIFT_AURORA, RIFT_GLOW, riftBanner } from './paint/riftDecor';
 import { paintRiftFloor } from './paint/riftFloors';
 import { paintRiftFurniture } from './paint/riftFurniture';
-import { paintRiftDoor, paintRiftIslandEdge, paintRiftVoid, paintRiftWall } from './paint/riftWalls';
+import { paintRiftBackWall, paintRiftDoor, paintRiftIslandEdge, paintRiftVoid, paintRiftWall, paintRiftWallDecor } from './paint/riftWalls';
 import type { ThemeDefinition } from './types';
 import { ambientMotes, ensureFxTextures, portalShimmer, prefersReducedMotion } from './fx';
 
@@ -186,6 +186,12 @@ export const riftTheme: ThemeDefinition = {
   paintDoor: paintRiftDoor,
   paintFurniture: paintRiftFurniture,
   paintIslandEdge: paintRiftIslandEdge,
+  // M8 8p: the tall 3/4 back-wall face + baked wall decor (docs/design/back-wall.md) — optional
+  // hooks, so the Nexus renders with the tall face too even though every realm room is normally
+  // covered by its own project theme.
+  backWall: { capPx: 3, bandPx: 6 },
+  paintBackWall: paintRiftBackWall,
+  paintWallDecor: paintRiftWallDecor,
   animate,
   decorFor: riftDecorFor,
   zoneNames: ZONE_NAMES,

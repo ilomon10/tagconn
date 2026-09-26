@@ -7,6 +7,8 @@ import { onFloor, useOfficeStore } from '../../stores/officeStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useHeroPanelStore } from '../heroes/store';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useReceptionistStore } from '../../stores/receptionistStore';
+import { useReceptionistUiStore } from '../receptionist/uiStore';
 import { useFloorAgents } from '../../lib/hooks';
 import { firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isMultiverseFloor, isTypingTarget, neighborFloor, topProjectFloor } from '../../lib/floors';
 import { layoutForProject, useLayoutStore } from '../../stores/layoutStore';
@@ -325,6 +327,26 @@ export function OfficeView({ active }: { active: boolean }) {
       const heroes = useHeroStore.getState().heroes;
       const hero = Object.hasOwn(heroes, heroId) ? heroes[heroId] : undefined;
       if (hero) useHeroPanelStore.getState().openHeroEditor(hero);
+    });
+  }, [game]);
+
+  // W3b: the Receptionist NPC was clicked — open its panel directly (not through `useRequireAdmin`'s
+  // `guard`, unlike `ReceptionistButton`): the panel already gates itself on `admin`/demo and shows
+  // its own "pair this browser" prompt in place, which is enough of a response to a click in-world.
+  useEffect(() => {
+    if (!game) return;
+    return game.on('receptionistClick', () => useReceptionistUiStore.getState().openPanel());
+  }, [game]);
+
+  // W3b: the NPC's "thinking" look mirrors whether any Receptionist conversation is mid-turn —
+  // `receptionistStore` is web-only state (not part of `OfficeState`), so this is its own small
+  // bridge rather than folding into `useGameBridge`'s `push()`.
+  useEffect(() => {
+    if (!game) return;
+    const anyBusy = () => Object.values(useReceptionistStore.getState().conversations).some((c) => c.busy);
+    game.setReceptionistBusy(anyBusy());
+    return useReceptionistStore.subscribe((s, p) => {
+      if (s.conversations !== p.conversations) game.setReceptionistBusy(anyBusy());
     });
   }, [game]);
 

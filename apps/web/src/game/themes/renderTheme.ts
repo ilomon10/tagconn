@@ -65,6 +65,17 @@ export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme
     return id ? (roomTypeById.get(id) ?? 'hall') : openFloorKind;
   };
 
+  // M8 8p (docs/design/back-wall.md): a wall tile with floor/door immediately south is a "face
+  // tile". When its theme paints a tall back-wall face (`paintBackWall`, pass 3 below), the plain
+  // `paintWall` here draws faceVisible=false (just the cap/top) so the two don't double-paint the
+  // same pixels; a theme without the hook keeps its short pre-8p face, unchanged.
+  const isFaceTile = (x: number, y: number): boolean => {
+    if (x < 0 || x >= map.cols || y < 0 || y >= map.rows) return false;
+    if (map.tiles[y]?.[x] !== 'wall') return false;
+    const below = map.tiles[y + 1]?.[x];
+    return below === 'floor' || below === 'door';
+  };
+
   for (let y = 0; y < map.rows; y++) {
     for (let x = 0; x < map.cols; x++) {
       const tile = map.tiles[y]?.[x];
@@ -73,8 +84,9 @@ export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme
       if (tile === 'floor') themeAt(x, y).paintFloor(g, kindAt(x, y), px, py, rand);
       else if (tile === 'void') themeAt(x, y).paintVoid(g, px, py, rand);
       else if (tile === 'wall') {
-        const below = map.tiles[y + 1]?.[x];
-        themeAt(x, y).paintWall(g, px, py, below === 'floor' || below === 'door', rand);
+        const faceVisible = isFaceTile(x, y);
+        const wallTheme = themeAt(x, y);
+        wallTheme.paintWall(g, px, py, wallTheme.paintBackWall ? false : faceVisible, rand);
       }
     }
   }
@@ -96,6 +108,38 @@ export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme
         }
       }
     }
+  }
+
+  // Back-wall face (M8 8p): every face tile whose theme paints one, drawn with its OWN seeded PRNG
+  // (`0x8b3a11ed`) so this new pass doesn't reshuffle the tile-loop's existing rand stream above.
+  const backWallRand = mulberry32(map.seed ^ 0x8b3a11ed);
+  for (let y = 0; y < map.rows; y++) {
+    for (let x = 0; x < map.cols; x++) {
+      if (!isFaceTile(x, y)) continue;
+      const faceTheme = themeAt(x, y);
+      if (!faceTheme.paintBackWall) continue;
+      const { capPx, bandPx } = faceTheme.backWall ?? { capPx: 0, bandPx: 0 };
+      const below = map.tiles[y + 1]?.[x];
+      const ctx = {
+        kind: kindAt(x, y + 1),
+        band: below === 'floor',
+        openLeft: !isFaceTile(x - 1, y),
+        openRight: !isFaceTile(x + 1, y),
+        capPx,
+        bandPx,
+      };
+      faceTheme.paintBackWall(g, x * T, y * T, ctx, backWallRand);
+    }
+  }
+
+  // Wall decor (M8 8p): baked directly into the base texture, one theme call per `map.northWall`
+  // slot, AFTER the face so it always draws on top of it.
+  for (const slot of map.northWall) {
+    const decorTheme = themeAt(slot.x, slot.y);
+    if (!decorTheme.paintWallDecor) continue;
+    const { capPx, bandPx } = decorTheme.backWall ?? { capPx: 0, bandPx: 0 };
+    const face = { top: slot.y * T + capPx, bottom: (slot.y + 1) * T + bandPx };
+    decorTheme.paintWallDecor(g, slot, T, face);
   }
 
   // Doors: paint the floor under them plus a themed threshold. Interior doors are drawn one tile

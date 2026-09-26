@@ -4,7 +4,8 @@ import type { GeneratedMap } from '../procgen/types';
 import { GUILD_GLOW, GUILD_TORCH, guildDecorFor, paintGuildDecorTextures } from './paint/decor';
 import { paintGuildFloor } from './paint/floors';
 import { paintGuildFurniture } from './paint/furniture';
-import { paintGuildDoor, paintGuildVoid, paintGuildWall } from './paint/walls';
+import { paintGuildWallDecor } from './paint/wallDecor';
+import { paintGuildBackWall, paintGuildDoor, paintGuildVoid, paintGuildWall } from './paint/walls';
 import type { Costume, ThemeDefinition } from './types';
 import { ambientMotes, channelAura, portalShimmer, potionBubbles, prefersReducedMotion, runeGlow, torchFlicker } from './fx';
 
@@ -125,6 +126,12 @@ function animate(scene: Phaser.Scene, map: GeneratedMap, opts: { ambient: boolea
       created.push(potionBubbles(scene, cx, cy - T / 2, enabled, 0x7ef0a0));
     } else if (f.kind === 'pedestal' && f.roomType === 'server-room') {
       created.push(channelAura(scene, cx, cy - T / 4, enabled, 0x9fd8ff, 0.35));
+    } else if (f.kind === 'fireplace' && enabled) {
+      // M8 8p: the flicker itself is a separate sprite over the static hearth art (`furniture.ts`),
+      // matching the sigil/pedestal pattern — disabled entirely when ambient effects are off.
+      const flame = scene.add.image(cx, cy - T / 2 - 2, 'icon-sparkle').setTint(0xff8a3a).setScale(0.7).setDepth(f.y * T + f.h * T + 2);
+      created.push(flame);
+      torchFlicker(scene, flame, true);
     }
   }
 
@@ -196,6 +203,10 @@ export const guildTheme: ThemeDefinition = {
   paintVoid: paintGuildVoid,
   paintDoor: paintGuildDoor,
   paintFurniture: paintGuildFurniture,
+  // M8 8p: the tall 3/4 back-wall face + baked wall decor (docs/design/back-wall.md).
+  backWall: { capPx: 2, bandPx: 10 },
+  paintBackWall: paintGuildBackWall,
+  paintWallDecor: paintGuildWallDecor,
   animate,
   decorFor: guildDecorFor,
   zoneNames: ZONE_NAMES,

@@ -62,6 +62,41 @@ function makeStubGameObject(kind: string): Record<string, unknown> {
   return obj;
 }
 
+export interface RecordedRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * A stub `Graphics` that records every `fillRect` call's bounds (M8 8p: the appliance/back-wall
+ * painter bounds tests need actual pixel rects, not just call counts). Other draw methods are
+ * no-ops; every appliance/back-wall/wall-decor painter in this wave draws with `rectFn` only.
+ */
+export function makeBoundsGraphics(): { g: Phaser.GameObjects.Graphics; rects: RecordedRect[] } {
+  const rects: RecordedRect[] = [];
+  const g: Record<string, (...args: unknown[]) => unknown> = {};
+  const methods = [
+    'fillStyle',
+    'fillCircle',
+    'fillEllipse',
+    'fillTriangle',
+    'lineStyle',
+    'strokeCircle',
+    'strokeEllipse',
+    'generateTexture',
+    'destroy',
+  ] as const;
+  for (const m of methods) g[m] = (..._args: unknown[]) => g;
+  g.fillRect = (...args: unknown[]) => {
+    const [x, y, w, h] = args as number[];
+    rects.push({ x: x!, y: y!, w: w!, h: h! });
+    return g;
+  };
+  return { g: g as unknown as Phaser.GameObjects.Graphics, rects };
+}
+
 export interface FakeScene {
   scene: Phaser.Scene;
   tweenCount: () => number;

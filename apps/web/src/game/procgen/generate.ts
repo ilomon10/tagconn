@@ -14,6 +14,8 @@ import {
   type RoomType,
   type Zone,
 } from '@tagconn/shared';
+import { flagAgainstNorthWall, isEligibleForBackWall, placeAppliances, planNorthWall } from './backWall';
+import { TALL_AGAINST_WALL_KINDS } from './backWallSpec';
 import { astarVoid, carveCorridor, findExitCandidates, type ExitCandidate } from './corridors';
 import {
   doorOffsetAndWidth,
@@ -41,6 +43,7 @@ import type {
   TileKind,
   UnreachableReason,
   UnreachableRoom,
+  WallDecorSlot,
   ZoneInfo,
 } from './types';
 
@@ -160,20 +163,27 @@ interface OpenedDoor {
  * byte-identical map. Falls back to `DEFAULT_LAYOUT` (which always validates clean) when the given
  * layout has a geometry error, so the scene never crashes on a bad layout.
  */
-export function generateMap(layout: OfficeLayout): GeneratedMap {
+/**
+ * `opts.backWall` (M8 8p, default true) is an internal knob only, never a user setting: `false`
+ * reproduces the exact pre-8p output (no appliances, no `againstNorthWall` flags, no `northWall`
+ * slots) and exists purely so the parity sweep in `__tests__/backWall.test.ts` can compare the two
+ * (docs/design/back-wall.md section 2.5).
+ */
+export function generateMap(layout: OfficeLayout, opts?: { backWall?: boolean }): GeneratedMap {
   const issues = validateLayout(layout);
   if (hasLayoutErrors(issues)) {
-    const fallback = build(DEFAULT_LAYOUT);
+    const fallback = build(DEFAULT_LAYOUT, [], opts);
     return { ...fallback, issues: [...issues, ...fallback.issues] };
   }
-  return build(layout, issues);
+  return build(layout, issues, opts);
 }
 
-function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedMap {
+function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: { backWall?: boolean }): GeneratedMap {
   const cols = layout.width;
   const rows = layout.height;
   const seed = layout.seed >>> 0;
   const issues: LayoutIssue[] = [...baseIssues];
+  const backWallEnabled = genOpts?.backWall ?? true;
 
   // --- 2. grid ------------------------------------------------------------------------------
   const tiles: TileKind[][] = grid(cols, rows, layout.background === 'hall' ? 'floor' : 'void');
@@ -481,12 +491,15 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
   }
 
   // --- 8 & 9. furniture, seats, stairs ------------------------------------------------------------
-  const furniture: (RecipeItem & { roomId: string; roomType: RoomType })[] = [];
+  const furniture: (RecipeItem & { roomId: string; roomType: RoomType; againstNorthWall?: boolean })[] = [];
   const stairs: StairsSpot[] = [];
   const generatedRooms: GeneratedRoom[] = [];
 
   // Door aprons: the interior tile directly inside each opening (a door, or an open room's corridor mouth).
   const apronsByRoom = new Map<string, Set<string>>();
+  // M8 8p: wall-row (interior.y - 1) columns each room's appliances/tall against-wall items occupy,
+  // consumed by step 13's planNorthWall below.
+  const tallColumnsByRoom = new Map<string, Set<number>>();
   for (const ep of entryPoints) {
     const set = apronsByRoom.get(ep.roomId) ?? new Set<string>();
     set.add(key(ep.tile));
@@ -573,7 +586,7 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     const roomRand = rngFor(seed, furnish?.seed !== undefined ? `room:${room.id}:${furnish.seed}` : `room:${room.id}`);
     const recipe = furnishRoom(room.type, interior, roomRand, opts);
     const blocked = new Set<string>();
-    const keptItems: (RecipeItem & { roomId: string; roomType: RoomType })[] = [];
+    const keptItems: (RecipeItem & { roomId: string; roomType: RoomType; againstNorthWall?: boolean })[] = [];
     for (const item of recipe.furniture) {
       const cells = rectCells({ x: item.x, y: item.y, w: item.w, h: item.h });
       const fits =
@@ -623,9 +636,22 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     };
     const reachStarts = aprons.length ? aprons : rectCells(interior).slice(0, 1);
     const totalFloor = interior.w * interior.h;
+    // M8 8p: step 8b (below) needs this room's local reach too, against the FINAL `blocked`. Captured
+    // from the loop's last iteration (cheap - it's already computed here) instead of a redundant
+    // extra flood fill after the loop, which showed up as a real perf.test.ts regression on a
+    // 128x96/64-room map with dozens of eligible rooms.
+    let lastReach: Set<string> | undefined;
+    // True once a `break` below leaves `lastReach` valid for the CURRENT `blocked` (nothing changes
+    // after either break). False means the loop instead ran out of `guard` right after a removal, so
+    // `lastReach` reflects the state BEFORE that last removal - stale by one item (confirmed on
+    // DEFAULT_LAYOUT's qa-lab: its fallback single-cell `reachStarts` sits under its own first-row
+    // recipe item, so every iteration reads reach=0 until the very last item is gone, and `guard`
+    // (== the room's own starting item count) runs out in the same iteration that removes it).
+    let settledCleanly = false;
     let guard = keptItems.length;
     while (guard-- > 0) {
       const reach = localReach(blocked, reachStarts);
+      lastReach = reach;
       const unreachableSeats = seats.filter((s) => !reach.has(key(s)));
       // The 10% tolerance is against the WALKABLE floor (interior minus blocking furniture), not the
       // whole interior (M8 8n fix): a denser recipe can legitimately cover 60-85% of the room in
@@ -642,7 +668,10 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
       const firstOpenApron = aprons.find((a) => !blocked.has(key(a)));
       const reachFromOneApron = firstOpenApron ? localReach(blocked, [firstOpenApron]) : reach;
       const doorsMutuallyConnected = aprons.every((a) => blocked.has(key(a)) || reachFromOneApron.has(key(a)));
-      if (unreachableSeats.length === 0 && unreachableFloor <= Math.max(1, walkableFloor) * 0.1 && doorsMutuallyConnected) break;
+      if (unreachableSeats.length === 0 && unreachableFloor <= Math.max(1, walkableFloor) * 0.1 && doorsMutuallyConnected) {
+        settledCleanly = true;
+        break;
+      }
       let lastBlockingIdx = -1;
       for (let i = keptItems.length - 1; i >= 0; i--) {
         if (keptItems[i]!.blocking) {
@@ -650,10 +679,57 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
           break;
         }
       }
-      if (lastBlockingIdx === -1) break;
+      if (lastBlockingIdx === -1) {
+        settledCleanly = true;
+        break;
+      }
       const removed = keptItems.splice(lastBlockingIdx, 1)[0]!;
       for (const c of rectCells({ x: removed.x, y: removed.y, w: removed.w, h: removed.h })) blocked.delete(key(c));
     }
+
+    // --- 8b. standing appliances (M8 8p, docs/design/back-wall.md section 2.3) -----------------
+    const tallColumns = new Set<number>();
+    // Cheap pre-check (perf.test.ts budget): most rooms in a big void-mode layout have no wall at
+    // all above their top row (an open room's north side just borders void/hall), and `flagAgainstNorthWall`
+    // could never flag anything there either - skip the O(furniture+seats) set-building below entirely
+    // in that case instead of doing it on every eligible room only to find zero wall-backed columns.
+    let anyWallBacked = false;
+    for (let x = interior.x; x < interior.x + interior.w && !anyWallBacked; x++) {
+      if (tiles[interior.y - 1]?.[x] === 'wall') anyWallBacked = true;
+    }
+    if (anyWallBacked && isEligibleForBackWall(room.type, interior, opts.decor, backWallEnabled)) {
+      const finalReach = settledCleanly && lastReach ? lastReach : localReach(blocked, reachStarts);
+      const occupiedCells = new Set<string>();
+      for (const item of keptItems) {
+        for (const c of rectCells({ x: item.x, y: item.y, w: item.w, h: item.h })) occupiedCells.add(key(c));
+      }
+      const seatCellsSet = new Set(seats.map(key));
+      const applianceRand = rngFor(seed, furnish?.seed !== undefined ? `wall:${room.id}:${furnish.seed}` : `wall:${room.id}`);
+      const appliances = placeAppliances({
+        roomType: room.type,
+        interior,
+        density: opts.density,
+        tiles,
+        occupiedCells,
+        blockedCells: blocked,
+        seatCells: seatCellsSet,
+        aprons: reserved,
+        reach: finalReach,
+        recipeSeatCount: seats.length,
+        rand: applianceRand,
+      });
+      for (const item of appliances) {
+        keptItems.push({ ...item, roomId: room.id, roomType: room.type });
+        for (const c of rectCells({ x: item.x, y: item.y, w: item.w, h: item.h })) blocked.add(key(c));
+        for (let x = item.x; x < item.x + item.w; x++) tallColumns.add(x);
+      }
+      flagAgainstNorthWall(keptItems, interior.y, tiles);
+      for (const item of keptItems) {
+        if (item.y !== interior.y || !item.againstNorthWall || !TALL_AGAINST_WALL_KINDS.has(item.kind)) continue;
+        for (let x = item.x; x < item.x + item.w; x++) tallColumns.add(x);
+      }
+    }
+    tallColumnsByRoom.set(room.id, tallColumns);
     furniture.push(...keptItems);
 
     // Seat target shortfall (M8 8n): "place exactly N seats when feasible, else as many as fit and
@@ -753,12 +829,29 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
   }
 
   // --- 13. decor -------------------------------------------------------------------------------
+  // M8 8p: wall tiles directly above an eligible room's interior top row are handled by
+  // planNorthWall below instead of the legacy wall-light/wall-hanging loop.
+  // A plain boolean grid (like `walls`/`walkable` above), not a `Set<string>` of "x,y" keys: this is
+  // read once per cell of the legacy wall-decor scan below, which covers most of the map, so avoiding
+  // a string allocation + hash per lookup matters for perf.test.ts's 128x96/64-room budget.
+  const eligibleWallRow: boolean[][] = grid(cols, rows, false);
+  for (const room of rooms) {
+    const spec = roomSpecById.get(room.id);
+    const decorAmount = spec?.furnish?.decor ?? layout.furnishDefaults?.decor ?? 0.35;
+    if (!isEligibleForBackWall(room.type, room.interior, decorAmount, backWallEnabled)) continue;
+    const wy = room.interior.y - 1;
+    for (let x = room.interior.x; x < room.interior.x + room.interior.w; x++) {
+      eligibleWallRow[wy]![x] = true;
+    }
+  }
+
   const decor: DecorSlot[] = [];
   const decorRand = rngFor(seed, 'decor');
   const wallLightCandidates: { p: Point; roomId: string | null }[] = [];
   for (let y = 0; y < rows - 1; y++) {
     for (let x = 0; x < cols; x++) {
       if (tiles[y]![x] !== 'wall' || tiles[y + 1]![x] !== 'floor') continue;
+      if (eligibleWallRow[y]![x]) continue;
       const southIsDoor = tiles[y + 1]![x] === 'door';
       if (southIsDoor) continue;
       // Skip wall tiles that are themselves doors, or immediately next to one.
@@ -781,6 +874,30 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     });
     placedCount++;
   });
+
+  // M8 8p step 13: semantic north-wall decor + light slots for eligible rooms (pushed after the
+  // legacy wall slots and before floor-scatter, per docs/design/back-wall.md).
+  const northWall: WallDecorSlot[] = [];
+  for (const gr of generatedRooms) {
+    const spec = roomSpecById.get(gr.id);
+    const decorAmount = spec?.furnish?.decor ?? layout.furnishDefaults?.decor ?? 0.35;
+    if (!isEligibleForBackWall(gr.type, gr.interior, decorAmount, backWallEnabled)) continue;
+    const wallDecorRand = rngFor(seed, `wallDecor:${gr.id}`);
+    const result = planNorthWall({
+      roomId: gr.id,
+      roomType: gr.type,
+      interior: gr.interior,
+      tiles,
+      tallColumns: tallColumnsByRoom.get(gr.id) ?? new Set<number>(),
+      decor: decorAmount,
+      rand: wallDecorRand,
+    });
+    northWall.push(...result.slots);
+    for (const light of result.lights) {
+      decor.push({ x: light.x, y: light.y, kind: 'wall-light', roomId: gr.id, variant: light.variant });
+    }
+  }
+
   for (const gr of generatedRooms) {
     if (gr.type === 'stairs' || gr.type === 'hall') continue;
     const roomDecorRand = rngFor(seed, `decor:${gr.id}`);
@@ -889,6 +1006,7 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     doors,
     stairs,
     decor,
+    northWall,
     spawn,
     frontDoor,
     issues,

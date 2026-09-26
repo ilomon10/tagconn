@@ -45,6 +45,26 @@ function paintCrystalBlock(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T
   rect(CRYSTAL_EDGE, x + w - 1, y, 1, h, 0.35);
 }
 
+/** M8 8p (back wall + appliances, docs/design/back-wall.md): a simple crystal/void variant for the
+ *  standing appliances, anchored to the footprint bottom with a modest overdraw so the shape still
+ *  reads as "standing" — `RIFT` must implement every `FurnitureKind` exhaustively even though rift
+ *  furniture is never actually rendered in practice (see the comment above `paintCrystalBlock`). */
+function paintCrystalAppliance(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn): void {
+  const x = f.x * T;
+  const y = f.y * T;
+  const w = f.w * T;
+  const overdraw = f.w >= 2 ? 10 : 7;
+  const top = y - overdraw;
+  const h = y + 15 - top;
+  const accent = pick(RIFT_ACCENTS, f.variant);
+  rect(0x000000, x + 1, y + 14, w - 2, 2, 0.2);
+  rect(VOID_DARK, x, top, w, h);
+  rect(accent, x + 1, top + 1, w - 2, 3, 0.7);
+  rect(lighten(accent, 0.3), x + 1, top + 1, w - 2, 1, 0.5);
+  rect(CRYSTAL_EDGE, x, top, 1, h, 0.3);
+  rect(CRYSTAL_EDGE, x + w - 1, top, 1, h, 0.3);
+}
+
 function paintRiftStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn, up: boolean): void {
   const x = f.x * T;
   const y = f.y * T;
@@ -103,6 +123,17 @@ const RIFT: Record<FurnitureKind, Painter> = {
   cabinet: paintCrystalProp,
   chair: paintCrystalProp,
   banner: paintCrystalProp,
+  // M8 8p: standing appliances (see `paintCrystalAppliance` above).
+  printer: paintCrystalAppliance,
+  fridge: paintCrystalAppliance,
+  'water-cooler': paintCrystalAppliance,
+  'filing-cabinet': paintCrystalAppliance,
+  'coffee-machine': paintCrystalAppliance,
+  bookcase: paintCrystalAppliance,
+  fireplace: paintCrystalAppliance,
+  'coat-rack': paintCrystalAppliance,
+  'supply-stack': paintCrystalAppliance,
+  cage: paintCrystalAppliance,
 };
 
 export function paintRiftFurniture(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number): void {

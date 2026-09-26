@@ -19,6 +19,8 @@ import type { GeneratedMap, Point, Rect, StairsSpot } from '../procgen/types';
 import { PathFinder } from '../pathfinding';
 import { SeatAllocator, type SeatScope } from '../seats';
 import { Character } from '../actors/Character';
+import { spawnReceptionist, type ReceptionistNpcHandle } from '../npc/receptionist';
+import { pickReceptionistSpot } from '../npc/receptionistSpot';
 import { generateTextures } from '../textures';
 import { resolveCostume, resolveTitle } from '../lookResolver';
 import { resolveHeroCostume } from '../heroLook';
@@ -234,6 +236,10 @@ export class OfficeScene extends Phaser.Scene {
   private postFx!: PostFxController;
   private tooltip!: Phaser.GameObjects.Text;
   private characters = new Map<ActorKey, Character>();
+  /** W3b: one fixed NPC per floor (the Nexus's own plaza is an `'entrance'`-type room too, so it gets
+   *  one the same way) — never part of `characters`/the cast, just a static clickable prop. */
+  private receptionistNpc: ReceptionistNpcHandle | null = null;
+  private receptionistBusy = false;
   private night!: Phaser.GameObjects.Rectangle;
   private state?: OfficeState;
   /** `layout.id + updatedAt` (+ the Multiverse plan's own key) — a full geometry rebuild only
@@ -313,6 +319,7 @@ export class OfficeScene extends Phaser.Scene {
       this.themeTimer?.remove();
       window.removeEventListener('blur', this.endDragOnBlur);
       this.postFx.destroy();
+      this.receptionistNpc?.destroy();
     });
     this.onReady?.(this);
   }
@@ -339,6 +346,7 @@ export class OfficeScene extends Phaser.Scene {
     this.renderVisuals();
     this.buildStairsInteractive();
     this.buildRealmZones();
+    this.rebuildReceptionist();
     if (this.night) this.night.setSize(this.worldW, this.worldH);
   }
 
@@ -364,6 +372,25 @@ export class OfficeScene extends Phaser.Scene {
     this.appliedStyle = style;
     this.renderVisuals();
     this.refreshStairsAvailability();
+    this.rebuildReceptionist();
+  }
+
+  /** W3b: (re)spawns the floor's Receptionist NPC at `pickReceptionistSpot`'s tile — on a full
+   *  rebuild (new map, so a new spot) and on a reskin too (same spot, but a re-tinted desk/outfit to
+   *  match the new theme; `spawnReceptionist` has no in-place restyle, so this just respawns it). */
+  private rebuildReceptionist() {
+    this.receptionistNpc?.destroy();
+    const spot = pickReceptionistSpot(this.map);
+    const T = this.map.tileSize;
+    const handle = spawnReceptionist(this, {
+      x: spot.x * T + T / 2,
+      y: spot.y * T + T - 2,
+      style: { accent: this.theme.palette.floorAccent.entrance, outfit: this.theme.palette.wallEdge },
+      onClick: () => this.events.emit('receptionistClick'),
+    });
+    handle.setBusy(this.receptionistBusy);
+    handle.setVisible(this.state?.settings.receptionist.enabled ?? true);
+    this.receptionistNpc = handle;
   }
 
   private renderVisuals() {
@@ -778,6 +805,7 @@ export class OfficeScene extends Phaser.Scene {
     if (prevZoom !== office.zoom) this.fitCamera();
     this.applyLighting();
     this.postFx.applySettings(office.shaders, effectiveStyle);
+    this.receptionistNpc?.setVisible(state.settings.receptionist.enabled);
 
     const instant = this.floorKey !== state.floorKey;
     if (instant) {
@@ -1052,6 +1080,13 @@ export class OfficeScene extends Phaser.Scene {
     if (this.selectedAgentId === agentId) return;
     this.selectedAgentId = agentId;
     this.syncSelectedKey();
+  }
+
+  /** W3b: mirrors whether any Receptionist conversation is mid-turn (`stores/receptionistStore.ts`
+   *  — web-only state, not part of `OfficeState`) onto the NPC's "thinking" look. */
+  setReceptionistBusy(busy: boolean) {
+    this.receptionistBusy = busy;
+    this.receptionistNpc?.setBusy(busy);
   }
 
   private syncSelectedKey() {

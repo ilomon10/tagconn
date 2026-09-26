@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ROOM_TYPES, ZONES, type RoomType } from '@tagconn/shared';
-import type { FurnitureKind, PlacedFurniture } from '../../procgen/types';
+import { APPLIANCE_SPECS, type ApplianceKind } from '../../procgen/backWallSpec';
+import type { FurnitureKind, PlacedFurniture, WallDecorKind, WallDecorSlot } from '../../procgen/types';
 import { riftTheme } from '../rift';
-import { makeStubGraphics } from './testUtils';
+import { paintRiftBackWall, paintRiftWallDecor } from '../paint/riftWalls';
+import { makeBoundsGraphics, makeStubGraphics } from './testUtils';
 
 // A compile-time-exhaustive list, mirroring painters.test.ts's coverage for modern/guild — adding a
 // FurnitureKind without adding it here fails to typecheck.
@@ -43,8 +45,25 @@ const FURNITURE_KIND_SET: Record<FurnitureKind, true> = {
   cabinet: true,
   chair: true,
   banner: true,
+  // M8 8p (back wall + appliances): standing appliances, always against a north wall.
+  printer: true,
+  fridge: true,
+  'water-cooler': true,
+  'filing-cabinet': true,
+  'coffee-machine': true,
+  bookcase: true,
+  fireplace: true,
+  'coat-rack': true,
+  'supply-stack': true,
+  cage: true,
 };
 const FURNITURE_KINDS = Object.keys(FURNITURE_KIND_SET) as FurnitureKind[];
+const APPLIANCE_KINDS = Object.keys(APPLIANCE_SPECS) as ApplianceKind[];
+
+const WALL_DECOR_KINDS: WallDecorKind[] = ['window', 'clock', 'picture', 'board', 'chart', 'wall-shelf', 'banner'];
+function wallDecorFixture(kind: WallDecorKind, span: number, variant: number): WallDecorSlot {
+  return { kind, x: 2, y: 5, span, roomId: 'r1', variant };
+}
 const FLOOR_KINDS: (RoomType | 'corridor')[] = [...ROOM_TYPES, 'corridor'];
 
 function furnitureFixture(kind: FurnitureKind): PlacedFurniture {
@@ -143,6 +162,45 @@ describe('rift theme painters (implements every FurnitureKind/RoomType exhaustiv
         const f: PlacedFurniture = { x: 2, y: 2, w, h, kind, blocking: true, roomId: 'r1', roomType: 'desks', variant };
         expect(() => riftTheme.paintFurniture(g, f, 16)).not.toThrow();
         expect(calls.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('paints every appliance kind at its real footprint width and every seeded variant without throwing (M8 8p)', () => {
+    for (const kind of APPLIANCE_KINDS) {
+      const { w } = APPLIANCE_SPECS[kind];
+      for (let variant = 0; variant < 4; variant++) {
+        const { g, calls } = makeStubGraphics();
+        const f: PlacedFurniture = { x: 2, y: 5, w, h: 1, kind, blocking: true, roomId: 'r1', roomType: 'desks', variant, againstNorthWall: true };
+        expect(() => riftTheme.paintFurniture(g, f, 16)).not.toThrow();
+        expect(calls.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('paints the back-wall face (cap, face, band-with-baseboard, and door gap) without throwing (M8 8p)', () => {
+    for (const band of [true, false]) {
+      for (const openLeft of [false, true]) {
+        for (const openRight of [false, true]) {
+          const { g, calls } = makeStubGraphics();
+          expect(() =>
+            paintRiftBackWall(g, 32, 80, { kind: 'desks', band, openLeft, openRight, capPx: 3, bandPx: 6 }, () => 0.5),
+          ).not.toThrow();
+          expect(calls.length).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it('paints every WallDecorKind at a representative span/variant, inside the face, without throwing (M8 8p)', () => {
+    const T = 16;
+    const face = { top: 5 * T + 3, bottom: 6 * T + 6 };
+    for (const kind of WALL_DECOR_KINDS) {
+      for (const span of [1, 2]) {
+        const slot = wallDecorFixture(kind, span, 1);
+        const { g, rects } = makeBoundsGraphics();
+        expect(() => paintRiftWallDecor(g, slot, T, face)).not.toThrow();
+        expect(rects.length).toBeGreaterThan(0);
       }
     }
   });

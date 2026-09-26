@@ -9,8 +9,8 @@ import type * as Phaser from 'phaser';
  * (nothing to preload). Only `import type` on `phaser` — no runtime dependency on the module — so this
  * file can be unit-tested against a minimal mock `scene` without a real Phaser/canvas/WebGL context.
  *
- * NOT wired into `OfficeScene` here — the PM does that once a spawn point ("Guild Gate") is agreed for
- * every floor and the Nexus.
+ * W3b wires this into `OfficeScene`: one instance per floor, spawned/re-spawned at
+ * `game/npc/receptionistSpot.ts#pickReceptionistSpot`'s tile.
  */
 
 export interface ReceptionistNpcStyle {
@@ -35,6 +35,9 @@ export interface ReceptionistNpcHandle {
   /** Toggles the "thinking" look (dimmed body, pulsing bubble) for one turn in flight (§4.1: "one
    *  turn at a time"). Idempotent. */
   setBusy(busy: boolean): void;
+  /** Shows/hides the whole NPC (e.g. `settings.receptionist.enabled` toggled off) without losing its
+   *  position or busy state, so re-enabling just flips it back rather than respawning. */
+  setVisible(visible: boolean): void;
 }
 
 const DEFAULT_STYLE: Required<ReceptionistNpcStyle> = {
@@ -42,6 +45,18 @@ const DEFAULT_STYLE: Required<ReceptionistNpcStyle> = {
   outfit: 0x5b6b8c,
   skin: 0xe7b58c,
 };
+
+/**
+ * A plain-object rectangle (not `Phaser.Geom.Rectangle` — this file only `import type`s `phaser`,
+ * see the header comment) covering everything drawn below: the desk, body, bubble and name tag are
+ * all centered on x=0 and drawn *upward* from the origin (the desk's "feet" point). Phaser's default
+ * texture-based hit area for a sized-but-frameless object like this Container is `Rectangle(0, 0,
+ * width, height)` — i.e. *below and to the right* of the origin — which would miss the whole visible
+ * NPC and only ever catch the lower-right sliver of its shadow. `spawnReceptionist` passes this (and
+ * `containsPoint` below) explicitly instead.
+ */
+const HIT_AREA = { x: -9, y: -55, width: 18, height: 59 };
+const containsPoint = (rect: typeof HIT_AREA, x: number, y: number) => x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 
 /**
  * Spawns the Receptionist NPC: a small desk in front, a person standing behind it, and a "?" speech
@@ -84,9 +99,15 @@ export function spawnReceptionist(scene: Phaser.Scene, opts: ReceptionistNpcOpti
   };
   drawBubble(false);
 
-  const container = scene.add.container(opts.x, opts.y, [shadow, desk, body, badge, bubbleBg, bubbleText]);
-  container.setSize(18, 34);
-  container.setInteractive({ useHandCursor: true });
+  // A small always-on tag (simpler than hooking into `game/labels.ts`'s zoom/collision layout,
+  // which is built around `Character`'s `ActorKey`-keyed subjects): same font/colors as
+  // `Character`'s own name tag, just standing in fixed above the head rather than following it.
+  const nameTag = scene.add
+    .text(0, -46, 'Receptionist', { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '5px', color: '#ffffff', backgroundColor: '#15121ecc', padding: { x: 1.5, y: 0.5 } })
+    .setOrigin(0.5, 1);
+
+  const container = scene.add.container(opts.x, opts.y, [shadow, desk, body, badge, bubbleBg, bubbleText, nameTag]);
+  container.setInteractive({ hitArea: HIT_AREA, hitAreaCallback: containsPoint, useHandCursor: true });
   if (opts.onClick) container.on('pointerup', opts.onClick);
 
   let busyPulse: Phaser.Tweens.Tween | undefined;
@@ -95,6 +116,9 @@ export function spawnReceptionist(scene: Phaser.Scene, opts: ReceptionistNpcOpti
     destroy() {
       busyPulse?.remove();
       container.destroy();
+    },
+    setVisible(visible: boolean) {
+      container.setVisible(visible);
     },
     setBusy(busy: boolean) {
       drawBubble(busy);

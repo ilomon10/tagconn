@@ -3,7 +3,8 @@ import type * as Phaser from 'phaser';
 import { paintModernDecorTextures, modernDecorFor } from './paint/decor';
 import { paintModernFloor } from './paint/floors';
 import { paintModernFurniture } from './paint/furniture';
-import { paintModernDoor, paintModernVoid, paintModernWall } from './paint/walls';
+import { paintModernWallDecor } from './paint/wallDecor';
+import { paintModernBackWall, paintModernDoor, paintModernVoid, paintModernWall } from './paint/walls';
 import type { Costume, ThemeDefinition } from './types';
 
 /** A straight port of the pre-M7 office: `renderMap.ts` colours and furniture art, `ZONE_LABELS`
@@ -93,6 +94,10 @@ export const modernTheme: ThemeDefinition = {
   paintVoid: paintModernVoid,
   paintDoor: paintModernDoor,
   paintFurniture: paintModernFurniture,
+  // M8 8p: the tall 3/4 back-wall face + baked wall decor (docs/design/back-wall.md).
+  backWall: { capPx: 3, bandPx: 8 },
+  paintBackWall: paintModernBackWall,
+  paintWallDecor: paintModernWallDecor,
   // Static art only (a framed poster on `wall-hanging` slots) — nothing animated, so
   // `ambientEffects` never creates a tween here either way.
   animate: (scene, map) => {

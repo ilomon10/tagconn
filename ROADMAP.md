@@ -99,7 +99,7 @@ and the map (walls, doors, corridors, furniture, seats) is generated from them d
 - [x] SC4 security review of I1: approve with required changes (3 Med: hook sed slows big events, skill pointed at .env, pair prints link on squatter mismatch; 6 Low)
 - [x] I1 fixes for SC4 (132 script tests)  [Developer: infra]
 - [x] S4 requirement from SC4: a rejected profile import never echoes, logs or stores the raw body (logger-spy test)
-- [~] Wire `attribution:save` (server + web button) to the runner's `attribution:write`; export endpoint stays public per design
+- [x] Wire `attribution:save` (server + web button) to the runner's `attribution:write`; export endpoint stays public per design
 - [x] Wave A1: H1 server heroes [x] · W2 web hero data [x] · W3 cast resolver [x] · W4 hero look/preview [x] · W6 multiverse plan + rift theme [x]
 - [x] Wave A2: W5 hero editor UI [x] · W7a scene integration [x] · W7b React bridge + floors [x] (uncommitted)
 User request: no stale characters, one clear PM per floor, reuse idle characters, glow on the selected character, bubbles that never overlap, and UX best practice for showing characters and the office.
@@ -122,12 +122,12 @@ so parallel or old sessions leave extra PMs on a floor.
   - [x] P1 procgen furnishing engine + doors + reachability report (16 new furniture kinds; 3 reachability bugs fixed)  [Developer: web]
   - [x] T1 new furniture/decor kinds painted in modern, guild and rift + style pass (cream office walls, framed doors, grout floors, guild windows/banners); whole map baked into one texture (8-22 ms)  [Developer: web]
   - [x] E1 Hall Planner: furnishing inspector, door tool, reachability overlay with one-click fixes  [Developer: web]
-- [~] 8p. **3/4 back wall + appliances** (from the style references): a tall north-wall face per room, north-wall decor slots (windows, clocks, pictures, shelves) and standing appliances (printer, fridge, water cooler, filing cabinet, fireplace, barred cells for the guild vault). Design: `docs/design/back-wall.md` (tall face over the wall tile + walkable overdraw band, 10 appliance kinds on the top row, wall-decor slots, seat/walkability parity, no scene change)
-  - [~] T0+T1 procgen contracts + back-wall/appliance placement  [Developer: web]
-  - [~] T2+T3 paint back wall, wall decor, appliances in modern/guild/rift  [Developer: web]
+- [x] 8p. **3/4 back wall + appliances** (from the style references): a tall north-wall face per room, north-wall decor slots (windows, clocks, pictures, shelves) and standing appliances (printer, fridge, water cooler, filing cabinet, fireplace, barred cells for the guild vault). Design: `docs/design/back-wall.md` (tall face over the wall tile + walkable overdraw band, 10 appliance kinds on the top row, wall-decor slots, seat/walkability parity, no scene change)
+  - [x] T0+T1 procgen contracts + back-wall/appliance placement (parity over 300 seeds; +25-30% generation time, within the hard budget)  [Developer: web]
+  - [x] T2+T3 paint back wall, wall decor, appliances in modern/guild/rift  [Developer: web]
   - [ ] T4 fireplace/guild-window bloom in postfx (after 8o)
-- [ ] W3b place the Receptionist NPC at each floor's entrance / the Nexus gate (after 8o touches OfficeScene)
-- [~] 8o. **Shaders** (user request): WebGL post-processing: per-style color grading, vignette, bloom on light sources (torches, braziers, monitors, windows) via a light layer so pixel art stays crisp, flame flicker (reduced-motion aware), optional CRT scanlines for modern; `office.shaders.*` settings (contract done), auto quality, canvas fallback  [Developer: web]
+- [x] W3b place the Receptionist NPC at each floor's entrance / the Nexus gate (after 8o touches OfficeScene)
+- [x] 8o. **Shaders** (user request): WebGL post-processing: per-style color grading, vignette, bloom on light sources (torches, braziers, monitors, windows) via a light layer so pixel art stays crisp, flame flicker (reduced-motion aware), optional CRT scanlines for modern; `office.shaders.*` settings (contract done), auto quality, canvas fallback  [Developer: web]
 - [ ] 8g. Review + security + QA → v0.3.0
 
 ## Backlog

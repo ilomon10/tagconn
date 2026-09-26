@@ -42,6 +42,9 @@ type Events = {
   /** M8 8c: a resting actor (no live agent right now) was clicked. The host opens the hero editor
    *  on this hero (design section 4.2's "clicking a resting actor opens the hero editor"). */
   heroClick: (heroId: string) => void;
+  /** W3b: the Receptionist NPC was clicked. The host opens the Receptionist panel
+   *  (`features/receptionist/uiStore.ts#openPanel`) — its own gate handles a non-admin session. */
+  receptionistClick: () => void;
 };
 
 /** Framework-agnostic handle around a Phaser.Game hosting the office scene. */
@@ -62,6 +65,7 @@ export class OfficeGame {
     realmClick: new Set(),
     gmSessions: new Set(),
     heroClick: new Set(),
+    receptionistClick: new Set(),
   };
 
   constructor(parent: HTMLElement) {
@@ -75,6 +79,7 @@ export class OfficeGame {
       ready.events.on('realmClick', (id: string | null) => this.listeners.realmClick.forEach((cb) => cb(id)));
       ready.events.on('gmSessions', (id: string) => this.listeners.gmSessions.forEach((cb) => cb(id)));
       ready.events.on('heroClick', (id: string) => this.listeners.heroClick.forEach((cb) => cb(id)));
+      ready.events.on('receptionistClick', () => this.listeners.receptionistClick.forEach((cb) => cb()));
       if (this.pending) ready.setOfficeState(this.pending);
       this.pending = null;
       if (this.pendingInsets) ready.setSafeInsets(this.pendingInsets);
@@ -123,6 +128,11 @@ export class OfficeGame {
    *  rest (`office.focusDim`). Pass `null` when the panel is closed. */
   setSelected(agentId: string | null) {
     this.scene?.setSelected(agentId);
+  }
+
+  /** W3b: mirrors whether any Receptionist conversation is mid-turn onto the NPC's "thinking" look. */
+  setReceptionistBusy(busy: boolean) {
+    this.scene?.setReceptionistBusy(busy);
   }
 
   zoomBy(factor: number) {
@@ -177,6 +187,7 @@ export class OfficeGame {
     this.listeners.realmClick.clear();
     this.listeners.gmSessions.clear();
     this.listeners.heroClick.clear();
+    this.listeners.receptionistClick.clear();
     this.scene = null;
     this.game.destroy(true);
   }
