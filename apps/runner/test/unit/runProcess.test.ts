@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { bwrapAvailable, probeSystemdScope } from '../../src/capabilities.js';
-import { spawnRun, type SpawnSpec } from '../../src/runProcess.js';
+import { reapStaleQuestScopes, spawnRun, type SpawnSpec, type SystemctlSpawn } from '../../src/runProcess.js';
 import { FAKE_CLAUDE_PATH, mkSandbox, rmSandbox } from '../helpers.js';
 import type { RunEvent } from '@tagconn/shared';
 
@@ -132,4 +132,39 @@ describe.skipIf(!hasBwrap)('spawnRun: bwrap wrapper (--unshare-pid takes the who
     const exit = await c.waitForExit();
     expect(exit).toBeDefined();
   }, 10_000);
+});
+
+describe('reapStaleQuestScopes (SC5 L9)', () => {
+  it('stops every listed tagconn-quest-*.scope unit and returns their names', () => {
+    const calls: string[][] = [];
+    const fakeSystemctl: SystemctlSpawn = (args) => {
+      calls.push(args);
+      if (args[1] === 'list-units') {
+        return { status: 0, stdout: 'tagconn-quest-aaa.scope loaded active running\ntagconn-quest-bbb.scope loaded active running\n' };
+      }
+      return { status: 0, stdout: '' };
+    };
+    const stopped = reapStaleQuestScopes(fakeSystemctl);
+    expect(stopped).toEqual(['tagconn-quest-aaa.scope', 'tagconn-quest-bbb.scope']);
+    expect(calls).toContainEqual(['--user', 'stop', 'tagconn-quest-aaa.scope']);
+    expect(calls).toContainEqual(['--user', 'stop', 'tagconn-quest-bbb.scope']);
+  });
+
+  it('returns an empty list when nothing matches, without stopping anything', () => {
+    const fakeSystemctl: SystemctlSpawn = () => ({ status: 0, stdout: '' });
+    expect(reapStaleQuestScopes(fakeSystemctl)).toEqual([]);
+  });
+
+  it('fails safe (never throws) when systemctl --user is unavailable', () => {
+    const throwing: SystemctlSpawn = () => {
+      throw new Error('systemctl: command not found');
+    };
+    expect(() => reapStaleQuestScopes(throwing)).not.toThrow();
+    expect(reapStaleQuestScopes(throwing)).toEqual([]);
+  });
+
+  it('ignores a non-zero exit (e.g. no systemd user session)', () => {
+    const fakeSystemctl: SystemctlSpawn = () => ({ status: 1, stdout: '' });
+    expect(reapStaleQuestScopes(fakeSystemctl)).toEqual([]);
+  });
 });

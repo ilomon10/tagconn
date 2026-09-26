@@ -106,6 +106,56 @@ describe('install -> reinstall -> doctor -> uninstall', () => {
   });
 });
 
+describe('doctor: H2 (SC5) risky user-level settings.json permissions', () => {
+  let sandbox: Sandbox;
+
+  beforeEach(() => {
+    sandbox = createSandbox();
+    runInstall(sandbox);
+  });
+
+  function patchSettings(patch: Record<string, unknown>): void {
+    const path = join(sandbox.claudeDir, 'settings.json');
+    const settings = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify({ ...settings, ...patch }, null, 2));
+  }
+
+  it('warns about Bash/WebFetch/mcp__ allow rules that quests would inherit via --setting-sources=user', () => {
+    patchSettings({ permissions: { allow: ['Bash(rm -rf /)', 'WebFetch', 'mcp__github__search', 'Read'] } });
+    const res = runDoctor(sandbox);
+    expect(res.status).toBe(0); // a warning, never a hard failure
+    expect(res.stdout).toMatch(/permissions\.allow has 3 Bash\/WebFetch\/mcp__ rule\(s\)/);
+    expect(res.stdout).toContain('Bash(rm -rf /)');
+    expect(res.stdout).toContain('mcp__github__search');
+  });
+
+  it('warns about permissions.additionalDirectories', () => {
+    patchSettings({ permissions: { additionalDirectories: ['/etc'] } });
+    const res = runDoctor(sandbox);
+    expect(res.stdout).toMatch(/permissions\.additionalDirectories is set: \/etc/);
+  });
+
+  it('warns about a non-"plan" permissions.defaultMode', () => {
+    patchSettings({ permissions: { defaultMode: 'bypassPermissions' } });
+    const res = runDoctor(sandbox);
+    expect(res.stdout).toMatch(/permissions\.defaultMode is "bypassPermissions"/);
+  });
+
+  it('does not warn about defaultMode "plan", and does not flag a plain "Read" allow rule', () => {
+    patchSettings({ permissions: { defaultMode: 'plan', allow: ['Read', 'Grep'] } });
+    const res = runDoctor(sandbox);
+    expect(res.stdout).not.toMatch(/permissions\.allow has/);
+    expect(res.stdout).not.toMatch(/permissions\.defaultMode is/);
+  });
+
+  it('does not warn at all when settings.json has no permissions section (the plain installer output)', () => {
+    const res = runDoctor(sandbox);
+    expect(res.stdout).not.toMatch(/permissions\.allow has/);
+    expect(res.stdout).not.toMatch(/permissions\.additionalDirectories/);
+    expect(res.stdout).not.toMatch(/permissions\.defaultMode is/);
+  });
+});
+
 describe('unmanaged agent/skill files are left untouched', () => {
   let sandbox: Sandbox;
   const unmanagedAgentContent = '---\nname: developer\n---\nMy own hand-written developer agent.\n';

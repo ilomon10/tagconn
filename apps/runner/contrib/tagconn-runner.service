@@ -1,0 +1,36 @@
+# Example systemd USER unit for the tagconn host runner (docs/design/runner-and-helpdesk.md §2.1).
+# Not installed automatically by `scripts/install.ts` (SC5 INFO) - copy it in yourself:
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp apps/runner/contrib/tagconn-runner.service ~/.config/systemd/user/
+#   # edit ExecStart/WorkingDirectory below to point at your tagconn checkout, then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tagconn-runner.service
+#   loginctl enable-linger "$USER"   # so it keeps running after you log out (optional)
+#
+# KillMode=control-group matters for SC5 L9: a "plain" quest (no Bash allow rule, no systemd scope -
+# see toolPolicy.ts) is spawned as a child of this runner process, in the SAME cgroup as the runner
+# itself (unlike a Bash-capable quest, which gets its OWN systemd scope/cgroup precisely so it can be
+# killed independently). If this unit is stopped or crashes, systemd tearing down the whole cgroup is
+# what takes that plain-spawn quest child down with it - the runner has no native "die with parent"
+# hook of its own for that case. Scoped (Bash-capable) quests are unaffected either way: they are
+# reaped explicitly by the runner's own startup reap (runProcess.ts's reapStaleQuestScopes, L9), since
+# systemd-run --scope gives them a lifetime independent of this unit's cgroup.
+
+[Unit]
+Description=tagconn host runner (spawns claude -p for quests and the Receptionist)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust this to your checkout; `pnpm build` (or `pnpm --filter @tagconn/runner build`) produces dist/main.js.
+WorkingDirectory=%h/Projects/tagconn
+ExecStart=/usr/bin/node %h/Projects/tagconn/apps/runner/dist/main.js --config %h/.config/tagconn/runner.json
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

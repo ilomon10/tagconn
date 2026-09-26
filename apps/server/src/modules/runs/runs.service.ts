@@ -29,6 +29,7 @@ import {
   assertPromptWithinLimit,
   buildQuestAllowedTools,
   buildQuestDisallowedTools,
+  buildReceptionistDisallowedTools,
   resolvePermissionMode,
 } from './runs.validate.js';
 
@@ -40,6 +41,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_SWEEP_MS = 60 * 60 * 1000;
 /** M5: upper bound when re-summing a run's stored event bytes at boot (`settings.runner.maxEventsPerRun` tops out at 100_000). */
 const MAX_EVENTS_TO_SEED = 200_000;
+/**
+ * M2 (SC5): `apps/runner` does not enforce `cmd.timeoutSec` itself (it only stops a run when told
+ * to) — this is the server's own watchdog, the only backstop against a runner that never ends a run.
+ * Small headroom past `cmd.timeoutSec` for the `run:stop` to reach the runner and for it to actually
+ * exit (SIGTERM, then its own SIGKILL grace) before the server gives up waiting and declares the run
+ * over on its own.
+ */
+const RUN_TIMEOUT_GRACE_MS = 15_000;
 
 const truncate = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max)}…[truncated]` : s);
 
@@ -86,6 +95,9 @@ export class RunsService implements RunDispatcher, RunLinker {
   private runner?: RunnerConnection;
   private connectedAt?: number;
   private graceTimers = new Map<string, NodeJS.Timeout>();
+  /** M2: one timer per dispatched/running run — either the `cmd.timeoutSec` watchdog, or (once that
+   * has fired) the `RUN_TIMEOUT_GRACE_MS` follow-up. Keyed by runId, same lifecycle as `graceTimers`. */
+  private timeoutTimers = new Map<string, NodeJS.Timeout>();
   private retentionTimer?: NodeJS.Timeout;
 
   constructor(private readonly deps: RunsDeps) {}
@@ -103,6 +115,10 @@ export class RunsService implements RunDispatcher, RunLinker {
         // M5: reseed the byte counter from what's already stored, so a restart mid-run doesn't reset
         // the output cap back to 0 and let the run double its allowance across the restart.
         this.eventBytes.set(run.id, sumEventBytes(this.deps.runsRepository.listEvents(run.id, MAX_EVENTS_TO_SEED)));
+        // M2: the command's own timeoutSec isn't stored on the row, so it's re-derived from current
+        // settings by kind (same values `buildQuestCommand`/`startReceptionistTurn` used); whatever
+        // time is left (possibly none, if the server was down past the deadline) is scheduled below.
+        this.scheduleTimeoutWatchdog(run.id, this.remainingTimeoutMs(run, now));
       }
     }
     for (const runnerId of orphanedRunnerIds) this.scheduleLostGraceCheck(runnerId, now);
@@ -127,6 +143,8 @@ export class RunsService implements RunDispatcher, RunLinker {
     clearInterval(this.retentionTimer);
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
+    for (const t of this.timeoutTimers.values()) clearTimeout(t);
+    this.timeoutTimers.clear();
   }
 
   // -------------------------------------------------------------- quest board (REST + socket)
@@ -327,7 +345,7 @@ export class RunsService implements RunDispatcher, RunLinker {
       model: receptionist.model,
       resumeSessionId: input.resumeSessionId,
       allowedTools: [],
-      disallowedTools: buildQuestDisallowedTools(runnerCfg),
+      disallowedTools: buildReceptionistDisallowedTools(runnerCfg, receptionist),
       maxTurns: receptionist.maxTurns,
       timeoutSec: receptionist.timeoutSec,
       readOnly: true,
@@ -613,6 +631,10 @@ export class RunsService implements RunDispatcher, RunLinker {
     const dispatched: Run = { ...run, status: 'dispatched', runnerId: runner.runnerId, startedAt: Date.now() };
     this.deps.runsRepository.update(dispatched);
     this.deps.bus.emit('run.upserted', dispatched);
+    // M2: start the watchdog as soon as the run leaves the queue, covering both 'dispatched' and
+    // 'running' — cmd.timeoutSec is already the right value for either kind (buildQuestCommand /
+    // startReceptionistTurn set it from settings.runner.runTimeoutSec / settings.receptionist.timeoutSec).
+    this.scheduleTimeoutWatchdog(runId, parsedCommand.data.timeoutSec * 1000);
 
     runner.sendStart(parsedCommand.data, (res) => {
       const current = this.deps.runsRepository.get(runId);
@@ -670,7 +692,73 @@ export class RunsService implements RunDispatcher, RunLinker {
     this.deps.runsRepository.update(updated);
     this.deps.bus.emit('run.upserted', updated);
     this.eventBytes.delete(run.id); // M5: every terminal path releases the per-run byte counter here, once
+    this.clearTimeoutTimer(run.id); // M2: same — every terminal path releases the watchdog/grace timer here, once
     return updated;
+  }
+
+  // -------------------------------------------------------------- M2: per-run timeout watchdog
+
+  /** `settings.runner.runTimeoutSec` for a quest, `settings.receptionist.timeoutSec` for a receptionist
+   * turn — the same values `buildQuestCommand`/`startReceptionistTurn` used to set `cmd.timeoutSec`,
+   * re-derived here because the command itself isn't persisted on the `Run` row (only used by `seed()`,
+   * where settings may have changed since dispatch — best effort, same spirit as the live watchdog). */
+  private effectiveTimeoutSec(run: Run): number {
+    const { runner: runnerCfg, receptionist } = this.deps.settings.get();
+    return run.kind === 'receptionist' ? receptionist.timeoutSec : runnerCfg.runTimeoutSec;
+  }
+
+  /** Boot-time reconstruction (`seed()`): how much of the original `cmd.timeoutSec` window is left,
+   * clamped to >= 0 (already expired: the watchdog fires almost immediately instead of not at all). */
+  private remainingTimeoutMs(run: Run, now: number): number {
+    const timeoutSec = this.effectiveTimeoutSec(run);
+    const startedAt = run.startedAt ?? run.createdAt;
+    return Math.max(0, timeoutSec * 1000 - (now - startedAt));
+  }
+
+  private scheduleTimeoutWatchdog(runId: string, ms: number): void {
+    this.clearTimeoutTimer(runId);
+    const timer = setTimeout(() => this.onRunTimedOut(runId), Math.max(0, ms));
+    timer.unref?.();
+    this.timeoutTimers.set(runId, timer);
+  }
+
+  private scheduleTimeoutGrace(runId: string): void {
+    this.clearTimeoutTimer(runId);
+    const timer = setTimeout(() => this.onRunTimeoutGraceExpired(runId), RUN_TIMEOUT_GRACE_MS);
+    timer.unref?.();
+    this.timeoutTimers.set(runId, timer);
+  }
+
+  private clearTimeoutTimer(runId: string): void {
+    const t = this.timeoutTimers.get(runId);
+    if (t) {
+      clearTimeout(t);
+      this.timeoutTimers.delete(runId);
+    }
+  }
+
+  /** `cmd.timeoutSec` elapsed with no `run:end`. `apps/runner` never enforces this itself (only the
+   * server does), so this is the only backstop: ask the runner to stop the run, then give it
+   * `RUN_TIMEOUT_GRACE_MS` to actually do so (`onRunTimeoutGraceExpired`) before the server gives up
+   * and ends it unilaterally. Public, like `reconcileLostRunner`, so tests can trigger it directly
+   * instead of waiting out the real timer (this file's tests run against a real socket.io transport,
+   * where faking global timers would also stall the transport's own timers). */
+  onRunTimedOut(runId: string): void {
+    this.timeoutTimers.delete(runId);
+    const run = this.deps.runsRepository.get(runId);
+    if (!run || isTerminalRunStatus(run.status)) return; // already ended by the time this fired
+    if (this.runner && run.runnerId === this.runner.runnerId) this.runner.sendStop({ runId, reason: 'timeout' });
+    this.scheduleTimeoutGrace(runId);
+  }
+
+  /** `RUN_TIMEOUT_GRACE_MS` after `onRunTimedOut`'s `run:stop`, with still no `run:end`: the server
+   * declares the run over on its own. Public for the same reason as `onRunTimedOut`. */
+  onRunTimeoutGraceExpired(runId: string): void {
+    this.timeoutTimers.delete(runId);
+    const run = this.deps.runsRepository.get(runId);
+    if (!run || isTerminalRunStatus(run.status)) return; // the runner ended it itself within the grace
+    this.markEnded(run, 'timeout', 'timeout');
+    this.tryDispatch();
   }
 }
 

@@ -570,33 +570,89 @@ export interface RunsClientToServerEvents {
 // ------------------------------------------------------------------ runner-local config (host file)
 
 /**
- * Local denies appended to every quest: settings/agent/git/MCP config stay untouchable by quests,
- * plus the loopback WebFetch backstop (matters for auto/bypass modes, where no allow rule is needed).
+ * Local denies appended to every quest: settings/agent/git/MCP config stay untouchable by quests
+ * (both cwd-relative, for the repo's own .claude dir, and HOME-scoped, since SC5 M1 found that a
+ * cwd-relative allow rule like bare `Edit` does not protect the user's actual `~/.claude` config,
+ * `~/.claude.json` or shell rc files, which a quest could otherwise reach via an absolute path or
+ * `..`), plus the loopback WebFetch backstop (matters for auto/bypass modes, where no allow rule is
+ * needed). The runner ALSO appends a deny for its own `stateDir` at runtime (config.ts's `stateDir`
+ * is only known once resolved, so it cannot be a static entry here; see validate.ts).
  */
 export const DEFAULT_QUEST_ALWAYS_DENY = [
+  // Repo-local (cwd-relative): a project checked out under an allowed dir must not be able to plant
+  // its own trusted settings, hooks or MCP config for a later run.
   'Edit(.claude/**)',
   'Write(.claude/**)',
+  'MultiEdit(.claude/**)',
+  'NotebookEdit(.claude/**)',
   'Edit(.git/**)',
   'Write(.git/**)',
+  'MultiEdit(.git/**)',
+  'NotebookEdit(.git/**)',
   'Edit(.mcp.json)',
   'Write(.mcp.json)',
+  'MultiEdit(.mcp.json)',
+  'NotebookEdit(.mcp.json)',
+  // HOME-scoped (SC5 M1): the same tools, reached by an absolute path, must not touch the user's
+  // real Claude Code config, tagconn's own runner.json/token, or shell startup files a later
+  // interactive shell would source.
+  'Edit(~/.claude/**)',
+  'Write(~/.claude/**)',
+  'MultiEdit(~/.claude/**)',
+  'NotebookEdit(~/.claude/**)',
+  'Edit(~/.claude.json)',
+  'Write(~/.claude.json)',
+  'MultiEdit(~/.claude.json)',
+  'NotebookEdit(~/.claude.json)',
+  'Edit(~/.config/tagconn/**)',
+  'Write(~/.config/tagconn/**)',
+  'MultiEdit(~/.config/tagconn/**)',
+  'NotebookEdit(~/.config/tagconn/**)',
+  'Edit(~/.bashrc)',
+  'Write(~/.bashrc)',
+  'Edit(~/.zshrc)',
+  'Write(~/.zshrc)',
+  'Edit(~/.profile)',
+  'Write(~/.profile)',
+  'Edit(~/.bash_profile)',
+  'Write(~/.bash_profile)',
   ...WEBFETCH_LOOPBACK_DENY_RULES,
 ] as const;
 
-/** Default host-side maximum quest allowlist. No Bash (needs a local entry + systemd scope), no bare WebFetch. */
+/**
+ * Default host-side maximum quest allowlist. No Bash (needs a local entry + systemd scope AND an
+ * explicit allow rule, SC5 H2), no bare WebFetch, no Agent/Task (SC5 H2: quests never get delegation
+ * tools, regardless of what a caller requests — see QUEST_NEVER_TOOLS). Edit/Write/MultiEdit/
+ * NotebookEdit default to a project-scoped rule (SC5 M1): a bare `Edit` allow rule is not confined to
+ * the quest's own project directory, so the default only ever allows editing paths under the cwd.
+ */
 export const DEFAULT_QUEST_MAX_ALLOWED_TOOLS = [
   'Read',
   'Grep',
   'Glob',
-  'Edit',
-  'MultiEdit',
-  'Write',
-  'NotebookEdit',
+  'Edit(./**)',
+  'MultiEdit(./**)',
+  'Write(./**)',
+  'NotebookEdit(./**)',
   'WebSearch',
   'TodoWrite',
-  'Agent',
-  'Task',
 ] as const;
+
+/**
+ * Tool NAMES a quest's exact `--tools` list may never include, however permissive `runner.json`
+ * `questToolPolicy.maxAllowedTools` is (SC5 H2). Agent/Task can spawn further subagents/delegate work
+ * outside this policy's view; quests are a single bounded turn.
+ */
+export const QUEST_NEVER_TOOLS = ['Agent', 'Task'] as const;
+
+/**
+ * Read-only tools a quest's exact `--tools` list always includes, on top of whatever the caller's
+ * accepted allow rules add (SC5 H2). Kept minimal and read-only/bookkeeping only: the exact --tools
+ * list is the structural control (like the Receptionist's), not just --allowedTools/--disallowedTools,
+ * which also merge with the user's own ~/.claude/settings.json permissions since quests always run
+ * with `--setting-sources=user`.
+ */
+export const QUEST_TOOLS_BASELINE = ['Read', 'Grep', 'Glob', 'TodoWrite'] as const;
 
 /**
  * `<configDir>/runner.json` (mode 0600; the runner refuses group/world-readable files), written by
@@ -655,6 +711,14 @@ export const RunnerLocalConfigSchema = z.object({
   maxStderrLines: z.number().int().min(0).max(10_000).default(200),
   /** SIGTERM -> SIGKILL grace when stopping a process group / scope. */
   killGraceMs: z.number().int().min(100).max(60_000).default(5_000),
+  /**
+   * SC5 M2: a per-run timer the RUNNER itself enforces, independent of the server (which may have
+   * crashed or be unreachable). `cmd.timeoutSec` is capped at this value; a run past it is stopped
+   * with reason 'timeout' the same way an explicit run:stop would.
+   */
+  questTimeoutCapSec: z.number().int().min(10).max(86_400).default(3_600),
+  /** Same as `questTimeoutCapSec`, but for Receptionist turns (a much shorter single-turn budget). */
+  receptionistTimeoutCapSec: z.number().int().min(10).max(3_600).default(300),
   /** Events and bytes kept per active run while disconnected, replayed on reconnect (oldest dropped + notice). */
   offlineBufferEvents: z.number().int().min(0).max(100_000).default(2_000),
   offlineBufferBytes: z

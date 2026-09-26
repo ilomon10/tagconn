@@ -31,12 +31,15 @@ export function detectMergedUsr(root = ''): MergedUsrDetection {
 
 /**
  * Best-effort guess at the transcript directory name Claude Code derives from an absolute cwd
- * (observed: '/' -> '-', e.g. "/home/user/project" -> "-home-user-project"). The runner verifies this
- * once at probe time against a real probe turn's transcript path and falls back to `none` (no bwrap)
- * on a mismatch, per §4.3.
+ * (observed: every non-alphanumeric character -> '-', e.g. "/home/user/my_project 2" ->
+ * "-home-user-my-project-2"). SC5 L10: the CLI sanitizes ALL non-alphanumeric characters this way,
+ * not just '/' and '.' — an earlier version of this function only replaced those two, so a cwd
+ * containing '_' or a space produced the wrong key. The runner verifies this once at probe time
+ * against a real probe turn's transcript path and falls back to `none` (no bwrap) on a mismatch, per
+ * §4.3, so a remaining mismatch (a future CLI version) fails closed rather than binding the wrong dir.
  */
 export function guessTranscriptKey(cwd: string): string {
-  return cwd.replace(/[/.]/g, '-');
+  return cwd.replace(/[^A-Za-z0-9]/g, '-');
 }
 
 export interface BwrapPaths {

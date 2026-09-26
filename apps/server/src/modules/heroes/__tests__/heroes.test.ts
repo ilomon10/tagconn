@@ -342,4 +342,23 @@ describe('heroes module (M8 8i)', () => {
     expect(deleted.ok).toBe(true);
     expect(await removeEvent).toBe(created.data!.id);
   });
+
+  it('SC5 INFO: heroes:list is public over the socket, matching GET /api/heroes (both read-only, admin-gate should agree)', async () => {
+    app = await buildTestApp();
+    await app.inject({ method: 'POST', url: '/api/hooks', payload: hook({ hook_event_name: 'SessionStart', cwd: CWD }) });
+    const pid = await projectId(app);
+
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('no address');
+    const anon: ClientSocket = connect(`http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`, { transports: ['websocket'], forceNew: true });
+    socket = anon;
+    await new Promise<void>((resolve, reject) => {
+      anon.on('connect', () => resolve());
+      anon.on('connect_error', reject);
+    });
+
+    const list = await new Promise<{ ok: boolean; data?: Hero[] }>((resolve) => anon.emit('heroes:list', { projectId: pid }, resolve));
+    expect(list.ok).toBe(true); // never denied/timed-out by the admin-guard's per-packet check
+  });
 });

@@ -3,8 +3,9 @@
 // `allowedProjectDirs` only, by realpath, never through a symlink, and never overwrites without
 // explicit consent.
 
-import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { join, sep } from 'node:path';
 import { AttributionProfileSchema, type AttributionWriteCommand, type AttributionWriteResult } from '@tagconn/shared';
 import { isWithinAllowedDirs } from './trust.js';
@@ -32,8 +33,6 @@ export function writeAttributionProfile(cmd: AttributionWriteCommand, allowedPro
 
   const dirPath = join(realDir, '.tagconn');
   const filePath = join(dirPath, 'office.json');
-  if (isSymlink(dirPath)) throw new AttributionWriteError('.tagconn is a symlink');
-  if (isSymlink(filePath)) throw new AttributionWriteError('.tagconn/office.json is a symlink');
 
   // Re-validate: the content this call carries is untrusted the moment it crosses a process boundary.
   let parsedJson: unknown;
@@ -50,9 +49,30 @@ export function writeAttributionProfile(cmd: AttributionWriteCommand, allowedPro
     return { written: false, existed: true, relativePath: '.tagconn/office.json' };
   }
 
+  // SC5 M3: mkdir FIRST, then lstat-verify right before writing (closes the check-then-create race a
+  // "check isSymlink, then mkdir" ordering left open: an attacker could plant a symlink at dirPath in
+  // that window). mkdirSync(recursive) silently no-ops if dirPath already exists as a symlink to a
+  // directory (it follows symlinks to stat), so the lstat directly afterward — which does NOT follow
+  // symlinks — is what actually catches that case.
   mkdirSync(dirPath, { recursive: true });
-  const tmp = join(dirPath, `.office.json.${process.pid}.tmp`);
-  writeFileSync(tmp, cmd.content, { mode: 0o644 });
+  const dirStat = lstatSync(dirPath);
+  if (!dirStat.isDirectory()) throw new AttributionWriteError('.tagconn is not a real directory (symlink?)');
+  if (typeof process.getuid === 'function' && dirStat.uid !== process.getuid()) {
+    throw new AttributionWriteError('.tagconn is not owned by the running user');
+  }
+  if (isSymlink(filePath)) throw new AttributionWriteError('.tagconn/office.json is a symlink');
+
+  // Random tmp name (not the guessable pid-based one) opened with 'wx' (O_CREAT|O_EXCL): fails if
+  // anything, including a pre-planted symlink, already sits at that exact path, instead of writing
+  // through it. `rename()` never follows a symlink at the DESTINATION either way, but the write to the
+  // tmp file itself is the step that mattered.
+  const tmp = join(dirPath, `.office.json.${randomBytes(8).toString('hex')}.tmp`);
+  const fd = openSync(tmp, 'wx', 0o644);
+  try {
+    writeSync(fd, cmd.content);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(tmp, filePath);
   return { written: true, existed, relativePath: '.tagconn/office.json' };
 }

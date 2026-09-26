@@ -11,7 +11,7 @@ const baseCtx: PolicyCheckContext = {
 
 describe('checkQuestPolicy', () => {
   it('accepts a mode within the cap and tools within the local allowlist', () => {
-    const r = checkQuestPolicy({ mode: 'acceptEdits', allowedTools: ['Read', 'Edit'], availablePermissionModes: ['acceptEdits'] }, baseCtx);
+    const r = checkQuestPolicy({ mode: 'acceptEdits', allowedTools: ['Read', 'Edit(./**)'], availablePermissionModes: ['acceptEdits'] }, baseCtx);
     expect(r.ok).toBe(true);
   });
 
@@ -77,6 +77,54 @@ describe('checkQuestPolicy', () => {
       expect(r.disallowedTools).toContain('Read(secret/**)');
       expect(r.disallowedTools).toContain('Edit(.git/**)');
       expect(r.disallowedTools.filter((t) => t === 'Edit(.claude/**)')).toHaveLength(1); // deduped
+    }
+  });
+
+  // --------------------------------------------------------------------------------------- H2: --tools
+
+  it('the exact --tools list always includes the read-only baseline, even with no allowed tools', () => {
+    const r = checkQuestPolicy({ mode: 'acceptEdits', allowedTools: [], availablePermissionModes: ['acceptEdits'] }, baseCtx);
+    expect(r.ok).toBe(true);
+    if (r.ok) for (const t of ['Read', 'Grep', 'Glob', 'TodoWrite']) expect(r.toolSet).toContain(t);
+  });
+
+  it('the --tools list adds the tool NAME (not the full rule) of every accepted allow rule', () => {
+    const r = checkQuestPolicy({ mode: 'acceptEdits', allowedTools: ['Edit(./**)', 'WebSearch'], availablePermissionModes: ['acceptEdits'] }, baseCtx);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.toolSet).toContain('Edit');
+      expect(r.toolSet).not.toContain('Edit(./**)');
+      expect(r.toolSet).toContain('WebSearch');
+    }
+  });
+
+  it('never puts Agent or Task in --tools, even if maxAllowedTools somehow lists them', () => {
+    const ctx = { ...baseCtx, questToolPolicy: { ...baseCtx.questToolPolicy, maxAllowedTools: [...baseCtx.questToolPolicy.maxAllowedTools, 'Agent', 'Task'] } };
+    const r = checkQuestPolicy({ mode: 'acceptEdits', allowedTools: ['Agent', 'Task'], availablePermissionModes: ['acceptEdits'] }, ctx);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.toolSet).not.toContain('Agent');
+      expect(r.toolSet).not.toContain('Task');
+    }
+  });
+
+  it('Bash is in --tools only with an explicit local Bash allow rule (never merely from the mode)', () => {
+    const ctx = { ...baseCtx, maxPermissionMode: 'auto' as const, systemdScopeAvailable: true };
+    const r = checkQuestPolicy({ mode: 'auto', allowedTools: ['Read'], availablePermissionModes: ['auto'] }, ctx);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.toolSet).not.toContain('Bash');
+      expect(r.disallowedTools).toContain('Bash'); // deny beats allow: hard-denied without the rule
+    }
+  });
+
+  it('Bash IS in --tools, and not hard-denied, once a local Bash rule is granted with a scope', () => {
+    const ctx = { ...baseCtx, questToolPolicy: { ...baseCtx.questToolPolicy, maxAllowedTools: [...baseCtx.questToolPolicy.maxAllowedTools, 'Bash(git *:*)'] }, systemdScopeAvailable: true };
+    const r = checkQuestPolicy({ mode: 'acceptEdits', allowedTools: ['Bash(git *:*)'], availablePermissionModes: ['acceptEdits'] }, ctx);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.toolSet).toContain('Bash');
+      expect(r.disallowedTools).not.toContain('Bash');
     }
   });
 });

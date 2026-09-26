@@ -269,6 +269,61 @@ function checkSettingsHooks(claudeDir: string): void {
   }
 }
 
+/**
+ * H2 (SC5): quests and the Receptionist spawn `claude` with `--setting-sources=user`, so the user's
+ * own `~/.claude/settings.json` (or `--claude-dir`) `permissions.allow` rules and
+ * `additionalDirectories` ARE inherited by every quest, on top of whatever the runner's own
+ * `questToolPolicy`/`--tools` restriction allows (defense in depth, not a substitute for it — see
+ * docs/design/runner-and-helpdesk.md §0/§2.1). `permissions.defaultMode` is reported too, for the same
+ * settings.json, even though quests/the Receptionist always pass an explicit `--permission-mode` that
+ * overrides it for THEM (apps/runner/src/argv.ts) — it still governs any other, non-tagconn `claude`
+ * invocation that reads this same file. Always a warning (never a hard failure): these can be
+ * legitimate, deliberate user choices; this check exists so the user can make that choice knowingly.
+ */
+function checkUserPermissions(claudeDir: string): void {
+  const path = join(claudeDir, 'settings.json');
+  if (!existsSync(path)) return; // already reported (missing/invalid) by checkSettingsHooks
+  let settings: { permissions?: { allow?: unknown; additionalDirectories?: unknown; defaultMode?: unknown } };
+  try {
+    settings = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return; // already reported as invalid JSON by checkSettingsHooks
+  }
+  const permissions = settings.permissions ?? {};
+
+  const allow = Array.isArray(permissions.allow) ? permissions.allow.filter((r): r is string => typeof r === 'string') : [];
+  const risky = allow.filter((r) => r === 'Bash' || r.startsWith('Bash(') || r === 'WebFetch' || r.startsWith('WebFetch(') || r.startsWith('mcp__'));
+  if (risky.length > 0) {
+    warn(
+      `settings.json permissions.allow has ${risky.length} Bash/WebFetch/mcp__ rule(s): ${risky.join(', ')}`,
+      'Quests run with --setting-sources=user, so these allow rules ARE inherited by every quest, ' +
+        'in addition to whatever the runner itself allows (runner.json questToolPolicy/--tools is ' +
+        'defense in depth on top of this, not a substitute for it). Narrow or remove these rules if ' +
+        'you do not want quests to have them too.',
+    );
+  }
+
+  const additionalDirectories = Array.isArray(permissions.additionalDirectories)
+    ? permissions.additionalDirectories.filter((d): d is string => typeof d === 'string')
+    : [];
+  if (additionalDirectories.length > 0) {
+    warn(
+      `settings.json permissions.additionalDirectories is set: ${additionalDirectories.join(', ')}`,
+      'Quests inherit this too (--setting-sources=user): they can reach these directories in addition ' +
+        'to the project dir, regardless of runner.json allowedProjectDirs.',
+    );
+  }
+
+  if (typeof permissions.defaultMode === 'string' && permissions.defaultMode !== 'plan') {
+    warn(
+      `settings.json permissions.defaultMode is "${permissions.defaultMode}"`,
+      'Quests and the Receptionist always pass an explicit --permission-mode, which overrides this ' +
+        'for them — but any OTHER claude invocation that reads this same settings.json inherits it. ' +
+        '"plan" is the safest default.',
+    );
+  }
+}
+
 export interface HealthProbe {
   reachable: boolean;
   status?: number;
@@ -502,6 +557,7 @@ export async function main(): Promise<void> {
   checkCurlConf(args.configDir);
   checkHookScript(args.configDir);
   checkSettingsHooks(args.claudeDir);
+  checkUserPermissions(args.claudeDir);
   const direct = await checkServerHealth(args.url);
   checkDockerCompose();
   checkEnvFileMode();

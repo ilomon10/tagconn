@@ -178,6 +178,9 @@ export const PUBLIC_SOCKET_EVENTS = [
   'layouts:list',
   'layouts:get',
   'auth:status',
+  // SC5 INFO: GET /api/heroes is public (REST access level `public`); the socket equivalent must
+  // match it, not silently be stricter (living-office heroes are read-only observer data either way).
+  'heroes:list',
 ] as const;
 
 /** Cosmetic writes: gated only when protect = "all-writes" (the default). */

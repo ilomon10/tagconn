@@ -13,6 +13,7 @@ const cfg = {
   allowBypassPermissions: false,
   questToolPolicy: { maxAllowedTools: [...DEFAULT_QUEST_MAX_ALLOWED_TOOLS], alwaysDeny: [...DEFAULT_QUEST_ALWAYS_DENY] },
   processIsolation: 'auto' as const,
+  stateDir: '/state',
 };
 const caps = { permissionModes: ['acceptEdits', 'plan'], systemdScope: false };
 
@@ -36,7 +37,7 @@ describe('validateQuestStart', () => {
     const { project, claudeJson } = setup();
     const ledger: Ledger = new Map();
     const result = validateQuestStart(
-      { projectDir: project, permissionMode: 'acceptEdits', allowedTools: ['Read', 'Edit'], disallowedTools: [] },
+      { projectDir: project, permissionMode: 'acceptEdits', allowedTools: ['Read', 'Edit(./**)'], disallowedTools: [] },
       { ...cfg, allowedProjectDirs: [project] },
       caps,
       claudeJson,
@@ -111,7 +112,7 @@ describe('validateQuestStart', () => {
     const fp = computeFingerprint({ tools: ['Read'], mode: 'acceptEdits', restricted: false, safeMode: false });
     recordSession(ledger, 'sess-1', fp, 100);
     const result = validateQuestStart(
-      { projectDir: project, permissionMode: 'acceptEdits', allowedTools: ['Read', 'Edit'], disallowedTools: [], resumeSessionId: 'sess-1' },
+      { projectDir: project, permissionMode: 'acceptEdits', allowedTools: ['Read', 'Edit(./**)'], disallowedTools: [], resumeSessionId: 'sess-1' },
       { ...cfg, allowedProjectDirs: [project] },
       caps,
       claudeJson,

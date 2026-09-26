@@ -2,7 +2,7 @@
 // prompt (default "no"), the attribution.conf/runner.json files, the
 // --allow-dir broad-dir warning, and their unit-level helpers. Always
 // sandboxed (see CLAUDE.md) - never the real ~/.config/tagconn.
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -227,6 +227,50 @@ describe('installer: runner.json + OFFICE_RUNNER__TOKEN', () => {
     mkdirSync(projectDir, { recursive: true });
     const res = runInstall(sandbox, ['--attribution', 'no', '--allow-dir', projectDir]);
     expect(res.stdout).toMatch(/open each allowed project once interactively in claude/);
+  });
+
+  it('L7: a reinstall MERGES into an existing runner.json, keeping fields the installer does not manage itself', () => {
+    runInstall(sandbox, ['--attribution', 'no']);
+    const runnerPath = join(sandbox.configDir, 'runner.json');
+    const before = JSON.parse(readFileSync(runnerPath, 'utf8'));
+    // Simulate fields the runner itself (or a hand-edit) added, that scripts/install.ts never sets.
+    const withExtras = {
+      ...before,
+      maxPermissionMode: 'bypassPermissions',
+      allowBypassPermissions: true,
+      questToolPolicy: { maxAllowedTools: ['Read', 'Bash(npm test)'], alwaysDeny: ['Write(.env)'] },
+      processIsolation: 'systemd-scope',
+      trustOverrideDirs: ['/tmp/trusted'],
+      passEnv: ['MY_CUSTOM_VAR'],
+      maxConcurrent: 7,
+    };
+    writeFileSync(runnerPath, JSON.stringify(withExtras, null, 2) + '\n', { mode: 0o600 });
+
+    const res = runInstall(sandbox, ['--attribution', 'no']);
+    expect(res.status, res.stderr).toBe(0);
+    const after = JSON.parse(readFileSync(runnerPath, 'utf8'));
+    expect(after.maxPermissionMode).toBe('bypassPermissions');
+    expect(after.allowBypassPermissions).toBe(true);
+    expect(after.questToolPolicy).toEqual(withExtras.questToolPolicy);
+    expect(after.processIsolation).toBe('systemd-scope');
+    expect(after.trustOverrideDirs).toEqual(['/tmp/trusted']);
+    expect(after.passEnv).toEqual(['MY_CUSTOM_VAR']);
+    expect(after.maxConcurrent).toBe(7);
+    // The fields the installer DOES manage are still updated/kept as before.
+    expect(after.token).toBe(before.token);
+    expect(after.allowedProjectDirs).toEqual(before.allowedProjectDirs);
+  });
+
+  it('L7: a reinstall without --url keeps a previously customized url; passing --url overwrites it', () => {
+    runInstall(sandbox, ['--attribution', 'no', '--url', 'http://127.0.0.1:9999']);
+    const runnerPath = join(sandbox.configDir, 'runner.json');
+    expect(JSON.parse(readFileSync(runnerPath, 'utf8')).url).toBe('http://127.0.0.1:9999');
+
+    runInstall(sandbox, ['--attribution', 'no']); // no --url this time
+    expect(JSON.parse(readFileSync(runnerPath, 'utf8')).url).toBe('http://127.0.0.1:9999'); // unchanged
+
+    runInstall(sandbox, ['--attribution', 'no', '--url', 'http://127.0.0.1:5555']);
+    expect(JSON.parse(readFileSync(runnerPath, 'utf8')).url).toBe('http://127.0.0.1:5555'); // explicit wins
   });
 
   it('uninstall removes runner.json', () => {

@@ -4,6 +4,8 @@
 import {
   isBareWebFetchRule,
   permissionModeWithin,
+  QUEST_NEVER_TOOLS,
+  QUEST_TOOLS_BASELINE,
   type RunEndReason,
   type RunPermissionMode,
   type RunnerLocalConfig,
@@ -29,10 +31,18 @@ export interface PolicyCheckContext {
 
 export interface PolicyCheckOk {
   ok: true;
-  /** disallowedTools to pass on the wire = the caller's own denies + the local alwaysDeny backstop. */
+  /** disallowedTools to pass on the wire = the caller's own denies + the local alwaysDeny backstop
+   *  (+ a hard 'Bash' deny whenever no Bash allow rule was granted: deny beats allow, SC5 H2). */
   disallowedTools: string[];
   /** True if this run needs a systemd scope wrapper (Bash allow rule, or mode auto/bypassPermissions). */
   requiresScope: boolean;
+  /**
+   * SC5 H2: the exact `--tools` list for this quest, so it is bounded to a known set instead of the
+   * CLI's full built-in tool set (which also includes internal delegation/scheduling tools) merged
+   * with whatever the user's OWN `~/.claude/settings.json` allows (quests always run with
+   * `--setting-sources=user`, so user-level allow rules still apply on top of --allowedTools).
+   */
+  toolSet: string[];
 }
 
 export interface PolicyCheckFail {
@@ -48,6 +58,24 @@ function isBashRule(rule: string): boolean {
 /** A rule the CLI would use to grant Bash / auto-approve execution without an explicit allow rule. */
 function modeCanExecuteFreely(mode: RunPermissionMode): boolean {
   return mode === 'auto' || mode === 'bypassPermissions';
+}
+
+/** The tool NAME a rule string grants, e.g. "Edit(./**)" -> "Edit", "Bash(git *:*)" -> "Bash". */
+function toolNameFromRule(rule: string): string {
+  const i = rule.indexOf('(');
+  return i === -1 ? rule : rule.slice(0, i);
+}
+
+/**
+ * SC5 H2: the quest's exact `--tools` list. Always the read-only baseline plus the tool NAME of every
+ * accepted allow rule; Bash is included only when an explicit local Bash rule was granted (never just
+ * because the mode can execute freely); Agent/Task never appear, however `maxAllowedTools` is configured.
+ */
+function buildQuestToolSet(allowedTools: readonly string[]): string[] {
+  const names = new Set<string>(QUEST_TOOLS_BASELINE);
+  for (const rule of allowedTools) names.add(toolNameFromRule(rule));
+  for (const never of QUEST_NEVER_TOOLS) names.delete(never);
+  return [...names];
 }
 
 /**
@@ -77,8 +105,14 @@ export function checkQuestPolicy(
   const requiresScope = hasBashRule || modeCanExecuteFreely(input.mode);
   if (requiresScope && !ctx.systemdScopeAvailable) return { ok: false, failure: 'isolation_unavailable' };
 
-  const disallowedTools = dedupe([...callerDisallowedTools, ...ctx.questToolPolicy.alwaysDeny]);
-  return { ok: true, disallowedTools, requiresScope };
+  // H2: deny beats allow. Bash is only ever exposed in --tools with an explicit local allow rule
+  // (never merely because the mode can execute freely); otherwise it is hard-denied here too, so a
+  // permissive user-level ~/.claude/settings.json Bash rule (still in effect: --setting-sources=user)
+  // cannot grant it back.
+  const disallowedTools = dedupe([...callerDisallowedTools, ...ctx.questToolPolicy.alwaysDeny, ...(hasBashRule ? [] : ['Bash'])]);
+  const toolSet = buildQuestToolSet(input.allowedTools);
+  if (hasBashRule) toolSet.push('Bash');
+  return { ok: true, disallowedTools, requiresScope, toolSet: dedupe(toolSet) };
 }
 
 function dedupe(items: readonly string[]): string[] {

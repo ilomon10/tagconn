@@ -15,7 +15,7 @@ import {
   type RunStartCommand,
   type RunStopCommand,
 } from '@tagconn/shared';
-import { buildQuestArgv, buildReceptionistArgv } from './argv.js';
+import { assertRequiredCapabilities, assertRestrictedCapability, buildQuestArgv, buildReceptionistArgv } from './argv.js';
 import { detectMergedUsr, guessTranscriptKey, type BwrapPaths } from './bwrap.js';
 import { checkOutputCap, createOutputCapState, type RunOutputCap, type RunOutputCapState } from './buffer.js';
 import type { ResolvedRunnerConfig } from './config.js';
@@ -40,6 +40,9 @@ export interface ActiveRun {
    *  outcome (stopped_by_user / timeout / runner_shutdown) rather than a generic exit/failed. The
    *  server also sends reason 'timeout' when its own event caps trip; that's a normal stop too. */
   stopRequested?: { status: 'stopped' | 'timeout'; reason: RunEndReason };
+  /** SC5 M2: the runner's OWN timeout, enforced even if the server never sends run:stop (e.g. it
+   *  crashed or the runner is offline). Cleared on any normal end. */
+  timeoutTimer?: NodeJS.Timeout;
 }
 
 export interface RunManagerDeps {
@@ -51,6 +54,9 @@ export interface RunManagerDeps {
   /** Realpath of the resolved claude binary (capabilities.resolveClaudePath), for bwrap's --ro-bind. */
   claudeBinRealPath?: string;
   logger: Logger;
+  /** H2: startup audit of the user's OWN ~/.claude/settings.json (userSettingsAudit.ts). Advisory for
+   *  logging; `bareWebFetchAllowed` additionally drops WebFetch from a Receptionist turn. */
+  userSettingsRisk?: { bareWebFetchAllowed: boolean };
   /** Forwards one event to the server (or the offline queue when disconnected). */
   emitEvent(env: RunEventEnvelope): void;
   emitEnd(end: RunEnd): void;
@@ -84,6 +90,7 @@ export function createRunManager(deps: RunManagerDeps) {
     const run = active.get(runId);
     if (!run || run.ended) return;
     run.ended = true;
+    if (run.timeoutTimer) clearTimeout(run.timeoutTimer);
     deps.emitEnd({ runId, ...partial });
     active.delete(runId);
   }
@@ -109,6 +116,14 @@ export function createRunManager(deps: RunManagerDeps) {
   }
 
   function startQuest(cmd: RunStartCommand): { pid: number | null } {
+    // L1: refuse outright, per run, if the probe never confirmed the flags every spawn relies on
+    // (settingSources, strictMcpConfig, permissionPrompts, and now `tools` for the H2 --tools list).
+    // main.ts also logs this once at startup, but that log alone never stopped a spawn (dead code).
+    try {
+      assertRequiredCapabilities(deps.caps);
+    } catch (err) {
+      return rejectStart(cmd.runId, 'capability_missing', err instanceof Error ? err.message : String(err));
+    }
     if (cmd.projectDir === null) return rejectStart(cmd.runId, 'dir_not_allowed', 'quests require a project directory');
     const check = validateQuestStart(
       {
@@ -133,6 +148,7 @@ export function createRunManager(deps: RunManagerDeps) {
       resumeSessionId: cmd.resumeSessionId,
       allowedTools: cmd.allowedTools,
       disallowedTools: check.disallowedTools,
+      toolSet: check.toolSet,
       questMcpConfigPath: deps.cfg.questMcpConfigPath,
       partialMessages: cmd.partialMessages,
       stdinPrompt: deps.caps.stdinPrompt,
@@ -149,10 +165,21 @@ export function createRunManager(deps: RunManagerDeps) {
       deps.caps.stdinPrompt ? cmd.prompt : undefined,
     );
 
-    return spawnAndTrack(cmd, spec, check.fingerprint, undefined);
+    // M2: capped at the runner's own local limit, enforced regardless of the server.
+    const timeoutSec = Math.min(cmd.timeoutSec, deps.cfg.questTimeoutCapSec);
+    return spawnAndTrack(cmd, spec, check.fingerprint, undefined, timeoutSec);
   }
 
   function startReceptionist(cmd: RunStartCommand, opts: { scope: ReceptionistScope; addDirDocs?: string }): { pid: number | null } {
+    // L1: same per-run capability gate as quests, plus --restricted specifically for project scope
+    // (design §2.1: "restricted for project-scope Receptionist runs").
+    try {
+      assertRequiredCapabilities(deps.caps);
+      if (opts.scope === 'project') assertRestrictedCapability(deps.caps);
+    } catch (err) {
+      return rejectStart(cmd.runId, 'capability_missing', err instanceof Error ? err.message : String(err));
+    }
+
     // Defense in depth (T6): project scope only inside allowedProjectDirs, even though the server
     // (S3, receptionist module) already restricts this to a registered project.
     let projectRealDir: string | undefined;
@@ -163,7 +190,21 @@ export function createRunManager(deps: RunManagerDeps) {
       projectRealDir = dirCheck.realDir;
     }
 
-    const sandboxAvailable = deps.caps.bwrap && !!deps.claudeBinRealPath;
+    // L2: honor runner.json receptionistSandbox. 'bwrap' = required (refuse rather than silently
+    // fall back to an unsandboxed turn); 'none' = never sandbox even if bwrap is available; 'auto' =
+    // the previous behavior (use it when the probe confirmed it).
+    const bwrapProbed = deps.caps.bwrap && !!deps.claudeBinRealPath;
+    const sandboxSetting = deps.cfg.receptionistSandbox;
+    if (sandboxSetting === 'bwrap' && !bwrapProbed) {
+      return rejectStart(cmd.runId, 'isolation_unavailable', 'receptionistSandbox=bwrap but bubblewrap is unavailable');
+    }
+    const sandboxAvailable = sandboxSetting === 'none' ? false : bwrapProbed;
+
+    // H2: a bare WebFetch allow rule in the user's OWN ~/.claude/settings.json would also apply here
+    // (--setting-sources=user), potentially widening the general-scope WebFetch variant past its
+    // domain allowlist. Drop WebFetch for this turn rather than trust the CLI to still confine it.
+    const webFetchDomains = deps.userSettingsRisk?.bareWebFetchAllowed ? [] : cmd.webFetchDomains;
+
     const built = buildReceptionistArgv({
       claudePath: deps.cfg.claudePath,
       scope: opts.scope,
@@ -171,7 +212,7 @@ export function createRunManager(deps: RunManagerDeps) {
       maxTurns: cmd.maxTurns ?? 30,
       resumeSessionId: cmd.resumeSessionId,
       webSearch: cmd.allowWebSearch,
-      webFetchDomains: cmd.webFetchDomains,
+      webFetchDomains,
       sandboxed: sandboxAvailable,
       safeMode: cmd.safeMode,
       addDirDocs: opts.addDirDocs,
@@ -179,7 +220,7 @@ export function createRunManager(deps: RunManagerDeps) {
       stdinPrompt: deps.caps.stdinPrompt,
       prompt: cmd.prompt,
     });
-    const fingerprint = computeFingerprint({ tools: built.toolSet, mode: 'plan', restricted: built.restricted, safeMode: cmd.safeMode, webFetchDomains: cmd.webFetchDomains });
+    const fingerprint = computeFingerprint({ tools: built.toolSet, mode: 'plan', restricted: built.restricted, safeMode: cmd.safeMode, webFetchDomains });
     if (cmd.resumeSessionId && !canResume(deps.ledger, cmd.resumeSessionId, fingerprint)) {
       return rejectStart(cmd.runId, 'resume_not_allowed');
     }
@@ -212,10 +253,18 @@ export function createRunManager(deps: RunManagerDeps) {
     }
     const spec = receptionistSpawnSpec(built.argv, cwd, env, sandboxed, bwrapPaths, sandboxed ? detectMergedUsr() : undefined, deps.caps.stdinPrompt ? cmd.prompt : undefined);
 
-    return spawnAndTrack(cmd, spec, fingerprint, built.toolSet);
+    // M2: receptionist turns get the (shorter) receptionist timeout cap.
+    const timeoutSec = Math.min(cmd.timeoutSec, deps.cfg.receptionistTimeoutCapSec);
+    return spawnAndTrack(cmd, spec, fingerprint, built.toolSet, timeoutSec);
   }
 
-  function spawnAndTrack(cmd: RunStartCommand, spec: Parameters<typeof spawnRun>[0], fingerprint: string, receptionistToolSet: readonly string[] | undefined): { pid: number | null } {
+  function spawnAndTrack(
+    cmd: RunStartCommand,
+    spec: Parameters<typeof spawnRun>[0],
+    fingerprint: string,
+    receptionistToolSet: readonly string[] | undefined,
+    timeoutSec: number,
+  ): { pid: number | null } {
     const cap: RunOutputCap = { maxEvents: cmd.limits.maxEvents, maxEventBytes: cmd.limits.maxEventBytes };
     const record: ActiveRun = {
       runId: cmd.runId,
@@ -228,6 +277,10 @@ export function createRunManager(deps: RunManagerDeps) {
     };
     active.set(cmd.runId, record);
 
+    // M2: the runner's own timeout, independent of the server (which may be unreachable). Reuses the
+    // exact stop() path a server-sent run:stop{reason:'timeout'} would take.
+    record.timeoutTimer = setTimeout(() => stop({ runId: cmd.runId, reason: 'timeout' }), timeoutSec * 1000);
+
     const handle = spawnRun(
       spec,
       { previewChars: cmd.limits.previewChars, maxStderrLines: deps.cfg.maxStderrLines, maxLineBytes: deps.cfg.maxLineBytes },
@@ -235,7 +288,11 @@ export function createRunManager(deps: RunManagerDeps) {
       {
         onEvent: (event) => {
           if (receptionistToolSet) watchReceptionistEvent(cmd.runId, receptionistToolSet, event);
-          if (event.kind === 'init') {
+          // L6: watchReceptionistEvent may have just ended THIS run (policy_violation) on this very
+          // 'init' event (init.tools/mcpServers mismatch) — never record a resumable ledger session
+          // for a run that was killed for violating policy on arrival.
+          const rec = active.get(cmd.runId);
+          if (event.kind === 'init' && rec && !rec.ended) {
             recordSession(deps.ledger, event.sessionId, fingerprint, deps.cfg.sessionLedgerSize);
             saveLedger(deps.ledgerPath, deps.ledger);
           }

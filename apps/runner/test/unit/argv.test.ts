@@ -8,6 +8,7 @@ describe('buildQuestArgv', () => {
     mode: 'acceptEdits' as const,
     allowedTools: ['Read', 'Edit'],
     disallowedTools: ['Edit(.claude/**)', 'Write(.claude/**)'],
+    toolSet: ['Read', 'Grep', 'Glob', 'TodoWrite', 'Edit'],
     partialMessages: true,
     stdinPrompt: true,
     prompt: 'hello world',
@@ -23,9 +24,14 @@ describe('buildQuestArgv', () => {
     expect(buildQuestArgv(base)).toContain('--permission-prompts=none');
   });
 
+  it('always includes an exact --tools list (H2: bounds the built-in tool set, not just allow/deny)', () => {
+    const argv = buildQuestArgv(base);
+    expect(argv).toContain(`--tools=${base.toolSet.join(',')}`);
+  });
+
   it('uses --flag=value form for every value flag (never a separate argv token)', () => {
     const argv = buildQuestArgv({ ...base, maxTurns: 5, resumeSessionId: 'sess-1', questMcpConfigPath: '/mcp.json' });
-    for (const flag of ['--permission-mode', '--model', '--max-turns', '--resume', '--allowedTools', '--disallowedTools', '--mcp-config']) {
+    for (const flag of ['--permission-mode', '--model', '--max-turns', '--resume', '--tools', '--allowedTools', '--disallowedTools', '--mcp-config']) {
       const token = argv.find((a) => a.startsWith(flag));
       expect(token, `expected an argv token starting with ${flag}`).toMatch(new RegExp(`^${flag}=`));
     }

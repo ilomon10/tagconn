@@ -88,11 +88,21 @@ if (process.env.FAKE_CLAUDE_SPAWN_GRANDCHILD === '1') {
   }
 }
 
-const sessionId = flags.resume ?? process.env.FAKE_CLAUDE_SESSION_ID ?? `fake-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+const sessionIdFromPrompt = /__FAKE_SESSION_ID__:([A-Za-z0-9_-]+)/.exec(prompt)?.[1];
+const sessionId = flags.resume ?? sessionIdFromPrompt ?? process.env.FAKE_CLAUDE_SESSION_ID ?? `fake-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 const DEFAULT_TOOLS = ['Task', 'Bash', 'Glob', 'Grep', 'Read', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'TodoWrite', 'WebSearch', 'Agent', 'CronCreate', 'ScheduleWakeup', 'SendMessage', 'Workflow'];
 const tools = flags.tools ? flags.tools.split(',') : process.env.FAKE_CLAUDE_TOOLS ? process.env.FAKE_CLAUDE_TOOLS.split(',') : DEFAULT_TOOLS;
-const mcpServers = process.env.FAKE_CLAUDE_MCP_SERVERS ? process.env.FAKE_CLAUDE_MCP_SERVERS.split(',').filter(Boolean) : [];
+// A Receptionist run's env is always passEnv:[] (runManager.ts), so a test that needs to trigger the
+// L5 watchdog on a receptionist turn can't signal this fixture via FAKE_CLAUDE_MCP_SERVERS. The prompt
+// itself always reaches this fixture (stdin), regardless of passEnv, so it doubles as a fallback
+// signal: "__FAKE_MCP_SERVERS__:name1,name2" anywhere in the prompt.
+const mcpServersFromPrompt = /__FAKE_MCP_SERVERS__:([A-Za-z0-9,_-]+)/.exec(prompt)?.[1];
+const mcpServers = mcpServersFromPrompt
+  ? mcpServersFromPrompt.split(',').filter(Boolean)
+  : process.env.FAKE_CLAUDE_MCP_SERVERS
+    ? process.env.FAKE_CLAUDE_MCP_SERVERS.split(',').filter(Boolean)
+    : [];
 
 // --- transcript directory simulation (bwrap capability probe / key derivation) ------------------
 const transcriptMode = process.env.FAKE_CLAUDE_TRANSCRIPT_MODE ?? 'none';

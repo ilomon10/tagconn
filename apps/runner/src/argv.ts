@@ -23,11 +23,24 @@ import {
 
 export class CapabilityError extends Error {}
 
-/** V14 hard requirement: refuse to spawn ANYTHING without these two flags. */
-export function assertRequiredCapabilities(caps: Pick<RunnerCapabilities, 'settingSources' | 'strictMcpConfig' | 'permissionPrompts'>): void {
+/**
+ * V14 hard requirement: refuse to spawn ANYTHING without these flags (design §2.1: "settingSources
+ * and permissionPrompts for EVERY run"). `tools` is included too (SC5 L1/H2): the Receptionist has
+ * always required it (V1), and quests now also pass an exact `--tools` list (H2), so it is required
+ * universally. Previously this function existed but was never called (L1): main.ts only logged a
+ * warning and kept spawning anyway. It MUST be called from both startQuest and startReceptionist,
+ * per run, before building argv.
+ */
+export function assertRequiredCapabilities(caps: Pick<RunnerCapabilities, 'settingSources' | 'strictMcpConfig' | 'permissionPrompts' | 'tools'>): void {
   if (!caps.settingSources) throw new CapabilityError('capability_missing: --setting-sources not supported by this claude CLI');
   if (!caps.strictMcpConfig) throw new CapabilityError('capability_missing: --strict-mcp-config not supported by this claude CLI');
   if (!caps.permissionPrompts) throw new CapabilityError('capability_missing: --permission-prompts not supported by this claude CLI');
+  if (!caps.tools) throw new CapabilityError('capability_missing: --tools not supported by this claude CLI');
+}
+
+/** Additionally required for Receptionist PROJECT-scope turns only (design §2.1). */
+export function assertRestrictedCapability(caps: Pick<RunnerCapabilities, 'restricted'>): void {
+  if (!caps.restricted) throw new CapabilityError('capability_missing: --restricted not supported by this claude CLI');
 }
 
 export interface StdinOrFallback {
@@ -52,8 +65,15 @@ export interface QuestArgvInput extends StdinOrFallback {
   resumeSessionId?: string;
   /** Already validated against runner.json questToolPolicy (toolPolicy.ts). */
   allowedTools: readonly string[];
-  /** Caller's own denies + questToolPolicy.alwaysDeny, already merged. */
+  /** Caller's own denies + questToolPolicy.alwaysDeny (+ the hard Bash deny), already merged. */
   disallowedTools: readonly string[];
+  /**
+   * SC5 H2: the exact built-in tool set (toolPolicy.ts's checkQuestPolicy `toolSet`), passed as
+   * `--tools`. Structurally bounds what the CLI exposes at all, instead of relying only on
+   * --allowedTools/--disallowedTools, which merge with the user's own ~/.claude/settings.json
+   * permissions (quests always run with --setting-sources=user).
+   */
+  toolSet: readonly string[];
   questMcpConfigPath?: string;
   partialMessages: boolean;
 }
@@ -66,6 +86,7 @@ export function buildQuestArgv(input: QuestArgvInput): string[] {
   argv.push(`--permission-mode=${input.mode}`, '--permission-prompts=none', `--model=${input.model}`);
   if (input.maxTurns !== undefined) argv.push(`--max-turns=${input.maxTurns}`);
   if (input.resumeSessionId) argv.push(`--resume=${input.resumeSessionId}`);
+  argv.push(`--tools=${input.toolSet.join(',')}`);
   if (input.allowedTools.length > 0) argv.push(`--allowedTools=${input.allowedTools.join(',')}`);
   argv.push(`--disallowedTools=${input.disallowedTools.join(',')}`);
   appendPromptFallback(argv, input);

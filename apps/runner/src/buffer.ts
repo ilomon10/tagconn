@@ -2,10 +2,17 @@
 // that ends the run with `output_cap`, and an offline replay queue (while the /runner socket is
 // disconnected) bounded the same way, dropping the OLDEST entry and reporting one notice.
 
-import type { RunEventEnvelope } from '@tagconn/shared';
+import type { RunEnd, RunEventEnvelope } from '@tagconn/shared';
 
-function envelopeBytes(e: RunEventEnvelope): number {
-  return Buffer.byteLength(JSON.stringify(e), 'utf8');
+/**
+ * SC5 H1 (L5): a run that ends while the socket is disconnected/unverified must not be silently lost
+ * (main.ts previously only queued `run:event`, dropping `run:end` on the floor when offline — the
+ * server would never learn the run finished). Both kinds share one FIFO so replay order is preserved.
+ */
+export type OfflineItem = { type: 'event'; envelope: RunEventEnvelope } | { type: 'end'; end: RunEnd };
+
+function itemBytes(item: OfflineItem): number {
+  return Buffer.byteLength(JSON.stringify(item), 'utf8');
 }
 
 export interface RunOutputCap {
@@ -37,18 +44,20 @@ export function checkOutputCap(state: RunOutputCapState, cap: RunOutputCap, even
 }
 
 export interface OfflineQueue {
-  push(envelope: RunEventEnvelope): { dropped: boolean };
-  drain(): RunEventEnvelope[];
+  pushEvent(envelope: RunEventEnvelope): { dropped: boolean };
+  pushEnd(end: RunEnd): { dropped: boolean };
+  drain(): OfflineItem[];
   size: () => number;
 }
 
 /**
- * FIFO queue of events accumulated while the runner<->server socket is disconnected, replayed on
- * reconnect. Bounded by BOTH event count and total byte size; past either cap, the OLDEST entry is
- * evicted to make room (never the newest — a replay should keep the most recent context).
+ * FIFO queue of events (and run-ends) accumulated while the runner<->server socket is disconnected or
+ * unverified, replayed on the next verified connection. Bounded by BOTH item count and total byte
+ * size; past either cap, the OLDEST entry is evicted to make room (never the newest — a replay should
+ * keep the most recent context).
  */
 export function createOfflineQueue(maxEvents: number, maxBytes: number): OfflineQueue {
-  const items: { envelope: RunEventEnvelope; bytes: number }[] = [];
+  const items: { item: OfflineItem; bytes: number }[] = [];
   let totalBytes = 0;
 
   function evictUntilWithinCaps(): boolean {
@@ -62,20 +71,25 @@ export function createOfflineQueue(maxEvents: number, maxBytes: number): Offline
     return evicted;
   }
 
-  function push(envelope: RunEventEnvelope): { dropped: boolean } {
-    const bytes = envelopeBytes(envelope);
-    items.push({ envelope, bytes });
+  function push(item: OfflineItem): { dropped: boolean } {
+    const bytes = itemBytes(item);
+    items.push({ item, bytes });
     totalBytes += bytes;
     const dropped = evictUntilWithinCaps();
     return { dropped };
   }
 
-  function drain(): RunEventEnvelope[] {
-    const out = items.map((i) => i.envelope);
+  function drain(): OfflineItem[] {
+    const out = items.map((i) => i.item);
     items.length = 0;
     totalBytes = 0;
     return out;
   }
 
-  return { push, drain, size: () => items.length };
+  return {
+    pushEvent: (envelope) => push({ type: 'event', envelope }),
+    pushEnd: (end) => push({ type: 'end', end }),
+    drain,
+    size: () => items.length,
+  };
 }

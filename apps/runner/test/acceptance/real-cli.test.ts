@@ -45,7 +45,17 @@ describe.skipIf(!REAL_CLI)('R1 acceptance (real claude CLI)', () => {
   }
 
   it('(a) --setting-sources=user and --strict-mcp-config are in EVERY argv; repo hooks/.mcp.json/env.ANTHROPIC_BASE_URL never take effect (V14)', () => {
-    const questArgv = buildQuestArgv({ claudePath: CLAUDE_PATH, model: 'sonnet', mode: 'plan', allowedTools: ['Read'], disallowedTools: [], partialMessages: true, stdinPrompt: true, prompt: 'hi' });
+    const questArgv = buildQuestArgv({
+      claudePath: CLAUDE_PATH,
+      model: 'sonnet',
+      mode: 'plan',
+      allowedTools: ['Read'],
+      disallowedTools: [],
+      toolSet: ['Read', 'Grep', 'Glob', 'TodoWrite'],
+      partialMessages: true,
+      stdinPrompt: true,
+      prompt: 'hi',
+    });
     expect(questArgv).toContain('--setting-sources=user');
     expect(questArgv).toContain('--strict-mcp-config');
 
@@ -200,6 +210,24 @@ describe.skipIf(!REAL_CLI)('R1 acceptance (real claude CLI)', () => {
     // consistent with the design as long as the runner's fail-closed default (validate.ts canResume) stays.
     expect(init2 === undefined || Array.isArray(init2.tools)).toBe(true);
   });
+
+  // SC5 H2/M1: NOT IMPLEMENTED here, on purpose - see the reasoning below rather than a flaky attempt.
+  //
+  // H2's acceptance test: with a user settings.json allowing Bash(echo:*), a quest whose maxAllowedTools
+  // has no Bash rule must never actually run `echo` (bare --tools/--disallowedTools=['Bash',...] from
+  // checkQuestPolicy is the structural control; this would be the end-to-end proof against the real CLI).
+  // M1's acceptance test: the same shape, proving a quest cannot Edit/Write outside its project dir even
+  // via an absolute path into $HOME, and cannot touch ~/.claude/**, ~/.claude.json or shell rc files.
+  //
+  // Both need a REAL "user" settings source that isn't this repo's actual ~/.claude/settings.json or
+  // ~/.claude.json (per §2.1, --setting-sources=user always reads the real $HOME - there is no
+  // "--settings <file>" override). The CLI's --help does not document a `CLAUDE_CONFIG_DIR`-style
+  // override either (checked against 2.1.283 while writing this). The only way found to isolate this
+  // is a temp $HOME with `~/.claude/.credentials.json` copied over (auth) and a purpose-built
+  // `~/.claude/settings.json`, which risks corrupting a developer's/CI runner's real credentials file
+  // and consumes real subscription quota to prove a negative (feasible, per the finding's own
+  // fallback text, "else document"). Left for QA to build in a genuinely disposable sandbox (a
+  // container or a throwaway user account), not attempted here against a real developer machine.
 });
 
 function safeList(dir: string): string[] {

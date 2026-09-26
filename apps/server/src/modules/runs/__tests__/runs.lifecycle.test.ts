@@ -284,6 +284,115 @@ describe('runs: queue, dispatch, ownership, redaction, reconcile, retention (M8 
     expect(stops).toEqual([{ runId: run.id, reason: 'timeout' }]);
   });
 
+  describe('M2: server-side run timeout watchdog (SC5) — the runner never enforces cmd.timeoutSec itself', () => {
+    // Like reconcileLostRunner above, these fire the watchdog/grace handlers directly instead of
+    // waiting out real timers: this file's runner connections are real socket.io transports, and
+    // faking global timers would also stall the transport's own (ping/ack) timers.
+    it('onRunTimedOut sends run:stop {reason:"timeout"}; if run:end never follows, onRunTimeoutGraceExpired ends the run itself', async () => {
+      app = await buildTestApp({ settings: { runner: { token: TOKEN, enabled: true, allowedProjectDirs: ['/tmp'] } } });
+      await withProject(app);
+      runner = await connectVerifiedRunner(app, { token: TOKEN });
+      const stops: { runId: string; reason: string }[] = [];
+      runner.onStop((cmd) => stops.push(cmd));
+      runner.onStart((cmd, ack) => ack({ ok: true, data: { pid: 1 } }));
+      const run = app.diContainer.cradle.runsService.startQuest({ projectId: PROJECT.id, prompt: 'timeout test' }, 'tester');
+      await waitFor(() => expect(app!.diContainer.cradle.runsService.get(run.id)?.status).toBe('running'));
+
+      app.diContainer.cradle.runsService.onRunTimedOut(run.id);
+      // `sendStop` is a real socket emit to the fake-runner client, so it needs a moment to arrive.
+      await waitFor(() => expect(stops).toEqual([{ runId: run.id, reason: 'timeout' }]));
+      expect(app.diContainer.cradle.runsService.get(run.id)?.status).toBe('running'); // still inside the grace
+
+      app.diContainer.cradle.runsService.onRunTimeoutGraceExpired(run.id);
+      expect(app.diContainer.cradle.runsService.get(run.id)?.status).toBe('timeout');
+      expect(app.diContainer.cradle.runsService.get(run.id)?.endReason).toBe('timeout');
+    });
+
+    it('a run:end that arrives during the grace period wins: the grace expiry is a no-op once the run is already terminal', async () => {
+      app = await buildTestApp({ settings: { runner: { token: TOKEN, enabled: true, allowedProjectDirs: ['/tmp'] } } });
+      await withProject(app);
+      runner = await connectVerifiedRunner(app, { token: TOKEN });
+      runner.onStart((cmd, ack) => ack({ ok: true, data: { pid: 1 } }));
+      const run = app.diContainer.cradle.runsService.startQuest({ projectId: PROJECT.id, prompt: 'grace-race test' }, 'tester');
+      await waitFor(() => expect(app!.diContainer.cradle.runsService.get(run.id)?.status).toBe('running'));
+
+      app.diContainer.cradle.runsService.onRunTimedOut(run.id);
+      runner.sendEnd({ runId: run.id, status: 'succeeded', reason: 'exit', exitCode: 0, signal: null });
+      await waitFor(() => expect(app!.diContainer.cradle.runsService.get(run.id)?.status).toBe('succeeded'));
+
+      app.diContainer.cradle.runsService.onRunTimeoutGraceExpired(run.id);
+      expect(app.diContainer.cradle.runsService.get(run.id)?.status).toBe('succeeded'); // not overwritten to 'timeout'
+    });
+
+    it('does nothing once the run has already ended before the watchdog fires', async () => {
+      app = await buildTestApp({ settings: { runner: { token: TOKEN, enabled: true, allowedProjectDirs: ['/tmp'] } } });
+      await withProject(app);
+      runner = await connectVerifiedRunner(app, { token: TOKEN });
+      const stops: unknown[] = [];
+      runner.onStop((cmd) => stops.push(cmd));
+      runner.onStart((cmd, ack) => ack({ ok: true, data: { pid: 1 } }));
+      const run = app.diContainer.cradle.runsService.startQuest({ projectId: PROJECT.id, prompt: 'already-ended test' }, 'tester');
+      await waitFor(() => expect(app!.diContainer.cradle.runsService.get(run.id)?.status).toBe('running'));
+      runner.sendEnd({ runId: run.id, status: 'succeeded', reason: 'exit', exitCode: 0, signal: null });
+      await waitFor(() => expect(app!.diContainer.cradle.runsService.get(run.id)?.status).toBe('succeeded'));
+
+      app.diContainer.cradle.runsService.onRunTimedOut(run.id);
+      expect(stops).toEqual([]);
+      expect(app.diContainer.cradle.runsService.get(run.id)?.status).toBe('succeeded');
+    });
+
+    it('a receptionist turn is watched too, using settings.receptionist.timeoutSec (not runner.runTimeoutSec)', async () => {
+      app = await buildTestApp({ settings: { runner: { token: TOKEN, enabled: true, allowedProjectDirs: ['/tmp'] } } });
+      runner = await connectVerifiedRunner(app, { token: TOKEN });
+      const stops: { runId: string; reason: string }[] = [];
+      runner.onStop((cmd) => stops.push(cmd));
+      runner.onStart((cmd, ack) => {
+        expect(cmd.kind).toBe('receptionist');
+        expect(cmd.timeoutSec).toBe(app!.diContainer.cradle.settings.get().receptionist.timeoutSec);
+        ack({ ok: true, data: { pid: 1 } });
+      });
+      const run = app.diContainer.cradle.runsService.startReceptionistTurn({ conversationId: 'c1', projectId: null, prompt: 'hi', createdBy: 'tester' });
+      await waitFor(() => expect(app!.diContainer.cradle.runsService.get(run.id)?.status).toBe('running'));
+
+      app.diContainer.cradle.runsService.onRunTimedOut(run.id);
+      await waitFor(() => expect(stops).toEqual([{ runId: run.id, reason: 'timeout' }]));
+      app.diContainer.cradle.runsService.onRunTimeoutGraceExpired(run.id);
+      expect(app.diContainer.cradle.runsService.get(run.id)?.status).toBe('timeout');
+    });
+
+    it('seed() reschedules the watchdog for a run left dispatched/running across a restart, using the elapsed time already spent', async () => {
+      app = await buildTestApp({ settings: { runner: { token: TOKEN, enabled: true, allowedProjectDirs: ['/tmp'], runTimeoutSec: 10 } } });
+      await withProject(app);
+      runner = await connectVerifiedRunner(app, { token: TOKEN });
+      const stops: { runId: string; reason: string }[] = [];
+      runner.onStop((cmd) => stops.push(cmd));
+
+      const now = Date.now();
+      const runId = '22222222-2222-2222-2222-222222222222';
+      // Simulate a run left `running` by a previous server process, already 60s past its 10s runTimeoutSec.
+      app.diContainer.cradle.runsRepository.insert({
+        id: runId,
+        kind: 'quest',
+        projectId: PROJECT.id,
+        threadId: runId,
+        status: 'running',
+        prompt: 'seeded',
+        permissionMode: 'acceptEdits',
+        model: 'sonnet',
+        createdBy: 'tester',
+        createdAt: now - 60_000,
+        startedAt: now - 60_000,
+        runnerId: runner.runnerId,
+        eventCount: 0,
+        truncated: false,
+      });
+
+      app.diContainer.cradle.runsService.seed(); // simulates a restart picking this run back up
+      // Remaining time is clamped to 0 (already expired): the rescheduled watchdog fires right away.
+      await waitFor(() => expect(stops).toEqual([{ runId, reason: 'timeout' }]));
+    });
+  });
+
   it('lost-runner reconcile: a run left running/dispatched by a disconnected runner becomes `lost` after the grace check', async () => {
     app = await buildTestApp({ settings: { runner: { token: TOKEN, enabled: true, allowedProjectDirs: ['/tmp'], lostGraceSec: 5 } } });
     await withProject(app);

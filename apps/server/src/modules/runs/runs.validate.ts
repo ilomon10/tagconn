@@ -61,3 +61,15 @@ export function buildQuestAllowedTools(runner: Settings['runner']): string[] {
 export function buildQuestDisallowedTools(runner: Settings['runner']): string[] {
   return [...new Set([...runner.disallowedTools, ...WEBFETCH_LOOPBACK_DENY_RULES])];
 }
+
+/**
+ * L3 (SC5): the quest-level deny list plus `settings.receptionist.extraDenyReadGlobs`, formatted as
+ * `Read(<glob>)` tool rules — the same shape the built-in `RECEPTIONIST_DENY_READ_GLOBS` use (see
+ * `apps/runner/src/argv.ts`). `RunStartCommand` has no dedicated field for this: the runner already
+ * folds the whole `disallowedTools` array into its own `extraDisallowedTools` for a receptionist turn
+ * (`apps/runner/src/runManager.ts`: `extraDisallowedTools: cmd.disallowedTools`), so forwarding it here
+ * is enough — no shared-contract change needed.
+ */
+export function buildReceptionistDisallowedTools(runner: Settings['runner'], receptionist: Settings['receptionist']): string[] {
+  return [...new Set([...buildQuestDisallowedTools(runner), ...receptionist.extraDenyReadGlobs.map((g) => `Read(${g})`)])];
+}

@@ -7,6 +7,7 @@ import {
   assertPromptWithinLimit,
   buildQuestAllowedTools,
   buildQuestDisallowedTools,
+  buildReceptionistDisallowedTools,
   resolvePermissionMode,
 } from '../runs.validate.js';
 
@@ -30,6 +31,24 @@ function runnerCfg(overrides: Partial<Settings['runner']> = {}): Settings['runne
     partialMessages: true,
     runRetentionDays: 30,
     lostGraceSec: 30,
+    ...overrides,
+  };
+}
+
+function receptionistCfg(overrides: Partial<Settings['receptionist']> = {}): Settings['receptionist'] {
+  return {
+    enabled: true,
+    model: 'sonnet',
+    webSearch: true,
+    webFetch: 'never',
+    webFetchAllowDomains: [],
+    extraDenyReadGlobs: [],
+    allowTagconnDocs: true,
+    projectSafeMode: false,
+    timeoutSec: 300,
+    maxTurns: 30,
+    maxConversations: 50,
+    maxMessagesPerConversation: 200,
     ...overrides,
   };
 }
@@ -66,6 +85,21 @@ describe('runs.validate (pure, unit-tested independently of settings schema)', (
     expect(disallowed).toContain('Bash');
     expect(disallowed).toContain('WebFetch(domain:localhost)');
     expect(disallowed.filter((t) => t === 'WebFetch(domain:127.0.0.1)')).toHaveLength(1);
+  });
+
+  it('L3: buildReceptionistDisallowedTools forwards settings.receptionist.extraDenyReadGlobs as Read(<glob>) rules, on top of the quest-level denies', () => {
+    const runner = runnerCfg({ disallowedTools: ['Bash'] });
+    const receptionist = receptionistCfg({ extraDenyReadGlobs: ['**/*.pem', '.ssh/**'] });
+    const disallowed = buildReceptionistDisallowedTools(runner, receptionist);
+    expect(disallowed).toContain('Bash');
+    expect(disallowed).toContain('Read(**/*.pem)');
+    expect(disallowed).toContain('Read(.ssh/**)');
+  });
+
+  it('L3: an empty extraDenyReadGlobs adds nothing beyond the quest-level denies', () => {
+    const runner = runnerCfg({ disallowedTools: ['Bash'] });
+    const receptionist = receptionistCfg({ extraDenyReadGlobs: [] });
+    expect(buildReceptionistDisallowedTools(runner, receptionist)).toEqual(buildQuestDisallowedTools(runner));
   });
 
   describe('assertProjectDirAllowed (M4, §2.3/§2.7 server-side dir check)', () => {

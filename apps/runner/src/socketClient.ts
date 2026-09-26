@@ -17,7 +17,11 @@ function adapt(socket: Socket): SocketLike {
     on: (event, handler) => {
       socket.on(event, handler as (...args: unknown[]) => void);
     },
+    off: (event, handler) => {
+      socket.off(event, handler as (...args: unknown[]) => void);
+    },
     onAny: (handler) => socket.onAny(handler),
+    offAny: (handler) => socket.offAny(handler),
     emitWithAck: <T,>(event: string, payload?: unknown) =>
       new Promise<T>((resolve, reject) => {
         socket.timeout(10_000).emit(event, payload, (err: unknown, res: AckEnvelope<T>) => {
@@ -38,18 +42,37 @@ export interface ConnectOptions {
   url: string;
   token: string;
   runnerId: string;
-  onSocket(socket: Socket): void;
+  /**
+   * Called every time a (re)connection completes the mutual HMAC handshake (H1: this is NOT "once
+   * per process" — it fires again after every reconnect). The caller should re-send `runner:hello`
+   * and drain the offline queue here; it must NOT re-register 'run:start'/'run:stop'/
+   * 'attribution:write' listeners on `connection.socket` (do that exactly once, gated by
+   * `connection.isVerified()`; see wireSocket.ts).
+   */
+  onVerified(): void;
+}
+
+export interface RunnerConnection {
+  socket: Socket;
+  /**
+   * True only between a successful handshake and the next 'disconnect' (H1). socket.io-client REUSES
+   * the same Socket across reconnects and dispatches `onAny` listeners and then ALWAYS the normal
+   * per-event listeners for the same packet — so a command handler registered once on this socket
+   * (wireSocket.ts) MUST check this flag itself before acting; it cannot rely on the handshake having
+   * disconnected an impersonating peer in time.
+   */
+  isVerified(): boolean;
 }
 
 /**
- * Connects to `<url><RUNNER_NAMESPACE>`, runs the mutual HMAC handshake, and calls `onSocket` with the
- * live, verified socket.io Socket once (and only once) it is safe to send `runner:hello` and start
- * accepting `run:start`. Reconnects are socket.io's own responsibility; each (re)connection attempt
- * gets a FRESH Nr (the `auth` callback form re-runs before every attempt, per socket.io-client), and
- * each `connect` event repeats the whole handshake against that attempt's nonce.
+ * Connects to `<url><RUNNER_NAMESPACE>` and runs the mutual HMAC handshake on every (re)connection.
+ * Reconnects are socket.io's own responsibility; each (re)connection attempt gets a FRESH Nr (the
+ * `auth` callback form re-runs before every attempt, per socket.io-client), and each `connect` event
+ * repeats the whole handshake against that attempt's nonce.
  */
-export function connectRunner(opts: ConnectOptions): Socket {
+export function connectRunner(opts: ConnectOptions): RunnerConnection {
   let currentNr = '';
+  let verified = false;
   const socket = io(opts.url + RUNNER_NAMESPACE, {
     auth: (cb: (data: RunnerHandshakeAuth) => void) => {
       currentNr = randomNonce();
@@ -64,10 +87,24 @@ export function connectRunner(opts: ConnectOptions): Socket {
   socket.on('connect', () => {
     const nr = currentNr;
     void performHandshake(adapt(socket), opts.token, nr).then((result) => {
-      if (result.verified) opts.onSocket(socket);
+      if (result.verified) {
+        verified = true;
+        opts.onVerified();
+      }
       // else: performHandshake already disconnected; socket.io will retry with a fresh nonce.
     });
   });
 
-  return socket;
+  // H1 (L5): the instant the transport drops, this connection is no longer verified — command
+  // handlers must stop acting immediately, before any reconnect (to a possibly different peer) can
+  // complete a fresh handshake. Also drop anything socket.io-client itself still has queued to flush
+  // automatically on the NEXT connect (before our own re-verification), e.g. an emit that raced the
+  // disconnect: sendBuffer is otherwise flushed by socket.io-client on reconnect regardless of app-level
+  // verification state.
+  socket.on('disconnect', () => {
+    verified = false;
+    socket.sendBuffer.length = 0;
+  });
+
+  return { socket, isVerified: () => verified };
 }

@@ -8,6 +8,11 @@ describe('guessTranscriptKey', () => {
   it('replaces path separators and dots with dashes (observed Claude Code convention)', () => {
     expect(guessTranscriptKey('/home/ilomon/Projects/tagconn')).toBe('-home-ilomon-Projects-tagconn');
   });
+
+  it('L10: sanitizes EVERY non-alphanumeric character, not just "/" and "."', () => {
+    expect(guessTranscriptKey('/home/user/my_project')).toBe('-home-user-my-project');
+    expect(guessTranscriptKey('/home/user/a project (2)')).toBe('-home-user-a-project--2-');
+  });
 });
 
 describe('detectMergedUsr', () => {

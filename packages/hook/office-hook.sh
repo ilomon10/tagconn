@@ -96,7 +96,12 @@ fi
 # Attribution (best-effort, background only; never delays or fails the hook)
 # --------------------------------------------------------------------------
 # Only ever considered on SessionStart, and only when the user hasn't turned
-# it off for this run (TAGCONN_ATTRIBUTION=off, set by the runner on quests).
+# it off for this run (TAGCONN_ATTRIBUTION=off, set by the runner on Receptionist
+# turns — see apps/runner/src/env.ts/runManager.ts. NOT set on quests: this
+# check is belt-and-suspenders there anyway, since the Receptionist already
+# skips this whole hook via TAGCONN_RUN_KIND=receptionist above. SC5 INFO: if
+# quests should also skip attribution README/import work, that's a product
+# decision for the PM, not something this comment can fix on its own.)
 #
 # Perf (SC4 M1): a PostToolUse (or any) body can be megabytes (tool output),
 # and running `sed` over the whole thing on EVERY event was measured at ~1.2s

@@ -30,14 +30,14 @@ import {
 } from '@tagconn/shared';
 import { Server as SocketIOServer, type Namespace, type Socket as ServerSocket } from 'socket.io';
 import type { Socket as ClientSocket } from 'socket.io-client';
-import { afterEach, describe, expect, it } from 'vitest';
-import { createOfflineQueue } from '../../src/buffer.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createOfflineQueue, type OfflineQueue } from '../../src/buffer.js';
 import { expectedServerProof, runnerProof, verifyProof } from '../../src/hmac.js';
 import { loadLedger } from '../../src/ledger.js';
 import { createLogger } from '../../src/logger.js';
 import { createRunManager, type RunManagerDeps } from '../../src/runManager.js';
-import { connectRunner } from '../../src/socketClient.js';
-import { wireRunnerSocket } from '../../src/wireSocket.js';
+import { connectRunner, type RunnerConnection } from '../../src/socketClient.js';
+import { announceVerified, wireRunnerSocket } from '../../src/wireSocket.js';
 import { FAKE_CLAUDE_BIN_PATH, mkSandbox, rmSandbox } from '../helpers.js';
 
 type AckEnvelope<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -171,10 +171,13 @@ function startFakeServer(token: string, killRunIds: string[] = []): Promise<Fake
 
 const TOKEN = 'e'.repeat(32);
 
-/** Real `emitEvent`/`emitEnd` (forwarded on the live client socket once connected), mirroring what
- * main.ts does with `currentSocket?.emit(...)`. Recording is done server-side via FakeServer instead
- * of locally, since the point is to prove the events actually cross the wire. */
-function makeRunManagerDeps(stateDir: string, getSocket: () => ClientSocket | undefined, passEnv: string[] = []): RunManagerDeps {
+/**
+ * Real `emitEvent`/`emitEnd`, mirroring main.ts's H1/L5 routing EXACTLY: only ever emit straight onto
+ * the live socket when THIS process itself verified it and it is still connected; otherwise queue
+ * (never silently drop). Recording is done server-side via FakeServer instead of locally, since the
+ * point is to prove the events actually cross the wire (or get replayed after a reconnect).
+ */
+function makeRunManagerDeps(stateDir: string, getConnection: () => RunnerConnection, offlineQueue: OfflineQueue, passEnv: string[] = []): RunManagerDeps {
   return {
     cfg: {
       configPath: join(stateDir, 'runner.json'),
@@ -200,6 +203,8 @@ function makeRunManagerDeps(stateDir: string, getSocket: () => ClientSocket | un
       offlineBufferEvents: 100,
       offlineBufferBytes: 1_000_000,
       sessionLedgerSize: 100,
+      questTimeoutCapSec: 3_600,
+      receptionistTimeoutCapSec: 300,
     },
     caps: {
       stdinPrompt: true,
@@ -219,8 +224,16 @@ function makeRunManagerDeps(stateDir: string, getSocket: () => ClientSocket | un
     ledgerPath: join(stateDir, 'session-ledger.json'),
     claudeJsonPath: join(stateDir, '.claude.json'),
     logger: createLogger('error'),
-    emitEvent: (env) => getSocket()?.emit('run:event', env),
-    emitEnd: (end) => getSocket()?.emit('run:end', end),
+    emitEvent: (env) => {
+      const c = getConnection();
+      if (c.isVerified() && c.socket.connected) c.socket.emit('run:event', env);
+      else offlineQueue.pushEvent(env);
+    },
+    emitEnd: (end) => {
+      const c = getConnection();
+      if (c.isVerified() && c.socket.connected) c.socket.emit('run:end', end);
+      else offlineQueue.pushEnd(end);
+    },
   };
 }
 
@@ -246,33 +259,27 @@ function baseQuestCmd(projectDir: string, overrides: Partial<RunStartCommand> = 
   };
 }
 
-/** Wires up connectRunner() + wireRunnerSocket() against `server`, with `deps.emitEvent/emitEnd`
- * routed through the live socket once verified (see makeRunManagerDeps's `getSocket`). */
+/**
+ * Wires up connectRunner() + wireRunnerSocket() against `server`, exactly the way main.ts does (H1):
+ * wireRunnerSocket is called ONCE, immediately, gated on `connection.isVerified()`; announceVerified
+ * (runner:hello + offline replay) runs again on every successful (re)verification.
+ */
 function connectAndWire(server: FakeServer, stateDir: string, passEnv: string[] = []) {
-  let liveSocket: ClientSocket | undefined;
-  const deps = makeRunManagerDeps(stateDir, () => liveSocket, passEnv);
+  const offlineQueue = createOfflineQueue(100, 1_000_000);
+  const deps = makeRunManagerDeps(stateDir, () => connection, offlineQueue, passEnv);
   const runManager = createRunManager(deps);
   const runnerId = deps.cfg.runnerId!;
+  const wireDeps = { runManager, offlineQueue, cfg: deps.cfg, hello: fakeHello(runnerId), logger: deps.logger };
 
-  const socket = connectRunner({
+  const connection: RunnerConnection = connectRunner({
     url: server.url,
     token: TOKEN,
     runnerId,
-    onSocket: (sock) => {
-      wireRunnerSocket(sock, {
-        runManager,
-        offlineQueue: createOfflineQueue(100, 1_000_000),
-        cfg: deps.cfg,
-        hello: fakeHello(runnerId),
-        logger: deps.logger,
-        setCurrentSocket: (s) => {
-          liveSocket = s;
-        },
-      });
-    },
+    onVerified: () => announceVerified(connection.socket, wireDeps),
   });
+  wireRunnerSocket(connection.socket, { ...wireDeps, isVerified: connection.isVerified });
 
-  return { socket, runManager, deps, runnerId };
+  return { socket: connection.socket, connection, runManager, deps, runnerId, offlineQueue };
 }
 
 describe('runner <-> fake /runner server protocol', () => {
@@ -402,6 +409,89 @@ describe('runner <-> fake /runner server protocol', () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(stoppedIds).toEqual([runId]);
     socket.disconnect();
+  });
+
+  // ---------------------------------------------------------------------------------------- H1 (SC5)
+
+  it('H1 regression: reconnecting to the SAME server does not duplicate command handlers (one run:start -> exactly one spawn)', async () => {
+    server = await startFakeServer(TOKEN);
+    const stateDir = mkSandbox();
+    sandboxes.push(stateDir);
+    const { socket, runManager } = connectAndWire(server, stateDir);
+
+    const firstServerSocket = await server.waitForSocket();
+    expect(server.helloSeen).toHaveLength(1);
+
+    let startCalls = 0;
+    const originalStartQuest = runManager.startQuest.bind(runManager);
+    (runManager as { startQuest: typeof runManager.startQuest }).startQuest = (cmd) => {
+      startCalls += 1;
+      return originalStartQuest(cmd);
+    };
+
+    // Force a transport-level disconnect (NOT socket.disconnect(true): socket.io-client treats an
+    // explicit server-side disconnect as deliberate and does not auto-reconnect from it). Closing the
+    // underlying engine.io connection instead simulates a real network blip, which DOES trigger
+    // socket.io-client's automatic reconnect — redoing the full mutual-HMAC handshake on the SAME
+    // client Socket object. This is exactly the situation H1 flagged: with the old code,
+    // wireRunnerSocket was called again from inside onSocket per connection, so 'run:start' would end
+    // up with two listeners on the one Socket.
+    firstServerSocket.conn.close();
+    for (let i = 0; i < 100 && server.helloSeen.length < 2; i++) await new Promise((r) => setTimeout(r, 50));
+    expect(server.helloSeen.length).toBeGreaterThanOrEqual(2);
+
+    const ack = await server.sendStart(baseQuestCmd(stateDir));
+    expect(ack.ok).toBe(true);
+    for (let i = 0; i < 50 && server.ends.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(startCalls).toBe(1); // NOT 2: the handler must not have been registered twice
+    socket.disconnect();
+  }, 15_000);
+
+  it('H1 regression: a server that never completes the handshake (sends run:start straight away) never triggers a spawn', async () => {
+    const stateDir = mkSandbox();
+    sandboxes.push(stateDir);
+    const httpServer: HttpServer = createServer();
+    const io = new SocketIOServer(httpServer, {});
+    const ns: Namespace = io.of(RUNNER_NAMESPACE);
+    ns.on('connection', (sock) => {
+      // Impersonator: never sends 'runner:challenge' at all, goes straight for the payoff.
+      sock.emit('run:start', baseQuestCmd(stateDir), () => {
+        /* the runner must never call this ack in the first place */
+      });
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', () => resolve()));
+    const { port } = httpServer.address() as AddressInfo;
+
+    const offlineQueue = createOfflineQueue(100, 1_000_000);
+    let connection!: RunnerConnection;
+    const deps = makeRunManagerDeps(stateDir, () => connection, offlineQueue);
+    const runManager = createRunManager(deps);
+    let startCalls = 0;
+    const originalStartQuest = runManager.startQuest.bind(runManager);
+    (runManager as { startQuest: typeof runManager.startQuest }).startQuest = (cmd) => {
+      startCalls += 1;
+      return originalStartQuest(cmd);
+    };
+    const wireDeps = { runManager, offlineQueue, cfg: deps.cfg, hello: fakeHello(deps.cfg.runnerId!), logger: deps.logger };
+
+    connection = connectRunner({
+      url: `http://127.0.0.1:${port}`,
+      token: TOKEN,
+      runnerId: deps.cfg.runnerId!,
+      onVerified: () => announceVerified(connection.socket, wireDeps),
+    });
+    connection.socket.io.reconnection(false);
+    wireRunnerSocket(connection.socket, { ...wireDeps, isVerified: connection.isVerified });
+
+    await new Promise((r) => setTimeout(r, 400));
+    expect(connection.isVerified()).toBe(false);
+    expect(startCalls).toBe(0);
+
+    connection.socket.disconnect();
+    await new Promise<void>((resolve) => {
+      io.close();
+      httpServer.close(() => resolve());
+    });
   });
 });
 

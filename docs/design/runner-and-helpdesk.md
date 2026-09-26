@@ -345,6 +345,16 @@ Residual risks:
   `ADMIN_SOCKET_EVENTS_WRITES` are gated under `all-writes`, and **every other event is always gated**. Every gated packet
   re-checks the session in the store. A 60 s sweep evicts expired or revoked sockets from `ADMIN_ROOM`. Admin broadcasts go
   only to `ADMIN_ROOM`.
+- **SC5 INFO: quest/Receptionist content is not admin-only, by design.** The dedicated Quests-board stream
+  (`run:upsert`/`run:event`/`runner:status`) IS admin-gated (broadcast only to `ADMIN_ROOM`, above) — but a quest is
+  still a real `claude` process with the office hook installed, so its own `UserPromptSubmit`/`PreToolUse`/`PostToolUse`
+  hook events flow through the same PUBLIC pipeline every interactive session already uses
+  (`modules/ingest` → `event.created` → `toProject(...).emit('event:new', ...)`, no admin gate, the same
+  `ingest.redactPatterns` redaction as any other session). So a quest's prompt and tool activity are visible, live, to
+  every viewer of that project's floor — admin or not — same as watching any hero work. This is accepted, not a gap:
+  tagconn is a local, single-tenant observer tool (see the top of this doc and `CLAUDE.md`); the whole premise is that
+  project activity is visible in the office. Anyone who should not see it should not have network access to the server
+  at all (T3-T5 in §5.1).
 - **Web.** localStorage token; a 401 or `auth:changed{admin:false}` clears it and opens the pair dialog.
 - **Headers.** nginx and Vite dev (`server.headers`) both send
   `Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,

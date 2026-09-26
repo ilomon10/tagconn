@@ -20,6 +20,8 @@ export interface QuestValidationOk {
   realDir: string;
   disallowedTools: string[];
   requiresScope: boolean;
+  /** SC5 H2: the exact `--tools` list to pass (see toolPolicy.ts's checkQuestPolicy). */
+  toolSet: string[];
   /** Fingerprint to record in the ledger once the run's session id is known (init event). */
   fingerprint: string;
 }
@@ -31,7 +33,12 @@ export interface QuestValidationFail {
 
 export function validateQuestStart(
   input: QuestValidationInput,
-  cfg: Pick<RunnerLocalConfig, 'allowedProjectDirs' | 'trustOverrideDirs' | 'maxPermissionMode' | 'allowBypassPermissions' | 'questToolPolicy' | 'processIsolation'>,
+  cfg: Pick<RunnerLocalConfig, 'allowedProjectDirs' | 'trustOverrideDirs' | 'maxPermissionMode' | 'allowBypassPermissions' | 'questToolPolicy' | 'processIsolation'> & {
+    /** SC5 M1: appended as an Edit/Write/MultiEdit/NotebookEdit deny for this exact absolute path,
+     *  since it cannot be a static DEFAULT_QUEST_ALWAYS_DENY entry (stateDir is host-configurable and
+     *  is not always under $HOME). */
+    stateDir: string;
+  },
   caps: Pick<RunnerCapabilities, 'permissionModes' | 'systemdScope'>,
   claudeJsonPath: string,
   ledger: Ledger,
@@ -66,5 +73,10 @@ export function validateQuestStart(
     return { ok: false, failure: 'resume_not_allowed' };
   }
 
-  return { ok: true, realDir, disallowedTools: policy.disallowedTools, requiresScope: policy.requiresScope, fingerprint };
+  // M1: the runner's own stateDir (ledger, per-run disposable files, receptionist docs copy) is never
+  // an editable quest target, even if it happens to fall under an allowed project dir.
+  const stateDirDeny = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((tool) => `${tool}(${cfg.stateDir}/**)`);
+  const disallowedTools = Array.from(new Set([...policy.disallowedTools, ...stateDirDeny]));
+
+  return { ok: true, realDir, disallowedTools, requiresScope: policy.requiresScope, toolSet: policy.toolSet, fingerprint };
 }

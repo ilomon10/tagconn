@@ -89,6 +89,10 @@ export interface Args {
   claudeDir: string;
   configDir: string;
   url: string;
+  /** L7: true only if `--url` was actually passed, so `ensureRunnerConfig` can tell "the default"
+   * from "the user explicitly asked for this" when deciding whether to overwrite an existing
+   * runner.json's url on a reinstall. */
+  urlExplicit: boolean;
   noAgents: boolean;
   noSkills: boolean;
   project?: string;
@@ -142,6 +146,7 @@ export function parseArgs(argv: string[]): Args {
     claudeDir: envClaudeDir ? resolve(envClaudeDir) : DEFAULT_CLAUDE_DIR,
     configDir: DEFAULT_CONFIG_DIR, // resolved below, once all flags are parsed
     url: 'http://127.0.0.1:4317',
+    urlExplicit: false,
     noAgents: false,
     noSkills: false,
     project: undefined,
@@ -168,6 +173,7 @@ export function parseArgs(argv: string[]): Args {
         break;
       case '--url':
         args.url = validateUrl(argv[++i] ?? args.url);
+        args.urlExplicit = true;
         break;
       case '--no-agents':
         args.noAgents = true;
@@ -714,13 +720,23 @@ export interface RunnerConfigResult {
  * only the fields the installer knows about are set here, the runner fills the rest
  * with its own defaults). Idempotent: keeps the existing token, and keeps the existing
  * allowedProjectDirs when no --allow-dir was passed this run.
+ *
+ * L7 (SC5): a reinstall MERGES into an existing runner.json instead of replacing it wholesale.
+ * Before this fix, re-running the installer silently dropped any field it doesn't itself manage —
+ * maxPermissionMode, questToolPolicy, processIsolation, trustOverrideDirs, passEnv, etc. — resetting
+ * them to the runner's built-in defaults (RunnerLocalConfigSchema) every time. Spreading `existing`
+ * first, then overriding only url/token/allowedProjectDirs, keeps whatever else is there (hand-edited,
+ * or written by a newer installer version this one doesn't know about). `url` is only overwritten when
+ * `--url` was actually passed this run (`urlExplicit`) — otherwise the existing file's url wins, same
+ * idempotence `token`/`allowedProjectDirs` already had.
  */
-function ensureRunnerConfig(configDir: string, url: string, allowDirsFlag: string[], dryRun: boolean): RunnerConfigResult {
+function ensureRunnerConfig(configDir: string, url: string, urlExplicit: boolean, allowDirsFlag: string[], dryRun: boolean): RunnerConfigResult {
   const path = join(configDir, 'runner.json');
-  let existing: { token?: unknown; allowedProjectDirs?: unknown } = {};
+  let existing: Record<string, unknown> = {};
   if (existsSync(path)) {
     try {
-      existing = JSON.parse(readFileSync(path, 'utf8'));
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed as Record<string, unknown>;
     } catch {
       existing = {};
     }
@@ -737,7 +753,8 @@ function ensureRunnerConfig(configDir: string, url: string, allowDirsFlag: strin
       : Array.isArray(existing.allowedProjectDirs)
         ? existing.allowedProjectDirs.filter((d): d is string => typeof d === 'string')
         : [];
-  const config = { url, token, allowedProjectDirs };
+  const resolvedUrl = urlExplicit ? url : typeof existing.url === 'string' ? existing.url : url;
+  const config = { ...existing, url: resolvedUrl, token, allowedProjectDirs };
   const text = JSON.stringify(config, null, 2) + '\n';
   if (dryRun) {
     log(`  [dry-run] would write ${path} (mode 600)`);
@@ -1166,7 +1183,7 @@ export async function main(): Promise<void> {
   }
 
   log('\n[runner]');
-  const runnerConfig = ensureRunnerConfig(args.configDir, args.url, args.allowDirs, args.dryRun);
+  const runnerConfig = ensureRunnerConfig(args.configDir, args.url, args.urlExplicit, args.allowDirs, args.dryRun);
   warnBroadAllowDirs(runnerConfig.allowedProjectDirs);
   ensureRunnerTokenEnv(args.envFile, runnerConfig.token, runnerConfig.allowedProjectDirs, args.dryRun);
 

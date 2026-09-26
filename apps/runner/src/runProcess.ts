@@ -8,7 +8,7 @@
 //  - plain (no wrapper): SIGTERM the process group, then SIGKILL after killGraceMs. Only quests that
 //    cannot execute commands are ever spawned this way (toolPolicy.ts already refused the rest).
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import type { RunEvent } from '@tagconn/shared';
 import { createLineSplitter, mapClaudeLine, stderrNotice } from './streamParser.js';
 
@@ -136,4 +136,40 @@ export function spawnRun(spec: SpawnSpec, limits: RunProcessLimits, killGraceMs:
 /** Deterministic transient scope unit name, so `stop()` can find it later without tracking state elsewhere. */
 export function questScopeUnitName(runId: string): string {
   return `tagconn-quest-${runId}`;
+}
+
+/** Injectable so the reap can be tested without a real systemd user session. */
+export type SystemctlSpawn = (args: string[]) => Pick<SpawnSyncReturns<string>, 'status' | 'stdout'>;
+
+const defaultSystemctlSpawn: SystemctlSpawn = (args) => spawnSync('systemctl', args, { encoding: 'utf8' });
+
+/**
+ * SC5 L9: a runner that crashed (not stopped cleanly via SIGINT/SIGTERM) can leave transient
+ * `tagconn-quest-*` scopes still running — the ledger tracks Claude session ids, not systemd unit
+ * names, so a fresh runner process has no in-memory record of them. Called once at startup, before
+ * wiring the socket, so a restart does not leave an orphaned quest process consuming the user's Claude
+ * subscription (and CPU/network) indefinitely. Returns the unit names it stopped (for logging); never
+ * throws (a missing/unusable `systemctl --user` — e.g. no systemd session — just means nothing to do).
+ */
+export function reapStaleQuestScopes(spawnSystemctl: SystemctlSpawn = defaultSystemctlSpawn): string[] {
+  let list: Pick<SpawnSyncReturns<string>, 'status' | 'stdout'>;
+  try {
+    list = spawnSystemctl(['--user', 'list-units', '--all', '--plain', '--no-legend', 'tagconn-quest-*.scope']);
+  } catch {
+    return [];
+  }
+  if (list.status !== 0 || !list.stdout) return [];
+
+  const stopped: string[] = [];
+  for (const line of list.stdout.split('\n')) {
+    const unit = line.trim().split(/\s+/)[0];
+    if (!unit || !unit.startsWith('tagconn-quest-') || !unit.endsWith('.scope')) continue;
+    try {
+      spawnSystemctl(['--user', 'stop', unit]);
+      stopped.push(unit);
+    } catch {
+      /* best effort: leave it, worst case it just keeps running */
+    }
+  }
+  return stopped;
 }
