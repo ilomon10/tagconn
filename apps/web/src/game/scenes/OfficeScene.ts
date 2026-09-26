@@ -38,6 +38,7 @@ import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets
 import { zoomCameraAboutPoint } from '../camera/zoom';
 import { isDragMove } from '../camera/drag';
 import { counterScale, labelVisible, layoutLabels, type LabelSubject } from '../labels';
+import { PostFxController } from '../postfx/PostFxController';
 
 /** M8 8e: how often the bubble/label layout (`game/labels`) is recomputed — a throttle, not every
  *  frame, since it's a many-subject greedy placement and labels don't need to react per-pixel. */
@@ -229,6 +230,8 @@ export class OfficeScene extends Phaser.Scene {
   private multiversePlan: MultiversePlan | null = null;
   private realmScopes = new Map<number, SeatScope>();
   private realmZoneSprites: RealmZoneSprite[] = [];
+  /** M8 8o: color grading/vignette/scanlines/bloom-light-layer, see `game/postfx/PostFxController`. */
+  private postFx!: PostFxController;
   private tooltip!: Phaser.GameObjects.Text;
   private characters = new Map<ActorKey, Character>();
   private night!: Phaser.GameObjects.Rectangle;
@@ -293,6 +296,10 @@ export class OfficeScene extends Phaser.Scene {
       .setDepth(200_000)
       .setVisible(false);
     this.cameras.main.setBackgroundColor('#15121e');
+    // M8 8o: grading/vignette/scanlines attach to the main camera and the light layer is created
+    // here, before the first `buildWorld` — its `renderVisuals()` already tries to seed the light
+    // layer (a no-op until `setOfficeState`'s first pass has settings to read).
+    this.postFx = new PostFxController(this);
     this.buildWorld(DEFAULT_LAYOUT, 'guild', null);
     this.night = this.add.rectangle(0, 0, this.worldW, this.worldH, 0x0b1030, 0).setOrigin(0).setDepth(90_000);
     this.setupCamera();
@@ -305,6 +312,7 @@ export class OfficeScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.themeTimer?.remove();
       window.removeEventListener('blur', this.endDragOnBlur);
+      this.postFx.destroy();
     });
     this.onReady?.(this);
   }
@@ -402,6 +410,13 @@ export class OfficeScene extends Phaser.Scene {
     }
 
     this.refreshAmbient();
+
+    // M8 8o: the light layer only needs the geometry/style this pass just (re)painted, plus
+    // whatever `office.shaders` currently says — `this.state` is still unset on the very first
+    // call (the `create()`-time `buildWorld`); `setOfficeState`'s own `applySettings` call below
+    // seeds the light layer for real once settings exist.
+    const shaders = this.state?.settings.office.shaders;
+    if (shaders) this.postFx.setMap(this.map, shaders, this.appliedStyle!, prefersReducedMotion());
   }
 
   /** (Re)runs `theme.animate()` — used on a full `renderVisuals()` pass and, live, whenever
@@ -762,6 +777,7 @@ export class OfficeScene extends Phaser.Scene {
     this.refreshStairsAvailability();
     if (prevZoom !== office.zoom) this.fitCamera();
     this.applyLighting();
+    this.postFx.applySettings(office.shaders, effectiveStyle);
 
     const instant = this.floorKey !== state.floorKey;
     if (instant) {
@@ -1123,6 +1139,7 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   update(time: number, delta: number) {
+    this.postFx.sampleFrame(delta);
     const speed = this.state?.settings.office.walkSpeed ?? 120;
     for (const [key, c] of this.characters) {
       c.update(time, delta, speed);
