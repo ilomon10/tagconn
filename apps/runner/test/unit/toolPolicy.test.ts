@@ -98,7 +98,8 @@ describe('checkQuestPolicy', () => {
   it('the exact --tools list always includes the read-only baseline, even with no allowed tools', () => {
     const r = checkQuestPolicy({ mode: 'acceptEdits', allowedTools: [], availablePermissionModes: ['acceptEdits'] }, baseCtx);
     expect(r.ok).toBe(true);
-    if (r.ok) for (const t of ['Read', 'Grep', 'Glob', 'TodoWrite']) expect(r.toolSet).toContain(t);
+    if (r.ok) for (const t of ['Read', 'Grep', 'Glob']) expect(r.toolSet).toContain(t);
+    if (r.ok) expect(r.toolSet).not.toContain('TodoWrite');
   });
 
   it('the --tools list adds the tool NAME (not the full rule) of every accepted allow rule', () => {

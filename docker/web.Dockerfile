@@ -6,8 +6,9 @@
 # Build from the repo root:
 #   docker build -f docker/web.Dockerfile -t tagconn-web .
 
-# Pinned: Node 24.21 crashes in better-sqlite3 statement finalizers (see docs/decisions.md #24).
-ARG NODE_IMAGE=node:24.16-bookworm-slim
+# Pinned to the latest verified 24.x: better-sqlite3 13.x (N-API rewrite) no
+# longer hits the assertion from docs/decisions.md #24 (see #26 for the retest).
+ARG NODE_IMAGE=node:24.21.0-bookworm-slim
 ARG PNPM_VERSION=11.20.0
 
 # ---------------------------------------------------------------------------
@@ -29,13 +30,17 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/hook/package.json packages/hook/package.json
 COPY packages/agent-templates/package.json packages/agent-templates/package.json
 COPY packages/tsconfig/package.json packages/tsconfig/package.json
-RUN pnpm install --frozen-lockfile
+# Only the web app and its workspace deps: the server's native modules (better-sqlite3) would need a
+# compiler toolchain this image doesn't have and the static build never uses them.
+RUN pnpm install --frozen-lockfile --filter "@tagconn/web..."
 
 # ---------------------------------------------------------------------------
 FROM deps AS build
 WORKDIR /app
 COPY . .
-RUN pnpm --filter @tagconn/web build
+# pnpm 11 would otherwise re-install the whole workspace (verify-deps-before-run) and pull the server's
+# native deps back in; the filtered install above already has everything the web build needs.
+RUN pnpm --config.verify-deps-before-run=false --filter @tagconn/web build
 
 # ---------------------------------------------------------------------------
 FROM nginx:alpine AS run

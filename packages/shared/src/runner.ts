@@ -744,9 +744,10 @@ export const QUEST_NEVER_TOOLS = ['Agent', 'Task'] as const;
  * accepted allow rules add (SC5 H2). Kept minimal and read-only/bookkeeping only: the exact --tools
  * list is the structural control (like the Receptionist's), not just --allowedTools/--disallowedTools,
  * which also merge with the user's own ~/.claude/settings.json permissions since quests always run
- * with `--setting-sources=user`.
+ * with `--setting-sources=user`. (No TodoWrite: claude 2.1.28x silently drops it from `--tools`, so
+ * listing it only made init.tools disagree with what we asked for.)
  */
-export const QUEST_TOOLS_BASELINE = ['Read', 'Grep', 'Glob', 'TodoWrite'] as const;
+export const QUEST_TOOLS_BASELINE = ['Read', 'Grep', 'Glob'] as const;
 
 /**
  * `<configDir>/runner.json` (mode 0600; the runner refuses group/world-readable files), written by

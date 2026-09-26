@@ -11,8 +11,9 @@
 # Build from the repo root:
 #   docker build -f docker/server.Dockerfile -t tagconn-server .
 
-# Pinned: Node 24.21 crashes in better-sqlite3 statement finalizers (see docs/decisions.md #24).
-ARG NODE_IMAGE=node:24.16-bookworm-slim
+# Pinned to the latest verified 24.x: better-sqlite3 13.x (N-API rewrite) no
+# longer hits the assertion from docs/decisions.md #24 (see #26 for the retest).
+ARG NODE_IMAGE=node:24.21.0-bookworm-slim
 ARG PNPM_VERSION=11.20.0
 
 # ---------------------------------------------------------------------------
