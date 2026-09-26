@@ -27,7 +27,14 @@ export const ENUM_OPTIONS: Record<string, readonly string[]> = {
   'office.floorOrder': ['created', 'name', 'recent'],
   'office.pmMode': ['single', 'per-session'],
   'runner.defaultModel': ['opus', 'sonnet', 'haiku'],
-  'runner.permissionMode': ['default', 'acceptEdits', 'plan', 'bypassPermissions'],
+  // Kept in sync with RUN_PERMISSION_MODES even though `runner` is entirely GUI-immutable (rendered
+  // read-only): if that ever changes, the dropdown is already correct.
+  'runner.permissionMode': ['plan', 'dontAsk', 'default', 'acceptEdits', 'auto', 'bypassPermissions'],
+  'receptionist.model': ['opus', 'sonnet', 'haiku'],
+  'receptionist.webFetch': ['never', 'allowlist'],
+  'auth.mode': ['pairing', 'same-origin'],
+  'auth.protect': ['execution', 'all-writes'],
+  'attribution.autoImport': ['ask', 'auto', 'off'],
 };
 
 export const KEY_HINTS: Record<string, string> = {
@@ -66,22 +73,82 @@ export const KEY_HINTS: Record<string, string> = {
   'office.focusDim': 'How much non-selected characters dim while one is selected (0 disables focus mode).',
   'office.maxBubbles': 'Cap on simultaneous speech bubbles; extra ones collapse to a small "…" badge (expands on hover).',
   'office.labelMinZoom': 'Camera zoom below which name tags and bubbles hide except for the selected or waiting/blocked characters (shown again on hover).',
+  'office.shaders.enabled': 'Turn WebGL post-processing on or off. Ignored on the canvas renderer.',
+  'office.shaders.quality': '"auto" picks low quality on a small or slow device (frame-time based).',
+  'office.shaders.bloom': 'Bloom — glow around torches, braziers, monitors and windows; 0 = off.',
+  'office.shaders.vignette': 'Vignette — darkened screen edges; 0 = off.',
+  'office.shaders.grading': 'Color grading — per-style color grading (warm office, candlelit guild, aurora rift).',
+  'office.shaders.lightGlow': 'Light glow — soft animated glow pools under light sources.',
+  'office.shaders.scanlines': 'Scanlines — CRT scanlines and a slight curvature. Modern style only.',
   'office.pmMode': "single: one Guild Master per floor (the most recently active session) plus a session count chip. per-session: today's behaviour — every main agent gets its own character.",
   'office.pmSwitchCooldownSec': 'Minimum seconds before the Guild Master switches to another session (a session that needs you switches at once). Only used in single mode.',
   'office.idleLeaveSec': 'Seconds a hero with no live agent rests in the tavern before walking out; 0 = leave at once.',
   'office.multiverseMaxRealms': 'Projects drawn on the Multiverse floor; extras are grouped into one "Other realms".',
   'office.multiverseMaxCharacters': 'Character cap on the Multiverse floor, split fairly across realms (Guild Masters first).',
+  'runner.enabled': 'Turn on the host runner (spawns `claude -p` for quests and the Receptionist). The runner daemon must also connect and prove its token.',
+  'runner.maxConcurrent': "Quests/Receptionist turns running at once, further capped by the runner's own local limit.",
+  'runner.defaultModel': 'Model used when a quest does not choose one.',
+  'runner.permissionMode': 'Default permission mode for new quests when the browser does not choose one.',
   'runner.allowedProjectDirs': 'One directory per line.',
+  'runner.token': 'Shared secret used only as an HMAC key for the runner connection (never sent on the wire). Empty = runner connections refused.',
+  'runner.allowedPermissionModes': 'Modes a quest may request; the runner also enforces its own local `maxPermissionMode` cap.',
+  'runner.allowedTools': 'Extra tool rules quests may use, on top of the runner\'s own host-side allowlist. Bare "WebFetch" is always rejected — use WebFetch(domain:x).',
+  'runner.disallowedTools': "Tool rules always denied for quests, appended to the runner's own deny list.",
+  'runner.maxQueued': 'Quests waiting for a free runner slot before new ones are refused.',
+  'runner.maxPromptChars': 'Longest prompt a quest or follow-up may send.',
+  'runner.runTimeoutSec': 'A quest is stopped if it runs longer than this.',
+  'runner.maxTurns': "Cap on assistant turns per quest (unset = no cap; the CLI's own default applies).",
+  'runner.maxEventsPerRun': 'Hard cap on streamed events kept per run before it is stopped (output_cap).',
+  'runner.maxEventBytesPerRun': 'Hard cap on the total bytes of streamed events kept per run before it is stopped (output_cap).',
+  'runner.previewChars': 'How much of a tool_use/tool_result is kept in the streamed preview.',
+  'runner.partialMessages': 'Stream assistant text as it is generated, not just the final message.',
+  'runner.runRetentionDays': 'How long finished runs and their events are kept before cleanup.',
+  'runner.lostGraceSec': 'Seconds a run may go without a runner heartbeat after a disconnect before it is marked lost.',
+  'receptionist.enabled': 'Turn the read-only help desk character on or off.',
+  'receptionist.model': 'Model used for Receptionist turns.',
+  'receptionist.webSearch': 'Allow the Receptionist to use WebSearch.',
+  'receptionist.webFetch': '"never": no WebFetch at all. "allowlist": WebFetch only in general scope (not while reading a project), limited to the domains below, sandboxed.',
+  'receptionist.webFetchAllowDomains': 'Bare domains (no scheme/port/path) the Receptionist may WebFetch when webFetch is "allowlist".',
+  'receptionist.extraDenyReadGlobs': "Extra glob patterns the Receptionist may never read, on top of the built-in history/secrets deny list.",
+  'receptionist.allowTagconnDocs': "Let the Receptionist read tagconn's own docs (a read-only copy) when answering questions about tagconn itself.",
+  'receptionist.projectSafeMode': 'Add --safe-mode to project-scope turns: skips CLAUDE.md memory, at the cost of the model reading more files directly (SC3 V5 trade-off).',
+  'receptionist.timeoutSec': 'A Receptionist turn is stopped if it runs longer than this.',
+  'receptionist.maxTurns': 'Cap on assistant turns per Receptionist reply.',
+  'receptionist.maxConversations': 'Stored Receptionist conversations kept before the oldest are pruned.',
+  'receptionist.maxMessagesPerConversation': 'Messages kept per Receptionist conversation before the oldest are pruned.',
+  'auth.mode': '"pairing": pair a browser with a one-time code. "same-origin" (file/env only) additionally allows same-origin bootstrap with no code.',
+  'auth.protect': '"all-writes": every settings/layout/execution write needs an admin session. "execution": only code execution (runs, Receptionist, roles, attribution) needs one.',
+  'auth.sessionIdleHours': "An admin session expires this many hours after its last use (sliding expiry).",
+  'auth.sessionMaxAgeDays': "Absolute cap on an admin session's age, regardless of activity.",
+  'auth.pairingCodeTtlSec': 'How long a freshly minted pairing code stays valid.',
+  'auth.maxSessions': 'Admin sessions kept per install before the oldest is dropped.',
+  'auth.logPairingCodeOnBoot': 'Print a fresh pairing code to the server log at boot when no admin session exists yet.',
+  'attribution.enabled': 'Turn tagconn attribution (the .tagconn/ marker and profile import) on or off.',
+  'attribution.autoImport': '"ask": a found profile waits for Import/Dismiss (default). "auto": import without asking. "off": never import (the hook can still write the opt-in README).',
+  'attribution.maxProfileBytes': "Largest office.json the server will accept (hard ceiling from the contract; this can only lower it).",
+  'attribution.importWindowSec': 'How long after a session starts an import from it is still accepted (guards against a stale SessionStart).',
 };
+
+/**
+ * Converts a dotted settings path into the exact `OFFICE_<SECTION>__<KEY_SNAKE>` env var name the
+ * server's layered config reads (`apps/server/src/core/config/load-config.ts`'s `envLayer`), so a
+ * GUI-immutable field can point at exactly what to set instead of just "an env var".
+ */
+export const envVarName = (dotted: string): string =>
+  `OFFICE_${dotted
+    .split('.')
+    .map((part) => part.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase())
+    .join('__')}`;
 
 /**
  * Settings hidden from the generic per-key form because they get a dedicated editor instead (the
  * form would otherwise render a raw JSON textarea for them — see `LeafControl`'s fallback case).
  * `heroes.namePools` gets the Heroes editor's "Name pools" tab (docs/design/living-office.md 3.4).
- * Not yet read by `SettingsPanel` (same status as `DEPRECATED_SETTINGS` above); wiring it in is for
- * whichever task builds that generic-form skip (or the Heroes editor task, W5).
+ * `office.shaders` (M8 8o) gets the inline "Visual effects" group in the Office section
+ * (`SettingsPanel`'s `ShaderEffectsGroup`) instead — every field there uses `KEY_HINTS` under
+ * `office.shaders.*` the same way the generic form does.
  */
-export const HIDDEN_SETTINGS = ['heroes.namePools'] as const;
+export const HIDDEN_SETTINGS = ['heroes.namePools', 'office.shaders'] as const;
 
 /** Settings kept for compatibility but superseded by newer functionality; the form flags them so
  *  people don't reach for them by habit. */

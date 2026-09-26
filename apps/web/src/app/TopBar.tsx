@@ -9,17 +9,19 @@ import { floorNeighbors, floorsInOrder, isModalOpen, isTypingTarget, MULTIVERSE_
 import { officeNavBus } from '../game/OfficeGame';
 import { FloorManager } from '../features/office/FloorManager';
 import { HeroPanel } from '../features/heroes/HeroPanel';
+import { ReceptionistButton } from '../features/receptionist/ReceptionistButton';
 import { AdminBadge } from '../features/auth/AdminBadge';
 import { defaultHeroFloor } from '../features/heroes/formState';
 import { useHeroPanelStore } from '../features/heroes/store';
 import { Button, Select, cx } from '../components/ui';
 
-export type Tab = 'office' | 'board' | 'log' | 'roles' | 'settings';
+export type Tab = 'office' | 'board' | 'log' | 'roles' | 'quests' | 'settings';
 export const TABS: { id: Tab; label: string }[] = [
   { id: 'office', label: 'Office' },
   { id: 'board', label: 'Board' },
   { id: 'log', label: 'Log' },
   { id: 'roles', label: 'Roles' },
+  { id: 'quests', label: 'Quests' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -219,6 +221,7 @@ export function TopBar({ tab, onTab, onOpenPlanner }: { tab: Tab; onTab: (t: Tab
           ))}
         </nav>
         <HeroesButton />
+        <ReceptionistButton />
         <Button variant="ghost" onClick={onOpenPlanner} title="Draw and edit floor plans">
           Hall Planner
         </Button>

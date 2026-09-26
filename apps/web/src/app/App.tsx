@@ -5,7 +5,10 @@ import { KanbanBoard } from '../features/board/KanbanBoard';
 import { EventLog } from '../features/log/EventLog';
 import { RolesEditor } from '../features/roles/RolesEditor';
 import { SettingsPanel } from '../features/settings/SettingsPanel';
+import { QuestBoard } from '../features/quests/QuestBoard';
 import { OfficeEditor } from '../features/editor/OfficeEditor';
+import { ReceptionistPanel } from '../features/receptionist/ReceptionistPanel';
+import { AttributionToastHost } from '../features/attribution/AttributionToastHost';
 
 const tabFromHash = (): Tab => {
   const h = window.location.hash.replace('#', '') as Tab;
@@ -41,9 +44,12 @@ export function App() {
         {tab === 'board' && <KanbanBoard />}
         {tab === 'log' && <EventLog />}
         {tab === 'roles' && <RolesEditor />}
+        {tab === 'quests' && <QuestBoard />}
         {tab === 'settings' && <SettingsPanel />}
       </main>
       {editorOpen && <OfficeEditor onClose={() => setEditorOpen(false)} />}
+      <ReceptionistPanel />
+      <AttributionToastHost />
     </div>
   );
 }
