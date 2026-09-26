@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-26
+
 ### Added
 - **Quests from the browser** (runner, M5): a new host daemon (`pnpm office:runner`) runs `claude -p` on your machine using your normal CLI login, with no API key. The "Quests" tab starts a quest on a floor. You pick a model, a permission mode and an optional hero, then watch a live transcript and can Stop it or Follow up (resume). Every rejection comes with an explanation. Quests only run inside `runner.allowedProjectDirs` and trusted folders, with an exact tool list. Bash needs an explicit local rule and a systemd scope. User and project settings, MCP servers and slash commands are isolated from each run.
 - **Receptionist help desk**: a read-only NPC at the Guild Gate answers questions in a chat panel, in either "General" or "This project" scope. Replies stream in, and it can read but never change anything: it has a read-only tool set and, when available, a bwrap sandbox.
@@ -75,6 +77,7 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ilomon10/tagconn/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ilomon10/tagconn/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ilomon10/tagconn/releases/tag/v0.1.0

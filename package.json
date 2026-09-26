@@ -1,6 +1,6 @@
 {
   "name": "tagconn",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A magical 2D office that visualizes Claude Code sessions and subagents as characters, powered by hooks. No API key needed.",
   "license": "MIT",
   "repository": {
