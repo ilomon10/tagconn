@@ -1,37 +1,49 @@
 import type * as Phaser from 'phaser';
 import type { RoomType } from '@tagconn/shared';
 import { paintGuildFloor, paintModernFloor } from './floors';
-import { darken, lighten, rectFn, T } from './util';
+import { darken, lighten, rectFn, T, tileOf } from './util';
 
 type FloorKind = RoomType | 'corridor';
 
 // ------------------------------------------------------------------ modern (port of renderMap.ts)
 
-const WALL_TOP = 0x4c4468;
-const WALL_FACE = 0x2d2742;
-const WALL_EDGE = 0x625a85;
+// Style pass (3/4-perspective office reference): a thick off-white outline wall on a dark warm
+// exterior, and a cream interior face (with a baseboard line) on whichever wall edge has floor
+// immediately south of it - that's the tile this renderer already treats as "the back wall".
+const WALL_TOP = 0xe8e2d0;
+const WALL_EDGE = 0xc9c2ac;
+const WALL_FACE = 0xefeae0;
+const WALL_BASEBOARD = 0x8a7a63;
 
 export function paintModernWall(g: Phaser.GameObjects.Graphics, px: number, py: number, faceVisible: boolean, _rand?: () => number): void {
   const rect = rectFn(g);
   rect(WALL_TOP, px, py, T, T);
-  rect(WALL_EDGE, px, py, T, 1);
+  rect(WALL_EDGE, px, py, T, 1, 0.6);
   if (faceVisible) {
     rect(WALL_FACE, px, py + 8, T, 8);
-    rect(0x3a3354, px, py + 8, T, 1);
-    rect(0x000000, px, py + 15, T, 1, 0.25);
+    rect(lighten(WALL_FACE, 0.4), px, py + 8, T, 1, 0.7);
+    rect(WALL_BASEBOARD, px, py + 14, T, 2);
   }
 }
 
 export function paintModernVoid(g: Phaser.GameObjects.Graphics, px: number, py: number, rand: () => number): void {
   const rect = rectFn(g);
-  rect(0x0d0d12, px, py, T, T);
-  if (rand() < 0.15) rect(0x16161e, px + Math.floor(rand() * T), py + Math.floor(rand() * T), 1, 1, 0.6);
+  const { x: tx, y: ty } = tileOf(px, py);
+  // A dark warm exterior with a faint dithered checker (a subtle "fog" beyond the walls) plus the
+  // existing sparse noise speckles.
+  rect((tx + ty) % 2 === 0 ? lighten(0x2b2724, 0.03) : 0x2b2724, px, py, T, T);
+  if (rand() < 0.15) rect(0x35302a, px + Math.floor(rand() * T), py + Math.floor(rand() * T), 1, 1, 0.6);
 }
 
 export function paintModernDoor(g: Phaser.GameObjects.Graphics, kind: FloorKind, px: number, py: number, wide: boolean, rand: () => number): void {
   paintModernFloor(g, kind, px, py, rand);
   const rect = rectFn(g);
-  rect(0x8a6a4a, px, py, wide ? T * 2 : T, T, 0.9);
+  const w = wide ? T * 2 : T;
+  // A wooden door with a visible frame (jambs + lintel), instead of a flat brown fill.
+  rect(0x6b4424, px, py, 2, T);
+  rect(0x6b4424, px + w - 2, py, 2, T);
+  rect(0x8a5a2b, px + 2, py + 2, w - 4, T - 2, 0.9);
+  rect(lighten(0x8a5a2b, 0.2), px, py, w, 2);
 }
 
 // ------------------------------------------------------------------ guild

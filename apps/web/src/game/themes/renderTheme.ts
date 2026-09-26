@@ -41,6 +41,14 @@ export const THEME_BASE_TEXTURE = 'theme-base';
  * existing single-theme caller passes none and behaves exactly as before.
  */
 export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme: ThemeDefinition, regions: ThemeRegion[] = []): string {
+  // Perf note (M8 style pass): everything below - every floor/wall/furniture tile for the whole
+  // floor - is drawn once into a single shared `Graphics` and baked into one `generateTexture` call
+  // (`THEME_BASE_TEXTURE`), i.e. this layer is already one texture / one draw call per floor; there
+  // is no per-item sprite atlas to pack here. The only actual sprite images are the handful of decor
+  // textures (torches/banners/lanterns/posters, `paint/decor.ts` & `paint/riftDecor.ts`), each
+  // generated once and cached by `scene.textures.exists`, then reused across every room that needs
+  // it - already bounded (a handful of keys per theme) and never regenerated. Logged in dev only.
+  const start = import.meta.env.DEV ? performance.now() : 0;
   const T = map.tileSize;
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
   const rand = mulberry32(map.seed ^ 0x9e3779b9);
@@ -105,5 +113,10 @@ export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme
   if (scene.textures.exists(THEME_BASE_TEXTURE)) scene.textures.remove(THEME_BASE_TEXTURE);
   g.generateTexture(THEME_BASE_TEXTURE, map.cols * T, map.rows * T);
   g.destroy();
+  if (import.meta.env.DEV) {
+    const ms = performance.now() - start;
+    // eslint-disable-next-line no-console -- intentional one-line dev perf log, not app logging.
+    console.debug(`[theme] base texture generated in ${ms.toFixed(1)}ms (${map.cols}x${map.rows} tiles, ${map.furniture.length} furniture)`);
+  }
   return THEME_BASE_TEXTURE;
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { LayoutBackground, LayoutRoom, OfficeLayout, OfficeLayoutInput, OfficeStyle, RoomType } from '@tagconn/shared';
+import { LAYOUT_LIMITS, type DoorSpec, type LayoutBackground, type LayoutRoom, type OfficeLayout, type OfficeLayoutInput, type OfficeStyle, type RoomFurnish, type RoomType } from '@tagconn/shared';
 
 /**
  * Hall Planner draft state (7e-A, docs/design/guild-hall.md section 5). The draft is an
@@ -13,9 +13,20 @@ import type { LayoutBackground, LayoutRoom, OfficeLayout, OfficeLayoutInput, Off
  * exactly one entry (the pre-drag snapshot) if anything actually changed.
  */
 
-export type EditorTool = 'select' | 'room' | 'stairs' | 'hand';
+export type EditorTool = 'select' | 'room' | 'stairs' | 'hand' | 'doors';
 
 const HISTORY_LIMIT = 100;
+
+/** Merges a patch into an optional furnish-like object, dropping any key explicitly patched to
+ * `undefined` ("use the default") and collapsing back to `undefined` once nothing is left set. */
+function mergeFurnish<T extends Record<string, unknown>>(base: T | undefined, patch: Partial<T>): T | undefined {
+  const next = { ...(base ?? {}) } as Record<string, unknown>;
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) delete next[k];
+    else next[k] = v;
+  }
+  return Object.keys(next).length ? (next as T) : undefined;
+}
 
 /** Room ids only need to be unique within a layout; short and readable is enough. */
 export function genRoomId(): string {
@@ -68,6 +79,8 @@ export interface EditorState {
   builtin: boolean;
   dirty: boolean;
   selection: string[];
+  /** The door tool's current pick: a room id + index into that room's now-explicit `doors` list. */
+  selectedDoor: { roomId: string; index: number } | null;
   tool: EditorTool;
   /** Room type the Room tool stamps next (remembers the last pick; Stairs tool forces 'stairs'). */
   pendingRoomType: RoomType;
@@ -81,10 +94,42 @@ export interface EditorState {
   close(): void;
 
   setMeta(patch: Partial<Pick<OfficeLayoutInput, 'name' | 'width' | 'height' | 'seed' | 'background' | 'corridorWidth' | 'style'>>): void;
+  /** Layout-wide furnishing defaults (M8 8n) — merged; a key patched to `undefined` clears it. */
+  setFurnishDefaults(patch: Partial<NonNullable<OfficeLayoutInput['furnishDefaults']>>): void;
   addRoom(room: LayoutRoom): void;
   updateRoom(id: string, patch: Partial<Omit<LayoutRoom, 'id'>>): void;
   removeRooms(ids: string[]): void;
   duplicateRooms(ids: string[]): void;
+
+  /** Merges a patch into a room's furnish overrides; a key patched to `undefined` falls back
+   * (layout default, then built-in). */
+  setRoomFurnish(roomId: string, patch: Partial<RoomFurnish>): void;
+  /** "Reset to defaults": clears every override for this room. */
+  resetRoomFurnish(roomId: string): void;
+  /** "Re-roll arrangement": a fresh `furnish.seed`, keeping every other furnish field as-is. */
+  rerollRoomSeed(roomId: string): void;
+
+  /** Replaces this room's door list wholesale; `undefined` restores automatic doors, `[]` seals it. */
+  setRoomDoors(roomId: string, doors: DoorSpec[] | undefined): void;
+  /** Convenience for "Seal room": `setRoomDoors(roomId, [])`. */
+  sealRoom(roomId: string): void;
+  /** First edit on a room with automatic doors: freezes `autoDoors` (from `GeneratedMap`) into an
+   * explicit list, so nothing jumps once the user starts dragging/adding/removing doors. No-op if
+   * the room already has an explicit list (including a sealed `[]`). */
+  ensureExplicitDoors(roomId: string, autoDoors: DoorSpec[]): void;
+  /** Appends a door, materializing `autoDoors` first if the room was still automatic. */
+  addDoor(roomId: string, door: DoorSpec, autoDoors?: DoorSpec[]): void;
+  /** Patches one door (move/resize), materializing `autoDoors` first if needed. */
+  updateDoor(roomId: string, index: number, patch: Partial<DoorSpec>, autoDoors?: DoorSpec[]): void;
+  /** Removes one door (materializing `autoDoors` first if needed) and clears the selection if it pointed at it. */
+  removeDoor(roomId: string, index: number, autoDoors?: DoorSpec[]): void;
+  /** One-commit keyboard nudge of the selected door along its wall, clamped to stay inside the corners. */
+  nudgeDoor(roomId: string, index: number, delta: number): void;
+  /** Direct-mutate (no history entry) door move/resize — pair with `beginGesture()`/`endGesture()`.
+   * Requires the room's doors to already be explicit (call `ensureExplicitDoors` first). */
+  setDoorRect(roomId: string, index: number, rect: Partial<Pick<DoorSpec, 'offset' | 'width'>>): void;
+  selectDoor(roomId: string, index: number): void;
+  clearDoorSelection(): void;
   /** Replaces the whole draft as one undo step (e.g. "Surprise me"). Keeps id/name unless overridden. */
   replaceDraft(input: OfficeLayoutInput): void;
   /** Converts a read-only builtin draft into an editable, unsaved copy ("Duplicate to edit"). */
@@ -130,6 +175,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     builtin: false,
     dirty: false,
     selection: [],
+    selectedDoor: null,
     tool: 'select',
     pendingRoomType: 'desks',
     history: [],
@@ -144,6 +190,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         builtin: layout.builtin,
         dirty: false,
         selection: [],
+        selectedDoor: null,
         tool: 'select',
         history: [],
         future: [],
@@ -158,6 +205,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         builtin: false,
         dirty: true,
         selection: [],
+        selectedDoor: null,
         tool: 'select',
         history: [],
         future: [],
@@ -172,6 +220,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         builtin: false,
         dirty: false,
         selection: [],
+        selectedDoor: null,
         tool: 'select',
         history: [],
         future: [],
@@ -184,6 +233,12 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       commit(s.draft, { ...s.draft, ...patch });
     },
 
+    setFurnishDefaults: (patch) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      commit(s.draft, { ...s.draft, furnishDefaults: mergeFurnish(s.draft.furnishDefaults, patch) });
+    },
+
     addRoom: (room) => mutateRooms((rooms) => [...rooms, room]),
 
     updateRoom: (id, patch) => mutateRooms((rooms) => rooms.map((r) => (r.id === id ? { ...r, ...patch } : r))),
@@ -191,8 +246,106 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     removeRooms: (ids) => {
       const remove = new Set(ids);
       mutateRooms((rooms) => rooms.filter((r) => !remove.has(r.id)));
-      set((s) => ({ selection: s.selection.filter((id) => !remove.has(id)) }));
+      set((s) => ({
+        selection: s.selection.filter((id) => !remove.has(id)),
+        selectedDoor: s.selectedDoor && remove.has(s.selectedDoor.roomId) ? null : s.selectedDoor,
+      }));
     },
+
+    setRoomFurnish: (roomId, patch) =>
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, furnish: mergeFurnish(r.furnish, patch) } : r))),
+
+    resetRoomFurnish: (roomId) => mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, furnish: undefined } : r))),
+
+    rerollRoomSeed: (roomId) =>
+      mutateRooms((rooms) =>
+        rooms.map((r) => (r.id === roomId ? { ...r, furnish: { ...r.furnish, seed: Math.floor(Math.random() * 0xffffffff) } } : r)),
+      ),
+
+    setRoomDoors: (roomId, doors) => {
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: doors ? doors.slice() : undefined } : r)));
+      set((s) => (s.selectedDoor?.roomId === roomId ? { selectedDoor: null } : {}));
+    },
+
+    sealRoom: (roomId) => {
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: [] } : r)));
+      set((s) => (s.selectedDoor?.roomId === roomId ? { selectedDoor: null } : {}));
+    },
+
+    ensureExplicitDoors: (roomId, autoDoors) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room || room.doors !== undefined) return; // already explicit (including sealed [])
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: autoDoors.slice() } : r)));
+    },
+
+    addDoor: (roomId, door, autoDoors = []) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room) return;
+      const current = room.doors ?? autoDoors;
+      if (current.length >= LAYOUT_LIMITS.maxDoorsPerRoom) return;
+      const next = [...current, door];
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: next } : r)));
+    },
+
+    updateDoor: (roomId, index, patch, autoDoors = []) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      const current = room?.doors ?? autoDoors;
+      if (!room || !current[index]) return;
+      const next = current.slice();
+      next[index] = { ...next[index]!, ...patch };
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: next } : r)));
+    },
+
+    removeDoor: (roomId, index, autoDoors = []) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      const current = room?.doors ?? autoDoors;
+      if (!room || !current[index]) return;
+      const next = current.filter((_, i) => i !== index);
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: next } : r)));
+      set((st) => (st.selectedDoor?.roomId === roomId && st.selectedDoor.index === index ? { selectedDoor: null } : {}));
+    },
+
+    nudgeDoor: (roomId, index, delta) => {
+      const s = get();
+      if (!s.draft || s.builtin || delta === 0) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      const door = room?.doors?.[index];
+      if (!room || !door) return;
+      const len = door.side === 'n' || door.side === 's' ? room.w : room.h;
+      const width = door.width ?? 1;
+      const offset = Math.max(1, Math.min(len - 1 - width, door.offset + delta));
+      if (offset === door.offset) return;
+      mutateRooms((rooms) =>
+        rooms.map((r) => (r.id === roomId ? { ...r, doors: r.doors!.map((d, i) => (i === index ? { ...d, offset } : d)) } : r)),
+      );
+    },
+
+    setDoorRect: (roomId, index, rect) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      set({
+        draft: {
+          ...s.draft,
+          rooms: s.draft.rooms.map((r) => {
+            if (r.id !== roomId || !r.doors?.[index]) return r;
+            const doors = r.doors.slice();
+            doors[index] = { ...doors[index]!, ...rect };
+            return { ...r, doors };
+          }),
+        },
+      });
+    },
+
+    selectDoor: (roomId, index) => set({ selectedDoor: { roomId, index } }),
+    clearDoorSelection: () => set({ selectedDoor: null }),
 
     duplicateRooms: (ids) => {
       const want = new Set(ids);
@@ -209,7 +362,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const s = get();
       if (!s.draft || s.builtin) return;
       commit(s.draft, input);
-      set({ selection: [] });
+      set({ selection: [], selectedDoor: null });
     },
 
     duplicateAsEditable: (newName) => {
@@ -224,6 +377,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         history: [],
         future: [],
         gestureBaseline: null,
+        selectedDoor: null,
       });
     },
 
@@ -231,9 +385,11 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       set({ draft: { ...saved }, originalId: saved.id, originalUpdatedAt: saved.updatedAt, builtin: saved.builtin, dirty: false }),
 
     select: (ids, additive) =>
-      set((s) => (additive ? { selection: [...new Set([...s.selection, ...ids])] } : { selection: [...new Set(ids)] })),
+      set((s) =>
+        additive ? { selection: [...new Set([...s.selection, ...ids])] } : { selection: [...new Set(ids)], selectedDoor: null },
+      ),
     clearSelection: () => set({ selection: [] }),
-    setTool: (tool) => set({ tool }),
+    setTool: (tool) => set((s) => ({ tool, selectedDoor: tool === 'doors' ? s.selectedDoor : null })),
     setPendingRoomType: (type) => set({ pendingRoomType: type }),
 
     beginGesture: () => {

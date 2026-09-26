@@ -1,6 +1,6 @@
 import type * as Phaser from 'phaser';
 import type { RoomType } from '@tagconn/shared';
-import { lighten, rectFn, T, tileOf } from './util';
+import { darken, lighten, rectFn, T, tileOf } from './util';
 
 type FloorKind = RoomType | 'corridor';
 type Painter = (g: Phaser.GameObjects.Graphics, px: number, py: number, rand: () => number) => void;
@@ -28,6 +28,10 @@ export function paintModernFloor(g: Phaser.GameObjects.Graphics, kind: FloorKind
   const [base, accent] = MODERN_FLOORS[kind];
   const { x: tx, y: ty } = tileOf(px, py);
   rect(base, px, py, T, T);
+  // A faint grout grid on every tile edge (style pass: "subtle checker tiles ... with a faint grout
+  // grid" instead of a hard block-alternating checker) - cheap, universal, under the per-kind accents.
+  rect(darken(base, 0.12), px, py + T - 1, T, 1, 0.35);
+  rect(darken(base, 0.12), px + T - 1, py, 1, T, 0.35);
   switch (kind) {
     case 'hall':
     case 'corridor':
@@ -117,7 +121,9 @@ const GUILD_FLOORS: Record<FloorKind, Painter> = {
   hall: (g, px, py, rand) => paintFlagstones(g, px, py, rand, STONE_BASE, STONE_MORTAR),
   corridor: (g, px, py, rand) => paintFlagstones(g, px, py, rand, CORRIDOR_BASE, STONE_MORTAR),
   entrance: (g, px, py, rand) => paintFlagstones(g, px, py, rand, STONE_BASE, STONE_MORTAR),
-  'pm-office': (g, px, py, rand) => paintFlagstones(g, px, py, rand, STONE_BASE, STONE_MORTAR),
+  // Warm wood under the Guild Master's crimson rug (style pass: reference tavern/hall art puts the
+  // heraldic carpet runner over wood planks, not bare stone).
+  'pm-office': (g, px, py) => paintPlanks(g, px, py, 0x6b4f3a, 0x5d4432),
   whiteboard: (g, px, py, rand) => paintFlagstones(g, px, py, rand, STONE_BASE, STONE_MORTAR),
   'review-booth': (g, px, py, rand) => paintFlagstones(g, px, py, rand, STONE_BASE, STONE_MORTAR),
   stairs: (g, px, py, rand) => paintFlagstones(g, px, py, rand, STONE_BASE, STONE_MORTAR),

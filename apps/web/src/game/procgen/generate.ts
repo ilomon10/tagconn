@@ -7,6 +7,7 @@ import {
   resolveZone,
   validateLayout,
   ZONES,
+  type DoorSpec,
   type LayoutIssue,
   type LayoutRoom,
   type OfficeLayout,
@@ -14,8 +15,18 @@ import {
   type Zone,
 } from '@tagconn/shared';
 import { astarVoid, carveCorridor, findExitCandidates, type ExitCandidate } from './corridors';
-import { footprintRing, findDoorSpans, SIDE_DIR, type DoorRoomShape, type DoorSpan, type Side } from './doors';
-import { furnishRoom, type RecipeItem } from './recipes';
+import {
+  doorOffsetAndWidth,
+  explicitDoorPositions,
+  footprintRing,
+  findDoorSpans,
+  LOCAL_TO_SHARED_SIDE,
+  SIDE_DIR,
+  type DoorRoomShape,
+  type DoorSpan,
+  type Side,
+} from './doors';
+import { decorateRoom, furnishRoom, type FurnishOptions, type RecipeItem } from './recipes';
 import { buildRegionAtGrid, buildRoomToRegion, findRegions, findVoidAreas, reachableFrom, regionCentroid, type Region } from './regions';
 import { rngFor, randInt } from './rng';
 import type {
@@ -28,6 +39,8 @@ import type {
   Seat,
   StairsSpot,
   TileKind,
+  UnreachableReason,
+  UnreachableRoom,
   ZoneInfo,
 } from './types';
 
@@ -49,6 +62,30 @@ function rectCells(r: Rect): Point[] {
 
 function insideRect(p: Point, r: Rect): boolean {
   return p.x >= r.x && p.y >= r.y && p.x < r.x + r.w && p.y < r.y + r.h;
+}
+
+/**
+ * An open (unwalled) room has no door apron - it merges straight into the surrounding hall/corridor
+ * on every side it touches, so any perimeter cell next to outside floor is a valid entry point (M8
+ * 8n: without this, the local reachability retry below fell back to a single interior corner, and a
+ * denser furnish recipe that happened to block that one corner's escape route made it strip nearly
+ * every item in the room instead of just the ones actually in the way).
+ */
+function openRoomEntryPoints(interior: Rect, tiles: readonly TileKind[][]): Point[] {
+  const out: Point[] = [];
+  for (const p of rectCells(interior)) {
+    const onEdge = p.x === interior.x || p.x === interior.x + interior.w - 1 || p.y === interior.y || p.y === interior.y + interior.h - 1;
+    if (!onEdge) continue;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const n = { x: p.x + dx, y: p.y + dy };
+      if (insideRect(n, interior)) continue;
+      if (tiles[n.y]?.[n.x] === 'floor') {
+        out.push(p);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /** Tiny union-find for Kruskal's MST over regions. */
@@ -110,6 +147,12 @@ interface OpenedDoor {
   roomId: string;
   to: string | 'hall';
   side: Side;
+  /** Offset/width of the whole span this tile belongs to (every tile in a multi-wide door shares the
+   *  same group offset/width, so the editor can dedupe `GeneratedMap.doors` back into one `DoorSpec`). */
+  offset: number;
+  width: number;
+  /** false when this door came from `room.doors` (explicit) rather than the automatic generator. */
+  auto: boolean;
 }
 
 /**
@@ -153,6 +196,13 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     interior: roomInterior(r),
     walled: isRoomWalled(r),
   }));
+  const roomSpecById = new Map(layout.rooms.map((r) => [r.id, r]));
+  const footprintById = new Map(rooms.map((r) => [r.id, r.footprint]));
+  /** Rooms with `doors` set (explicit list, possibly empty = sealed) opt out of automatic doors and
+   *  corridor exits entirely (guild-hall.md section 4, M8 8n): the generator never adds a door the
+   *  editor didn't ask for, and never carves a corridor mouth into a wall the user meant to seal. */
+  const explicitDoorRoomIds = new Set(layout.rooms.filter((r) => r.doors !== undefined).map((r) => r.id));
+
   for (const room of rooms) {
     if (room.walled) {
       for (const { p } of footprintRing(room.footprint)) tiles[p.y]![p.x] = 'wall';
@@ -179,8 +229,77 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
   const roomToRegion = buildRoomToRegion(regions);
 
   // --- 5. door candidates -----------------------------------------------------------------------
+  // Explicit-door rooms are excluded here: their openings are placed by the explicit pass below,
+  // never guessed by findDoorSpans/findExitCandidates.
   const roomShapesForDoors: DoorRoomShape[] = rooms.map((r) => ({ id: r.id, footprint: r.footprint, walled: r.walled }));
-  const doorSpans = findDoorSpans(roomShapesForDoors, tiles, regionAt);
+  const autoRoomShapes = roomShapesForDoors.filter((r) => !explicitDoorRoomIds.has(r.id));
+  const doorSpans = findDoorSpans(autoRoomShapes, tiles, regionAt);
+
+  const uf = new UnionFind(regions.length);
+  const opened: OpenedDoor[] = [];
+  /** Interior tile just inside each opening (a wall door, or an open room's edge tile at a corridor mouth). */
+  const entryPoints: { roomId: string; tile: Point }[] = [];
+  const regionLabel = (regionId: number): string | 'hall' => {
+    const region = regions[regionId];
+    if (!region) return 'hall';
+    if (!region.hasHall && region.roomIds.length === 1) return region.roomIds[0]!;
+    return 'hall';
+  };
+
+  // --- 5b. explicit doors: direct opens now (floor or double-wall neighbour), void-facing ones
+  // become synthetic corridor exits below so the normal MST/corridor step carves to them. Read from
+  // pristine tiles/regionAt (nothing has been opened yet), so this never races the auto candidates.
+  const explicitVoidExits: ExitCandidate[] = [];
+  const inBounds = (p: Point) => p.x >= 0 && p.y >= 0 && p.x < cols && p.y < rows;
+  for (const roomId of explicitDoorRoomIds) {
+    const room = rooms.find((r) => r.id === roomId);
+    const spec = roomSpecById.get(roomId);
+    if (!room || !spec?.doors?.length) continue;
+    const fromRegion = roomToRegion.get(roomId);
+    for (const doorSpec of spec.doors) {
+      const { side, positions } = explicitDoorPositions(room.footprint, doorSpec);
+      const dir = SIDE_DIR[side];
+      const first = positions[0]!;
+      const out1 = { x: first.x + dir.x, y: first.y + dir.y };
+      const out2 = { x: first.x + dir.x * 2, y: first.y + dir.y * 2 };
+      const out1Tile = inBounds(out1) ? tiles[out1.y]![out1.x] : undefined;
+      const out2Tile = inBounds(out2) ? tiles[out2.y]![out2.x] : undefined;
+      const { offset, width } = doorOffsetAndWidth(room.footprint, side, positions);
+      if (out1Tile === 'floor') {
+        const toRegion = regionAt[out1.y]?.[out1.x];
+        const toRoomId = toRegion != null ? regionLabel(toRegion) : 'hall';
+        for (const p of positions) {
+          tiles[p.y]![p.x] = 'door';
+          opened.push({ tile: p, roomId, to: toRoomId, side, offset, width, auto: false });
+          entryPoints.push({ roomId, tile: { x: p.x - dir.x, y: p.y - dir.y } });
+          // The neighbour's own apron too (M8 8n fix): out1 IS the neighbour's edge tile here (no wall
+          // between them), so without this its own recipe was free to block its side of the doorway,
+          // even though this side reserved its own.
+          if (toRoomId !== 'hall') entryPoints.push({ roomId: toRoomId, tile: { x: p.x + dir.x, y: p.y + dir.y } });
+        }
+        if (fromRegion != null && toRegion != null) uf.union(fromRegion, toRegion);
+      } else if (out1Tile === 'wall' && out2Tile === 'floor') {
+        const toRegion = regionAt[out2.y]?.[out2.x];
+        const toRoomId = toRegion != null ? regionLabel(toRegion) : 'hall';
+        for (const p of positions) {
+          tiles[p.y]![p.x] = 'door';
+          const p2 = { x: p.x + dir.x, y: p.y + dir.y };
+          if (inBounds(p2)) tiles[p2.y]![p2.x] = 'door';
+          opened.push({ tile: p, roomId, to: toRoomId, side, offset, width, auto: false });
+          entryPoints.push({ roomId, tile: { x: p.x - dir.x, y: p.y - dir.y } });
+          // The neighbour's own apron (M8 8n fix, double-wall case): out2 is already one step past its
+          // own wall ring, i.e. exactly its interior-side apron tile.
+          if (toRoomId !== 'hall') entryPoints.push({ roomId: toRoomId, tile: { x: p.x + dir.x * 2, y: p.y + dir.y * 2 } });
+        }
+        if (fromRegion != null && toRegion != null) uf.union(fromRegion, toRegion);
+      } else if (out1Tile === 'void') {
+        // No target region yet - hand the door tile to the corridor carver below as a fixed exit.
+        explicitVoidExits.push({ roomId, roomTile: first, doorTile: first, voidTile: out1, side, explicit: true });
+      }
+      // Anything else (out of bounds, or a wall with nothing beyond it) is a dead end: the spec asked
+      // for a door there, but there is nowhere to connect it, so it stays a solid wall.
+    }
+  }
 
   // --- 6. connectivity: MST + ~15% extra loops -------------------------------------------------
   const doorsRand = rngFor(seed, 'doors');
@@ -211,7 +330,6 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
   }
 
   edges.sort((e1, e2) => e1.weight - e2.weight);
-  const uf = new UnionFind(regions.length);
   // MST edges are required for connectivity; a "required" set tracks them so a failed EXTRA loop
   // edge (below) never reports a false `no-door` for two rooms that are already connected.
   const chosen: Edge[] = [];
@@ -235,16 +353,6 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
   }
 
   // --- placement --------------------------------------------------------------------------------
-  const opened: OpenedDoor[] = [];
-  /** Interior tile just inside each opening (a wall door, or an open room's edge tile at a corridor mouth). */
-  const entryPoints: { roomId: string; tile: Point }[] = [];
-  const regionLabel = (regionId: number): string | 'hall' => {
-    const region = regions[regionId];
-    if (!region) return 'hall';
-    if (!region.hasHall && region.roomIds.length === 1) return region.roomIds[0]!;
-    return 'hall';
-  };
-
   const placeDoorSpan = (span: DoorSpan) => {
     const width = span.positions.length >= 4 ? 2 : 1;
     const mid = Math.floor((span.positions.length - width) / 2);
@@ -253,20 +361,22 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     const start = Math.max(0, Math.min(span.positions.length - width, mid + jitter));
     const chosenPositions = span.positions.slice(start, start + width);
     const dir = SIDE_DIR[span.side];
+    const footprint = footprintById.get(span.roomId)!;
+    const group = doorOffsetAndWidth(footprint, span.side, chosenPositions);
     for (const p of chosenPositions) {
       tiles[p.y]![p.x] = 'door';
       if (span.depth === 2) {
         const outer = { x: p.x + dir.x, y: p.y + dir.y };
         if (outer.x >= 0 && outer.y >= 0 && outer.x < cols && outer.y < rows) tiles[outer.y]![outer.x] = 'door';
       }
-      opened.push({ tile: p, roomId: span.roomId, to: regionLabel(span.toRegionId), side: span.side });
+      opened.push({ tile: p, roomId: span.roomId, to: regionLabel(span.toRegionId), side: span.side, offset: group.offset, width: group.width, auto: true });
       entryPoints.push({ roomId: span.roomId, tile: { x: p.x - dir.x, y: p.y - dir.y } });
     }
   };
 
-  const exitCandidatesAll = findExitCandidates(roomShapesForDoors, tiles);
+  const exitCandidatesAll = findExitCandidates(autoRoomShapes, tiles);
   const exitsByRegion = new Map<number, ExitCandidate[]>();
-  for (const ex of exitCandidatesAll) {
+  for (const ex of [...exitCandidatesAll, ...explicitVoidExits]) {
     const rid = roomToRegion.get(ex.roomId);
     if (rid == null) continue;
     const list = exitsByRegion.get(rid) ?? [];
@@ -305,7 +415,9 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
         if (ex.doorTile) {
           // A wall stood here: open it into a real door, and reserve the interior tile just inside it.
           tiles[ex.doorTile.y]![ex.doorTile.x] = 'door';
-          opened.push({ tile: ex.doorTile, roomId: ex.roomId, to: 'hall', side: ex.side });
+          const footprint = footprintById.get(ex.roomId);
+          const group = footprint ? doorOffsetAndWidth(footprint, ex.side, [ex.doorTile]) : { offset: 0, width: 1 };
+          opened.push({ tile: ex.doorTile, roomId: ex.roomId, to: 'hall', side: ex.side, offset: group.offset, width: group.width, auto: !ex.explicit });
           const dir = SIDE_DIR[ex.side];
           entryPoints.push({ roomId: ex.roomId, tile: { x: ex.doorTile.x - dir.x, y: ex.doorTile.y - dir.y } });
         } else {
@@ -445,8 +557,21 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
       continue;
     }
 
-    const roomRand = rngFor(seed, `room:${room.id}`);
-    const recipe = furnishRoom(room.type, interior, roomRand);
+    // Furnishing knobs (M8 8n): per-room `furnish` overrides the layout-wide `furnishDefaults`,
+    // which overrides these built-ins. `seed` re-rolls the room's own RNG stream without touching
+    // the layout seed (RoomFurnishSchema's doc comment); `seats` has no layout-wide default (the
+    // schema omits it from `furnishDefaults` on purpose - it only ever makes sense per room).
+    const spec = roomSpecById.get(room.id);
+    const furnish = spec?.furnish;
+    const defaults = layout.furnishDefaults;
+    const opts: FurnishOptions = {
+      density: furnish?.density ?? defaults?.density ?? 'normal',
+      decor: furnish?.decor ?? defaults?.decor ?? 0.35,
+      aisle: furnish?.aisle ?? defaults?.aisle ?? 1,
+      ...(furnish?.seats !== undefined && { seatsTarget: furnish.seats }),
+    };
+    const roomRand = rngFor(seed, furnish?.seed !== undefined ? `room:${room.id}:${furnish.seed}` : `room:${room.id}`);
+    const recipe = furnishRoom(room.type, interior, roomRand, opts);
     const blocked = new Set<string>();
     const keptItems: (RecipeItem & { roomId: string; roomType: RoomType })[] = [];
     for (const item of recipe.furniture) {
@@ -466,13 +591,16 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     // Local reachability retry (step 8): flood fill this room's interior from its door aprons,
     // discounting blocking furniture; if a seat or > 10% of the floor is unreachable, drop the last
     // blocking item and retry.
-    const aprons = [...reserved].map((k) => {
-      const [x, y] = k.split(',').map(Number);
-      return { x: x!, y: y! };
-    });
-    const localReach = (blockedSet: Set<string>): Set<string> => {
+    const aprons = reserved.size
+      ? [...reserved].map((k) => {
+          const [x, y] = k.split(',').map(Number);
+          return { x: x!, y: y! };
+        })
+      : room.walled
+        ? [] // a sealed walled room: no apron, but any interior cell is as good a start as another below
+        : openRoomEntryPoints(interior, tiles);
+    const localReach = (blockedSet: Set<string>, starts: readonly Point[]): Set<string> => {
       const seen = new Set<string>();
-      const starts = aprons.length ? aprons : rectCells(interior).slice(0, 1);
       const queue: Point[] = [];
       for (const s of starts) {
         if (!insideRect(s, interior) || blockedSet.has(key(s))) continue;
@@ -493,13 +621,28 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
       }
       return seen;
     };
+    const reachStarts = aprons.length ? aprons : rectCells(interior).slice(0, 1);
+    const totalFloor = interior.w * interior.h;
     let guard = keptItems.length;
     while (guard-- > 0) {
-      const reach = localReach(blocked);
-      const totalFloor = interior.w * interior.h;
+      const reach = localReach(blocked, reachStarts);
       const unreachableSeats = seats.filter((s) => !reach.has(key(s)));
-      const unreachableFloor = totalFloor - reach.size;
-      if (unreachableSeats.length === 0 && unreachableFloor <= totalFloor * 0.1) break;
+      // The 10% tolerance is against the WALKABLE floor (interior minus blocking furniture), not the
+      // whole interior (M8 8n fix): a denser recipe can legitimately cover 60-85% of the room in
+      // furniture by design, and none of that occupied area is "unreachable" - it's just occupied.
+      // Measuring against the whole interior made any density above ~10% coverage strip itself back
+      // down to ~10% every time, defeating the point of `dense`/`packed`.
+      const walkableFloor = totalFloor - blocked.size;
+      const unreachableFloor = walkableFloor - reach.size;
+      // A room with several doors (a throughfare between two clusters, e.g. DEFAULT_LAYOUT's qa-lab)
+      // can pass the checks above from the COMBINED apron set while still walling one door's area off
+      // from another's - which cuts off everything only reachable through that specific door, even
+      // though this room's own tiles still look "reachable" globally (via whichever door IS on the
+      // spawn side). Reachability from spawn needs every door mutually reachable from every other one.
+      const firstOpenApron = aprons.find((a) => !blocked.has(key(a)));
+      const reachFromOneApron = firstOpenApron ? localReach(blocked, [firstOpenApron]) : reach;
+      const doorsMutuallyConnected = aprons.every((a) => blocked.has(key(a)) || reachFromOneApron.has(key(a)));
+      if (unreachableSeats.length === 0 && unreachableFloor <= Math.max(1, walkableFloor) * 0.1 && doorsMutuallyConnected) break;
       let lastBlockingIdx = -1;
       for (let i = keptItems.length - 1; i >= 0; i--) {
         if (keptItems[i]!.blocking) {
@@ -512,6 +655,18 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
       for (const c of rectCells({ x: removed.x, y: removed.y, w: removed.w, h: removed.h })) blocked.delete(key(c));
     }
     furniture.push(...keptItems);
+
+    // Seat target shortfall (M8 8n): "place exactly N seats when feasible, else as many as fit and
+    // report a warning" - `unreachable-seat` is the closest existing issue code for a seat that
+    // didn't work out.
+    if (recipe.seatsShortfall && seats.length < recipe.seatsShortfall.wanted) {
+      issues.push({
+        severity: 'warning',
+        code: 'unreachable-seat',
+        message: `Only ${seats.length} of ${recipe.seatsShortfall.wanted} requested seats fit in room "${room.name ?? room.id}".`,
+        roomIds: [room.id],
+      });
+    }
 
     generatedRooms.push({
       id: room.id,
@@ -552,19 +707,23 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
 
   // --- 11. verify ----------------------------------------------------------------------------------
   const reach = reachableFrom(walkable, spawn);
+  let unreachableSeatsTotal = 0;
   for (const gr of generatedRooms) {
     if (gr.type === 'stairs' || gr.type === 'hall') continue;
     const tilesInRoom = rectCells(gr.interior).filter((p) => reach.has(key(p)));
     gr.tiles = tilesInRoom;
+    // Seats are filtered against the global `reach` set regardless of whether the room has ANY
+    // reachable tile, so `reachability.unreachableSeats` (below) counts every seat a fully sealed
+    // room's recipe placed too, not just ones in a partially-blocked room.
+    const beforeSeats = gr.seats.length;
+    gr.seats = gr.seats.filter((s) => reach.has(key(s)));
+    unreachableSeatsTotal += beforeSeats - gr.seats.length;
+    if (gr.seats.length < beforeSeats) {
+      issues.push({ severity: 'warning', code: 'unreachable-seat', message: `Some seats in room "${gr.name ?? gr.id}" are unreachable from the spawn and were dropped.`, roomIds: [gr.id] });
+    }
     if (tilesInRoom.length === 0) {
       issues.push({ severity: 'error', code: 'unreachable-room', message: `No tile in room "${gr.name ?? gr.id}" is reachable from the spawn.`, roomIds: [gr.id] });
       continue;
-    }
-    const reachSet = new Set(tilesInRoom.map(key));
-    const before = gr.seats.length;
-    gr.seats = gr.seats.filter((s) => reachSet.has(key(s)));
-    if (gr.seats.length < before) {
-      issues.push({ severity: 'warning', code: 'unreachable-seat', message: `Some seats in room "${gr.name ?? gr.id}" are unreachable from the spawn and were dropped.`, roomIds: [gr.id] });
     }
     if (gr.seats.length < 12) {
       const seatKeys = new Set(gr.seats.map(key));
@@ -636,6 +795,14 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
       const t = free.splice(idx, 1)[0]!;
       decor.push({ x: t.x, y: t.y, kind: 'floor-scatter', roomId: gr.id, variant: randInt(roomDecorRand, 0, 3) });
     }
+    // Density-scaled decor furniture (M8 8n): plants/rugs/lamps/crates/banners/wall-art/bins along
+    // walls/corners, never blocking. Runs after the reachability retry above and only ever touches
+    // `free` cells, so it can never be the thing that seals off a seat or a door apron.
+    const spec = roomSpecById.get(gr.id);
+    const decorAmount = spec?.furnish?.decor ?? layout.furnishDefaults?.decor ?? 0.35;
+    const stillFree = free.filter((t) => !decor.some((d) => d.roomId === gr.id && d.x === t.x && d.y === t.y));
+    const decorItems = decorateRoom(gr.interior, stillFree, decorAmount, roomDecorRand);
+    for (const item of decorItems) furniture.push({ ...item, roomId: gr.id, roomType: gr.type });
   }
 
   // --- doors (public shape) ----------------------------------------------------------------------
@@ -645,12 +812,64 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     roomId: d.roomId,
     to: d.to,
     vertical: d.side === 'left' || d.side === 'right',
+    side: LOCAL_TO_SHARED_SIDE[d.side],
+    offset: d.offset,
+    width: d.width,
+    auto: d.auto,
   }));
 
   const zoneAt: (Zone | null)[][] = grid(cols, rows, null);
   for (const gr of generatedRooms) {
     if (!isZoneRoomType(gr.type)) continue;
     for (const p of rectCells(gr.interior)) zoneAt[p.y]![p.x] = gr.type;
+  }
+
+  // --- reachability report (M8 8n) ---------------------------------------------------------------
+  // "verify every room reachable" (the user's accessibility ask): explain *why* each unreachable
+  // room can't be reached, and suggest a door that would fix it.
+  const suggestDoor = (room: RoomShape): DoorSpec | undefined => {
+    const candidates: { side: Side; touches: boolean }[] = [
+      { side: 'bottom', touches: room.footprint.y + room.footprint.h < rows },
+      { side: 'left', touches: room.footprint.x > 0 },
+      { side: 'right', touches: room.footprint.x + room.footprint.w < cols },
+      { side: 'top', touches: room.footprint.y > 0 },
+    ];
+    const len = (side: Side) => (side === 'top' || side === 'bottom' ? room.footprint.w : room.footprint.h);
+    for (const c of candidates) {
+      if (!c.touches) continue;
+      const sideLen = len(c.side);
+      if (sideLen < 3) continue; // no valid non-corner offset for a 1-wide door
+      const offset = Math.max(1, Math.floor(sideLen / 2));
+      if (offset > sideLen - 2) continue;
+      const dir = SIDE_DIR[c.side];
+      const first = c.side === 'top' || c.side === 'bottom'
+        ? { x: room.footprint.x + offset, y: c.side === 'top' ? room.footprint.y : room.footprint.y + room.footprint.h - 1 }
+        : { x: c.side === 'left' ? room.footprint.x : room.footprint.x + room.footprint.w - 1, y: room.footprint.y + offset };
+      const out = { x: first.x + dir.x, y: first.y + dir.y };
+      if (!inBounds(out)) continue;
+      const outTile = tiles[out.y]![out.x];
+      if (outTile === 'wall' && (room.walled === false)) continue; // nowhere to open into
+      return { side: LOCAL_TO_SHARED_SIDE[c.side], offset, width: 1 };
+    }
+    return undefined;
+  };
+
+  const unreachableRooms: UnreachableRoom[] = [];
+  for (const gr of generatedRooms) {
+    if (gr.type === 'stairs' || gr.type === 'hall') continue;
+    if (gr.tiles.length > 0) continue;
+    const spec = roomSpecById.get(gr.id);
+    const roomShape = rooms.find((r) => r.id === gr.id)!;
+    let reason: UnreachableReason;
+    if (spec?.doors !== undefined && spec.doors.length === 0) {
+      reason = 'sealed';
+    } else if ((apronsByRoom.get(gr.id)?.size ?? 0) === 0) {
+      reason = 'no-corridor';
+    } else {
+      reason = 'blocked-by-furniture';
+    }
+    const suggestion = suggestDoor(roomShape);
+    unreachableRooms.push({ roomId: gr.id, reason, ...(suggestion && { suggestion }) });
   }
 
   return {
@@ -673,5 +892,6 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = []): GeneratedM
     spawn,
     frontDoor,
     issues,
+    reachability: { unreachableRooms, unreachableSeats: unreachableSeatsTotal },
   };
 }

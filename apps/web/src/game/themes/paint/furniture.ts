@@ -5,6 +5,10 @@ import { darken, lighten, rectFn, type RectFn } from './util';
 type Painter = (g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn) => void;
 
 const BOOK_COLORS = [0xb5433a, 0x3a7ab5, 0x5aa04a, 0xd6a852, 0x8a4ab5, 0xe07a3a, 0x3ab5a0];
+// Decor seed palettes (M8 8n): 2-3 seeded variants per decor kind, picked by `f.variant`.
+const CRATE_COLORS = [0x8a6a3a, 0x5a6a7a, 0x6a7a4a];
+const WALL_ART_COLORS = [0x5fb8ff, 0x6cf08a, 0xffa94a];
+const BANNER_COLORS_MODERN = [0xff5a5a, 0x5fb8ff, 0x6cf08a];
 
 /** Deterministic per-item variety without a shared RNG stream (furniture has no `rand` argument). */
 function pick<T>(arr: readonly T[], seed: number): T {
@@ -158,12 +162,15 @@ const MODERN: Record<FurnitureKind, Painter> = {
     rect(0xf5f5f5, x + 6, y + 10, 4, 3);
   },
   mat: (g, f, T, rect) => {
+    // A patterned entrance doormat (style pass: navy with a white motif).
     const x = f.x * T;
     const y = f.y * T;
     const w = f.w * T;
     const h = f.h * T;
-    rect(0x7a2a2a, x, y + 2, w, h - 4);
-    rect(0x9a3a3a, x + 2, y + 4, w - 4, h - 8);
+    rect(0x1c2a4a, x, y + 2, w, h - 4);
+    rect(0x24325a, x + 2, y + 4, w - 4, h - 8);
+    rect(0xe8e4da, x + 2, y + Math.floor(h / 2), w - 4, 1, 0.8);
+    rect(0xe8e4da, x + Math.floor(w / 2), y + 4, 1, h - 8, 0.8);
   },
   rug: (g, f, T, rect) => {
     const x = f.x * T;
@@ -203,6 +210,180 @@ const MODERN: Record<FurnitureKind, Painter> = {
   },
   'stairs-up': (g, f, T, rect) => paintModernStairs(g, f, T, rect, true),
   'stairs-down': (g, f, T, rect) => paintModernStairs(g, f, T, rect, false),
+  // M8 8n (furnishing engine): server racks, consoles, benches and decor so rooms fill by density
+  // instead of leaving floor empty. `rack-row`/`shelf-stack`/`lab-bench` tile per-tile across
+  // whatever `f.w`/`f.h` the recipe (or a test fixture) hands them.
+  'rack-row': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const h = f.h * T;
+    rect(0x000000, x + 1, y + h - 1, w, 3, 0.3);
+    rect(0x1b1e26, x + 1, y, w - 2, h);
+    const LED = [0x4bffa0, 0xffd84a, 0xff5a5a];
+    for (let row = 0; row < f.h; row++) {
+      const ry = y + row * T;
+      rect(0x2e3440, x + 2, ry + 2, w - 4, T - 6);
+      rect(pick(LED, f.variant + row), x + w - 5, ry + 3, 2, 2);
+    }
+    rect(lighten(0x1b1e26, 0.12), x + 1, y, w - 2, 1);
+  },
+  console: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const h = f.h * T;
+    rect(0x000000, x + 1, y + h - 2, w - 2, 3, 0.25);
+    rect(0x3a3a44, x, y + h - 6, w, 6);
+    rect(0x22252e, x + 2, y - 2, w - 4, h - 6);
+    rect(0x5fb8ff, x + 3, y - 1, w - 8, h - 9);
+    rect(0xa8dcff, x + 4, y, 3, 1);
+  },
+  'lab-bench': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 1, y + 13, w - 2, 3, 0.25);
+    rect(0x7c8a96, x, y + 2, w, 12);
+    rect(0xdde4ea, x, y + 2, w, 8);
+    for (let i = 0; i < f.w; i++) {
+      const c = pick([0x7ef0a0, 0x50e3c2, 0xffa94a, 0xb48cff, 0xff6f91], f.variant + i);
+      rect(0xd9eef7, x + i * T + 3, y - 3, 3, 7);
+      rect(c, x + i * T + 3, y + 1, 3, 3);
+      rect(0x22252e, x + i * T + 9, y - 1, 2, 5);
+      rect(0xff8a3a, x + i * T + 9, y + 2, 2, 2, 0.8);
+    }
+  },
+  equipment: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const h = f.h * T;
+    rect(0x000000, x + 1, y + h - 2, w - 2, 3, 0.25);
+    rect(0x2a2e38, x, y, w, h);
+    rect(0x3a4048, x + 2, y + 2, w - 4, h - 6);
+    rect(0x5fb8ff, x + 3, y + 3, w - 6, 4, 0.85);
+    const LED = [0x4bffa0, 0xffd84a, 0xff5a5a];
+    for (let i = 0; i < 3; i++) rect(pick(LED, f.variant + i), x + 3 + i * 3, y + h - 5, 2, 2);
+  },
+  'shelf-stack': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const h = f.h * T;
+    rect(0x33363f, x, y, w, h);
+    rect(0x22252e, x + 1, y + Math.max(1, h - 3), w - 2, 1);
+    let bx = x + 2;
+    let i = 0;
+    while (bx < x + w - 2) {
+      const bw = 1 + (i % 3);
+      const bh = Math.min(Math.max(1, h - 4), 3 + (i % 3));
+      rect(pick(BOOK_COLORS, f.variant + i), bx, y + Math.max(1, h - 3) - bh, bw, bh);
+      bx += bw + (i % 4 === 0 ? 2 : 0);
+      i++;
+    }
+  },
+  'reading-table': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 13, Math.max(1, w - 4), 3, 0.25);
+    rect(0x6a4a30, x, y + 2, w, 11);
+    rect(0x9a7450, x + 1, y + 2, w - 2, 7);
+    rect(0xf5f0e0, x + 3, y + 3, 6, 4);
+    rect(0xffd84a, x + w - 6, y - 1, 2, 2, 0.85);
+  },
+  'standing-table': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 13, Math.max(1, w - 4), 3, 0.2);
+    rect(0x2e323a, x, y + 4, w, 3);
+    rect(0x1c1f24, x + 3, y + 7, 2, 6);
+    rect(0x1c1f24, x + w - 5, y + 7, 2, 6);
+    rect(0x22252e, x + 3, y - 2, Math.max(1, w - 6), 5);
+    rect(0x5fb8ff, x + 4, y - 1, Math.max(1, w - 8), 3);
+  },
+  'reception-desk': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 1, y + 13, w - 2, 3, 0.25);
+    rect(0x3a4a5a, x, y + 3, w, 11);
+    rect(0x51697c, x, y + 3, w, 4);
+    rect(0x22252e, x + 3, y - 2, 8, 6);
+    rect(0x5fb8ff, x + 4, y - 1, 6, 4);
+    rect(0xf5f5f5, x + w - 8, y + 5, 6, 3);
+  },
+  bench: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 1, y + 13, w - 2, 3, 0.2);
+    rect(0x4a4f58, x, y + 3, w, 2);
+    rect(0x3a3f47, x, y + 6, w, 3);
+    rect(0x2a2e35, x + 1, y + 9, 2, 5);
+    rect(0x2a2e35, x + w - 3, y + 9, 2, 5);
+  },
+  lamp: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    rect(0x000000, x + 5, y + 14, 6, 2, 0.2);
+    rect(0x2a2e35, x + 7, y + 6, 2, 8);
+    rect(0x3a3f47, x + 5, y + 14, 6, 1);
+    rect(0xffe6a0, x + 4, y, 8, 6, 0.85);
+    rect(0xfff6d8, x + 6, y + 2, 4, 2, 0.5);
+  },
+  crate: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const c = pick(CRATE_COLORS, f.variant);
+    rect(0x000000, x + 2, y + 13, 12, 3, 0.2);
+    rect(c, x + 2, y + 3, 12, 11);
+    rect(darken(c, 0.25), x + 2, y + 3, 12, 2);
+    rect(darken(c, 0.35), x + 3, y + 7, 10, 1);
+  },
+  'wall-art': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const c = pick(WALL_ART_COLORS, f.variant);
+    rect(0x1b1e26, x + 2, y + 1, 12, 10);
+    rect(c, x + 3, y + 2, 10, 8, 0.9);
+    rect(lighten(c, 0.3), x + 4, y + 3, 4, 3, 0.6);
+  },
+  bin: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    rect(0x000000, x + 4, y + 14, 8, 2, 0.2);
+    rect(0x3a3f47, x + 4, y + 5, 8, 9);
+    rect(0x2a2e35, x + 4, y + 5, 8, 2);
+    rect(0x51565f, x + 5, y + 8, 6, 5, 0.6);
+  },
+  cabinet: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    rect(0x000000, x + 2, y + 14, 12, 2, 0.2);
+    rect(0x4a4f58, x + 2, y + 1, 12, 13);
+    rect(0x353a42, x + 2, y + 6, 12, 1);
+    rect(0x5fb8ff, x + 3, y + 2, 2, 1);
+    rect(0x5fb8ff, x + 3, y + 8, 2, 1);
+  },
+  chair: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    rect(0x000000, x + 4, y + 14, 8, 2, 0.2);
+    rect(0x2a2e35, x + 7, y + 9, 2, 5);
+    rect(0x3a4a5a, x + 4, y + 3, 8, 7);
+    rect(0x51697c, x + 4, y + 3, 8, 2);
+  },
+  banner: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const c = pick(BANNER_COLORS_MODERN, f.variant);
+    rect(0x2a2e35, x + 7, y, 1, 15);
+    rect(c, x + 8, y + 1, 6, 5, 0.9);
+    rect(lighten(c, 0.3), x + 8, y + 1, 6, 1);
+  },
 };
 
 function paintModernStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn, up: boolean): void {
@@ -475,6 +656,192 @@ const GUILD: Record<FurnitureKind, Painter> = {
   },
   'stairs-up': (g, f, T, rect) => paintGuildStairs(g, f, T, rect, true),
   'stairs-down': (g, f, T, rect) => paintGuildStairs(g, f, T, rect, false),
+  // M8 8n (furnishing engine): arcane counterparts of the same new kinds.
+  'rack-row': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const h = f.h * T;
+    // A tall rune-etched pylon, one crystal cabinet segment per row.
+    rect(0x1c2230, x + 1, y, w - 2, h);
+    const ORB = [0x2c7a7a, 0x6ff5ff, 0x9a6bff];
+    for (let row = 0; row < f.h; row++) {
+      const ry = y + row * T;
+      rect(darken(0x1c2230, 0.15), x + 2, ry + 1, w - 4, T - 2, 0.5);
+      rect(pick(ORB, f.variant + row), x + Math.floor(w / 2) - 1, ry + 5, 2, 2, 0.85);
+    }
+    rect(lighten(0x1c2230, 0.15), x + 1, y, w - 2, 1);
+  },
+  console: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const h = f.h * T;
+    // A scrying console: a stone stand topped by a glowing mirror.
+    rect(0x000000, x + 1, y + h - 2, w - 2, 3, 0.2);
+    rect(0x3a3446, x, y + h - 6, w, 6);
+    rect(0x2c1c30, x + 2, y - 2, w - 4, h - 6);
+    g.fillStyle(0x6ff5ff, 0.85);
+    g.fillCircle(x + w / 2, y + h / 2 - 3, Math.max(2, w / 4));
+    g.fillStyle(0xffffff, 0.6);
+    g.fillCircle(x + w / 2 - 1, y + h / 2 - 4, 1);
+  },
+  'lab-bench': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    // An alchemy bench lined with coloured flasks.
+    rect(0x000000, x + 1, y + 13, w - 2, 3, 0.22);
+    rect(0x4a3826, x, y + 2, w, 12);
+    rect(0x6b4f38, x, y + 2, w, 8);
+    for (let i = 0; i < f.w; i++) {
+      const c = pick([0x7ef0a0, 0xff8a3a, 0xb48cff, 0x6ff5ff], f.variant + i);
+      rect(0xd9eef7, x + i * T + 4, y - 3, 3, 6);
+      rect(c, x + i * T + 4, y, 3, 3);
+      rect(WOOD_DARK, x + i * T + 9, y - 1, 2, 5);
+    }
+  },
+  equipment: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const h = f.h * T;
+    // A brass-and-glass alchemical apparatus.
+    rect(0x000000, x + 1, y + h - 2, w - 2, 3, 0.2);
+    rect(0x3a2e1c, x, y, w, h);
+    rect(GOLD, x + 2, y + 2, w - 4, 2, 0.8);
+    g.fillStyle(0x6ff5ff, 0.8);
+    g.fillCircle(x + w / 2, y + h / 2 + 1, Math.max(2, Math.min(w, h) / 3));
+    rect(darken(GOLD, 0.3), x + 2, y + h - 4, w - 4, 2);
+  },
+  'shelf-stack': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const h = f.h * T;
+    // A low tome stack / lectern shelf, one row tall.
+    rect(WOOD_DARK, x, y, w, h);
+    let bx = x + 2;
+    let i = 0;
+    while (bx < x + w - 2) {
+      const bw = 1 + (i % 3);
+      const bh = Math.min(Math.max(1, h - 3), 3 + (i % 3));
+      rect(pick(BOOK_COLORS, f.variant + i), bx, y + Math.max(1, h - 3) - bh, bw, bh);
+      bx += bw + (i % 4 === 0 ? 2 : 0);
+      i++;
+    }
+  },
+  'reading-table': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 13, Math.max(1, w - 4), 3, 0.22);
+    rect(WOOD_DARK, x, y + 2, w, 11);
+    rect(WOOD, x + 1, y + 2, w - 2, 7);
+    rect(0xe8d9b0, x + 3, y + 3, 6, 4);
+    candleAndScroll(rect, x + w - 6, y);
+  },
+  'standing-table': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 13, Math.max(1, w - 4), 3, 0.2);
+    rect(WOOD_DARK, x, y + 4, w, 3);
+    rect(WOOD_DARK, x + 3, y + 7, 2, 6);
+    rect(WOOD_DARK, x + w - 5, y + 7, 2, 6);
+    rect(0xe8d9b0, x + 3, y - 1, Math.max(1, w - 6), 4);
+  },
+  'reception-desk': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    // The Guild Gate's welcome desk.
+    rect(0x000000, x + 1, y + 13, w - 2, 3, 0.22);
+    rect(WOOD_DARK, x, y + 3, w, 11);
+    rect(WOOD, x, y + 3, w, 4);
+    rect(GOLD, x + w - 8, y - 2, 6, 6);
+    candleAndScroll(rect, x + 3, y);
+  },
+  bench: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    // A tavern-style bench for the Guild Gate.
+    rect(0x000000, x + 1, y + 13, w - 2, 3, 0.2);
+    rect(WOOD_DARK, x, y + 5, w, 9);
+    rect(WOOD, x, y + 5, w, 3);
+    for (let i = 1; i < f.w; i++) rect(WOOD_DARK, x + i * T, y + 5, 1, 9);
+  },
+  lamp: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    // A wrought-iron candelabra.
+    rect(0x000000, x + 5, y + 14, 6, 2, 0.2);
+    rect(0x2a2a33, x + 7, y + 6, 2, 8);
+    rect(0x2a2a33, x + 4, y + 5, 8, 1);
+    rect(0xffd84a, x + 4, y + 2, 2, 3, 0.85);
+    rect(0xffd84a, x + 7, y, 2, 3, 0.85);
+    rect(0xffd84a, x + 10, y + 2, 2, 3, 0.85);
+  },
+  crate: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    const c = pick([0x8a5a2b, 0x6b4424, 0x5a3a1e], f.variant);
+    rect(0x000000, x + 3, y + 13, 10, 3, 0.2);
+    rect(c, x + 3, y + 3, 10, 11);
+    rect(darken(c, 0.3), x + 3, y + 6, 10, 1);
+    rect(darken(c, 0.3), x + 3, y + 10, 10, 1);
+  },
+  'wall-art': (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    // A hanging tapestry.
+    const c = pick([0x8a1f2b, 0x1f3a8a, 0x3a5a2b], f.variant);
+    rect(WOOD_DARK, x + 2, y, 12, 1);
+    rect(c, x + 2, y + 1, 12, 11, 0.9);
+    rect(GOLD, x + 3, y + 2, 10, 1, 0.7);
+    rect(GOLD, x + 3, y + 10, 10, 1, 0.7);
+  },
+  bin: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    // An ash barrel.
+    rect(0x000000, x + 4, y + 14, 8, 2, 0.2);
+    rect(0x4a2c14, x + 4, y + 5, 8, 9);
+    rect(0x6b4424, x + 4, y + 5, 8, 2);
+    rect(0x3a1f0e, x + 5, y + 9, 6, 1);
+  },
+  cabinet: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    // A rune-etched wardrobe.
+    rect(0x000000, x + 2, y + 14, 12, 2, 0.2);
+    rect(WOOD_DARK, x + 2, y + 1, 12, 13);
+    rect(WOOD, x + 2, y + 1, 12, 3);
+    rect(0x6ff5ff, x + 3, y + 7, 2, 1, 0.6);
+    rect(0x6ff5ff, x + 7, y + 9, 2, 1, 0.6);
+  },
+  chair: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    // A tavern stool with a low backrest.
+    rect(WOOD_DARK, x + 4, y, 1, 5);
+    rect(WOOD_DARK, x + 4, y, 8, 1);
+    rect(WOOD_DARK, x + 4, y + 4, 8, 3);
+    rect(WOOD, x + 4, y + 4, 8, 1);
+    rect(WOOD_DARK, x + 5, y + 7, 1, 6);
+    rect(WOOD_DARK, x + 10, y + 7, 1, 6);
+  },
+  banner: (g, f, T, rect) => {
+    const x = f.x * T;
+    const y = f.y * T;
+    // A heraldic banner (star/key/tower emblem, seeded by variant).
+    const c = pick([0x8a1f2b, 0x1f3a8a, 0x3a5a2b], f.variant);
+    rect(WOOD_DARK, x + 7, y, 1, 15);
+    rect(c, x + 8, y + 1, 6, 9, 0.92);
+    rect(GOLD, x + 9, y + 3, 4, 1, 0.8);
+    rect(GOLD, x + 10, y + 5, 2, 1, 0.8);
+  },
 };
 
 function paintGuildStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn, up: boolean): void {

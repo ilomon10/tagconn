@@ -6,6 +6,28 @@ type Painter = (g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, r
 
 const CRYSTAL = 0x2a3a6a;
 const CRYSTAL_EDGE = 0x6ff5ff;
+const VOID_DARK = 0x0e0b14;
+// 2-3 seeded accent hues for the decor props (cyan / violet / magenta rift palette).
+const RIFT_ACCENTS = [0x6ff5ff, 0x9a6bff, 0xd94ff0];
+
+/** Deterministic per-item variety without a shared RNG stream (furniture has no `rand` argument),
+ *  mirroring `furniture.ts`'s `pick` helper. */
+function pick<T>(arr: readonly T[], seed: number): T {
+  return arr[((seed % arr.length) + arr.length) % arr.length]!;
+}
+
+/** A small void-socketed prop with a glowing crystal core, seeded by `f.variant` — used for the
+ *  decor kinds (lamp/crate/wall-art/bin/cabinet/chair/banner) so they read as distinct crystalline
+ *  variants instead of one repeated block. */
+function paintCrystalProp(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn): void {
+  const x = f.x * T;
+  const y = f.y * T;
+  const accent = pick(RIFT_ACCENTS, f.variant);
+  rect(0x000000, x + 4, y + 14, 8, 2, 0.2);
+  rect(VOID_DARK, x + 4, y + 4, 8, 10);
+  rect(accent, x + 5, y + 5, 6, 3, 0.7);
+  rect(lighten(accent, 0.3), x + 5, y + 5, 6, 1, 0.5);
+}
 
 /** A plain crystal block: rift furniture is never actually rendered in practice (every realm room
  *  is always covered by its project's own region theme — see `renderTheme.ts`'s `themeAt`), but
@@ -61,6 +83,26 @@ const RIFT: Record<FurnitureKind, Painter> = {
   },
   'stairs-up': (g, f, T, rect) => paintRiftStairs(g, f, T, rect, true),
   'stairs-down': (g, f, T, rect) => paintRiftStairs(g, f, T, rect, false),
+  // M8 8n (furnishing engine): the multi-tile/blocking kinds stay plain crystal blocks (they
+  // already tile cleanly across whatever `f.w`/`f.h` they get, matching every other rift item —
+  // this theme is never actually rendered in practice, see the comment above). The small decor
+  // kinds get a seeded crystalline prop instead, for variety in the (unused) exhaustive contract.
+  'rack-row': paintCrystalBlock,
+  console: paintCrystalBlock,
+  'lab-bench': paintCrystalBlock,
+  equipment: paintCrystalBlock,
+  'shelf-stack': paintCrystalBlock,
+  'reading-table': paintCrystalBlock,
+  'standing-table': paintCrystalBlock,
+  'reception-desk': paintCrystalBlock,
+  bench: paintCrystalBlock,
+  lamp: paintCrystalProp,
+  crate: paintCrystalProp,
+  'wall-art': paintCrystalProp,
+  bin: paintCrystalProp,
+  cabinet: paintCrystalProp,
+  chair: paintCrystalProp,
+  banner: paintCrystalProp,
 };
 
 export function paintRiftFurniture(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number): void {

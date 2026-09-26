@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type PointerEventHandler, type WheelEventHandler } from 'react';
-import { isRoomWalled, roomInterior, type LayoutIssue, type LayoutRoom, type RoomType } from '@tagconn/shared';
+import { isRoomWalled, roomInterior, type DoorSide, type DoorSpec, type LayoutIssue, type LayoutRoom, type RoomType } from '@tagconn/shared';
 import type { GeneratedMap } from '../../game/procgen';
 import type { ThemeDefinition } from '../../game/themes';
 import { isDragMove } from '../../game/camera/drag';
 import { zoomAboutPoint } from '../../game/camera/zoom';
 import { genRoomId, useEditorStore } from '../../stores/editorStore';
+import { autoDoorsForRoom } from './reachability';
 import { RoomTypePicker } from './RoomTypePicker';
 
 /** World pixels per tile at zoom = 1 (this is a schematic 2D plan, not the game's 16px tiles). */
@@ -38,12 +39,78 @@ interface Rect {
   h: number;
 }
 
+type DoorHandle = 'start' | 'end';
+
 type Mode =
   | { kind: 'none' }
   | { kind: 'pan'; startScreen: { x: number; y: number }; startScroll: { x: number; y: number } }
   | { kind: 'draw'; startTile: { x: number; y: number } }
   | { kind: 'move'; lastTile: { x: number; y: number }; moved: boolean }
-  | { kind: 'resize'; roomId: string; handle: Handle; anchor: Rect };
+  | { kind: 'resize'; roomId: string; handle: Handle; anchor: Rect }
+  | { kind: 'move-door'; roomId: string; index: number }
+  | { kind: 'resize-door'; roomId: string; index: number; handle: DoorHandle; anchor: DoorSpec };
+
+/** This room's doors as currently drawn: explicit if the layout has one, else the generator's auto
+ * placement (from `GeneratedMap.doors`, converted to `DoorSpec`s) — `[]` with `map` missing yet. */
+function effectiveDoors(map: GeneratedMap | null, room: LayoutRoom): { doors: DoorSpec[]; auto: boolean } {
+  if (room.doors !== undefined) return { doors: room.doors, auto: false };
+  return { doors: map ? autoDoorsForRoom(map, room) : [], auto: true };
+}
+
+/** World tiles a door occupies, in wall-ring order. */
+function doorTiles(room: LayoutRoom, door: DoorSpec): { x: number; y: number }[] {
+  const width = door.width ?? 1;
+  const x2 = room.x + room.w - 1;
+  const y2 = room.y + room.h - 1;
+  const tiles: { x: number; y: number }[] = [];
+  for (let i = 0; i < width; i++) {
+    const o = door.offset + i;
+    if (door.side === 'n') tiles.push({ x: room.x + o, y: room.y });
+    else if (door.side === 's') tiles.push({ x: room.x + o, y: y2 });
+    else if (door.side === 'w') tiles.push({ x: room.x, y: room.y + o });
+    else tiles.push({ x: x2, y: room.y + o });
+  }
+  return tiles;
+}
+
+/** The first and last tile a door occupies — where its resize handles sit. */
+function doorEndpoints(room: LayoutRoom, door: DoorSpec): { start: { x: number; y: number }; end: { x: number; y: number } } {
+  const tiles = doorTiles(room, door);
+  return { start: tiles[0]!, end: tiles[tiles.length - 1]! };
+}
+
+/** A non-corner wall-ring tile of a walled room, with its side and offset (n/s: from x; e/w: from y) —
+ * used by the Doors tool to add a door where the user clicks. */
+function wallHit(rooms: readonly LayoutRoom[], tile: { x: number; y: number }): { room: LayoutRoom; side: DoorSide; offset: number } | null {
+  for (let i = rooms.length - 1; i >= 0; i--) {
+    const room = rooms[i]!;
+    if (!isRoomWalled(room)) continue;
+    const x2 = room.x + room.w - 1;
+    const y2 = room.y + room.h - 1;
+    if (tile.y === room.y && tile.x > room.x && tile.x < x2) return { room, side: 'n', offset: tile.x - room.x };
+    if (tile.y === y2 && tile.x > room.x && tile.x < x2) return { room, side: 's', offset: tile.x - room.x };
+    if (tile.x === room.x && tile.y > room.y && tile.y < y2) return { room, side: 'w', offset: tile.y - room.y };
+    if (tile.x === x2 && tile.y > room.y && tile.y < y2) return { room, side: 'e', offset: tile.y - room.y };
+  }
+  return null;
+}
+
+/** The topmost door (any room) whose span covers this tile. */
+function hitDoorAt(
+  rooms: readonly LayoutRoom[],
+  map: GeneratedMap | null,
+  tile: { x: number; y: number },
+): { room: LayoutRoom; index: number; doors: DoorSpec[] } | null {
+  for (let i = rooms.length - 1; i >= 0; i--) {
+    const room = rooms[i]!;
+    if (!isRoomWalled(room)) continue;
+    const { doors } = effectiveDoors(map, room);
+    for (let j = 0; j < doors.length; j++) {
+      if (doorTiles(room, doors[j]!).some((t) => t.x === tile.x && t.y === tile.y)) return { room, index: j, doors };
+    }
+  }
+  return null;
+}
 
 export function PlanCanvas({
   generatedMap,
@@ -57,7 +124,7 @@ export function PlanCanvas({
   flashRoomIds: string[];
 }) {
   const store = useEditorStore();
-  const { draft, selection, tool, pendingRoomType, builtin } = store;
+  const { draft, selection, selectedDoor, tool, pendingRoomType, builtin } = store;
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [view, setView] = useState({ zoom: 1, scrollX: 0, scrollY: 0 });
@@ -68,6 +135,9 @@ export function PlanCanvas({
 
   const errorRoomIds = new Set(issues.filter((i) => i.severity === 'error').flatMap((i) => i.roomIds ?? []));
   const warningRoomIds = new Set(issues.filter((i) => i.severity === 'warning').flatMap((i) => i.roomIds ?? []));
+  // Optional-chained past `.reachability` too: defensive against an older/mid-flight generator build
+  // that hasn't populated it yet (see reachability.ts's doc comment).
+  const unreachableRoomIds = new Set((generatedMap?.reachability?.unreachableRooms ?? []).map((u) => u.roomId));
 
   // -------------------------------------------------------------- view: fit-to-container + zoom/pan
   const fitView = useCallback(() => {
@@ -164,8 +234,6 @@ export function PlanCanvas({
           }
         }
       }
-      ctx.fillStyle = '#f5c07a';
-      for (const d of generatedMap.doors) ctx.fillRect(originX + d.x * T + T * 0.3, originY + d.y * T + T * 0.3, T * 0.4, T * 0.4);
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       for (const f of generatedMap.furniture) ctx.fillRect(originX + f.x * T, originY + f.y * T, f.w * T, f.h * T);
       for (const seat of Object.values(generatedMap.zones).flatMap((z) => z.seats)) {
@@ -202,6 +270,24 @@ export function PlanCanvas({
       ctx.lineWidth = 1.5;
       ctx.strokeRect(fx, fy, fw, fh);
 
+      // Unreachable-room hatching (M8 8n): diagonal red stripes over the whole footprint, clipped to it.
+      if (unreachableRoomIds.has(room.id)) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(fx, fy, fw, fh);
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(239,68,68,0.55)';
+        ctx.lineWidth = Math.max(1, T * 0.08);
+        const step = Math.max(4, T * 0.5);
+        for (let d = -fh; d < fw + fh; d += step) {
+          ctx.beginPath();
+          ctx.moveTo(fx + d, fy);
+          ctx.lineTo(fx + d + fh, fy + fh);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
       const selected = selection.includes(room.id);
       const isError = errorRoomIds.has(room.id);
       const isWarning = warningRoomIds.has(room.id);
@@ -235,8 +321,36 @@ export function PlanCanvas({
       }
     }
 
-    // Resize handles for a single selection.
-    if (selection.length === 1) {
+    // Doors (M8 8n): auto doors (from the generator) dashed, explicit doors solid; the selected one
+    // (Doors tool) highlighted with end handles for resizing.
+    for (const room of draft.rooms) {
+      if (!isRoomWalled(room)) continue;
+      const { doors, auto } = effectiveDoors(generatedMap, room);
+      doors.forEach((door, index) => {
+        const isSelected = tool === 'doors' && selectedDoor?.roomId === room.id && selectedDoor.index === index;
+        ctx.strokeStyle = isSelected ? '#ffffff' : '#f5c07a';
+        ctx.fillStyle = auto ? 'rgba(245,192,122,0.25)' : 'rgba(245,192,122,0.85)';
+        ctx.lineWidth = isSelected ? 2.5 : 1.5;
+        if (auto) ctx.setLineDash([3, 2]);
+        for (const t of doorTiles(room, door)) {
+          const dx = originX + t.x * T;
+          const dy = originY + t.y * T;
+          ctx.fillRect(dx, dy, T, T);
+          ctx.strokeRect(dx + 1, dy + 1, T - 2, T - 2);
+        }
+        ctx.setLineDash([]);
+        if (isSelected) {
+          const { start, end } = doorEndpoints(room, door);
+          ctx.fillStyle = '#ffffff';
+          for (const p of [start, end]) {
+            ctx.fillRect(originX + p.x * T + T / 2 - 3, originY + p.y * T + T / 2 - 3, 6, 6);
+          }
+        }
+      });
+    }
+
+    // Resize handles for a single selection (not while the Doors tool has its own handles up).
+    if (selection.length === 1 && tool !== 'doors') {
       const room = draft.rooms.find((r) => r.id === selection[0]);
       if (room) {
         const fx = originX + room.x * T;
@@ -356,6 +470,36 @@ export function PlanCanvas({
     return { x: Math.max(0, x), y: Math.max(0, y), w, h };
   }
 
+  // ----------------------------------------------------------------------------------- door handles
+  /** The selected door's start/end resize handles, in screen space. */
+  function hitDoorHandle(screen: { x: number; y: number }): { roomId: string; index: number; handle: DoorHandle; anchor: DoorSpec } | null {
+    if (tool !== 'doors' || !selectedDoor) return null;
+    const room = draft!.rooms.find((r) => r.id === selectedDoor.roomId);
+    if (!room) return null;
+    const door = effectiveDoors(generatedMap, room).doors[selectedDoor.index];
+    if (!door) return null;
+    const { start, end } = doorEndpoints(room, door);
+    for (const [handle, tilePos] of [
+      ['start', start],
+      ['end', end],
+    ] as [DoorHandle, { x: number; y: number }][]) {
+      const s = toScreen((tilePos.x + 0.5) * WORLD_TILE_PX, (tilePos.y + 0.5) * WORLD_TILE_PX);
+      if (Math.hypot(screen.x - s.x, screen.y - s.y) <= HANDLE_HIT_PX) return { roomId: room.id, index: selectedDoor.index, handle, anchor: door };
+    }
+    return null;
+  }
+
+  /** How many tiles a door's `n`/`s` (x-axis) or `e`/`w` (y-axis) wall run has. */
+  const wallLength = (room: LayoutRoom, side: DoorSide) => (side === 'n' || side === 's' ? room.w : room.h);
+
+  /** Clamps a door rect so it stays strictly between the room's corners (matches `door-invalid`). */
+  function clampDoorRect(room: LayoutRoom, side: DoorSide, offset: number, width: number): { offset: number; width: number } {
+    const len = wallLength(room, side);
+    const w = Math.max(1, Math.min(3, width));
+    const o = Math.max(1, Math.min(len - 1 - w, offset));
+    return { offset: o, width: w };
+  }
+
   const onPointerDown: PointerEventHandler<HTMLCanvasElement> = (e) => {
     if (builtin) return; // read-only until "Duplicate to edit"
     canvasRef.current?.setPointerCapture(e.pointerId);
@@ -370,6 +514,37 @@ export function PlanCanvas({
     if (tool === 'room' || tool === 'stairs') {
       modeRef.current = { kind: 'draw', startTile: tile };
       setDrawRect({ x: tile.x, y: tile.y, w: 1, h: 1 });
+      return;
+    }
+    if (tool === 'doors') {
+      const doorHandleHit = hitDoorHandle(screen);
+      if (doorHandleHit) {
+        modeRef.current = { kind: 'resize-door', ...doorHandleHit };
+        store.beginGesture();
+        return;
+      }
+      const doorHit = hitDoorAt(draft.rooms, generatedMap, tile);
+      if (doorHit) {
+        // First edit on an auto-door room materializes it (so nothing jumps) before the drag starts.
+        store.ensureExplicitDoors(doorHit.room.id, doorHit.doors);
+        store.selectDoor(doorHit.room.id, doorHit.index);
+        modeRef.current = { kind: 'move-door', roomId: doorHit.room.id, index: doorHit.index };
+        store.beginGesture();
+        return;
+      }
+      const wall = wallHit(draft.rooms, tile);
+      if (wall) {
+        const { room, side, offset } = wall;
+        const len = wallLength(room, side);
+        const current = effectiveDoors(generatedMap, room).doors;
+        const width = e.shiftKey && offset + 2 <= len - 1 ? 2 : 1;
+        store.addDoor(room.id, { side, offset, width }, current);
+        store.selectDoor(room.id, current.length);
+        modeRef.current = { kind: 'none' };
+        return;
+      }
+      store.clearDoorSelection();
+      modeRef.current = { kind: 'none' };
       return;
     }
     // Select tool.
@@ -427,6 +602,33 @@ export function PlanCanvas({
       store.resizeRoomTo(mode.roomId, resizedRect(mode.anchor, mode.handle, tile));
       return;
     }
+    if (mode.kind === 'move-door') {
+      const room = draft.rooms.find((r) => r.id === mode.roomId);
+      const door = room?.doors?.[mode.index];
+      if (!room || !door) return;
+      const tile = toWorldTile(screen.x, screen.y);
+      const raw = door.side === 'n' || door.side === 's' ? tile.x - room.x : tile.y - room.y;
+      const { offset } = clampDoorRect(room, door.side, raw, door.width ?? 1);
+      if (offset !== door.offset) store.setDoorRect(room.id, mode.index, { offset });
+      return;
+    }
+    if (mode.kind === 'resize-door') {
+      const room = draft.rooms.find((r) => r.id === mode.roomId);
+      if (!room) return;
+      const tile = toWorldTile(screen.x, screen.y);
+      const raw = mode.anchor.side === 'n' || mode.anchor.side === 's' ? tile.x - room.x : tile.y - room.y;
+      const anchorWidth = mode.anchor.width ?? 1;
+      let rect: { offset: number; width: number };
+      if (mode.handle === 'end') {
+        rect = clampDoorRect(room, mode.anchor.side, mode.anchor.offset, raw - mode.anchor.offset + 1);
+      } else {
+        const fixedEnd = mode.anchor.offset + anchorWidth - 1;
+        const width = Math.max(1, Math.min(3, fixedEnd - raw + 1));
+        rect = clampDoorRect(room, mode.anchor.side, fixedEnd - width + 1, width);
+      }
+      store.setDoorRect(room.id, mode.index, rect);
+      return;
+    }
   };
 
   const onPointerUp: PointerEventHandler<HTMLCanvasElement> = (e) => {
@@ -447,7 +649,7 @@ export function PlanCanvas({
       }
       return;
     }
-    if (mode.kind === 'move' || mode.kind === 'resize') {
+    if (mode.kind === 'move' || mode.kind === 'resize' || mode.kind === 'move-door' || mode.kind === 'resize-door') {
       store.endGesture();
       return;
     }
@@ -472,7 +674,7 @@ export function PlanCanvas({
         className={
           tool === 'hand'
             ? 'cursor-grab active:cursor-grabbing'
-            : tool === 'room' || tool === 'stairs'
+            : tool === 'room' || tool === 'stairs' || tool === 'doors'
               ? 'cursor-crosshair'
               : 'cursor-default'
         }

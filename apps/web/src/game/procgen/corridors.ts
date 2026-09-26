@@ -10,6 +10,9 @@ export interface ExitCandidate {
   doorTile: Point | null;
   voidTile: Point;
   side: Side;
+  /** M8 8n: true for a synthetic exit built from an explicit `room.doors` entry (not a wall opening
+   *  the generator chose on its own), so the resulting `Door.auto` can be reported as `false`. */
+  explicit?: boolean;
 }
 
 /** Every place a corridor could leave a room: a footprint edge tile whose outward neighbour is void. */

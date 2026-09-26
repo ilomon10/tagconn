@@ -52,9 +52,12 @@ describe('resolveShortcut', () => {
     expect(resolveShortcut(key({ key: 'v' }))).toEqual({ type: 'tool', tool: 'select' });
     expect(resolveShortcut(key({ key: 'r' }))).toEqual({ type: 'tool', tool: 'room' });
     expect(resolveShortcut(key({ key: 's' }))).toEqual({ type: 'tool', tool: 'stairs' });
+    expect(resolveShortcut(key({ key: 'd' }))).toEqual({ type: 'tool', tool: 'doors' });
     expect(resolveShortcut(key({ key: 'h' }))).toEqual({ type: 'tool', tool: 'hand' });
     expect(resolveShortcut(key({ key: ' ' }))).toEqual({ type: 'tool', tool: 'hand' });
     expect(resolveShortcut(key({ key: 's', ctrlKey: true }))).toEqual({ type: 'save' });
+    // Ctrl/Cmd+D stays "duplicate", not the Doors tool.
+    expect(resolveShortcut(key({ key: 'd', ctrlKey: true }))).toEqual({ type: 'duplicate' });
   });
 
   it('maps the 1-9/0 room-type hotkeys', () => {

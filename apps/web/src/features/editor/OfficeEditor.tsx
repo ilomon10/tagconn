@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { hasLayoutErrors, validateLayout, type OfficeStyle } from '@tagconn/shared';
+import { validateLayout, type DoorSpec, type OfficeStyle } from '@tagconn/shared';
 import { generateMap, generateRandomLayout, type GeneratedMap } from '../../game/procgen';
 import { getTheme } from '../../game/themes';
 import { ALL_FLOORS, useOfficeStore } from '../../stores/officeStore';
@@ -8,6 +8,8 @@ import { useLayoutStore, layoutForProject } from '../../stores/layoutStore';
 import { draftAsLayout, useEditorStore, type EditorTool } from '../../stores/editorStore';
 import { assignLayout, classifySaveLayoutError, deleteLayout, refreshLayouts, saveLayout } from '../../lib/layoutCommands';
 import { resolveShortcut, type KeyLike } from './shortcuts';
+import { autoDoorsForRoom } from './reachability';
+import { canSaveLayout, sealedRoomWarnings } from './saveGate';
 import { PlanCanvas } from './PlanCanvas';
 import { Inspector } from './Inspector';
 import { IssueList } from './IssueList';
@@ -18,11 +20,12 @@ const TOOLS: { tool: EditorTool; label: string; hotkey: string }[] = [
   { tool: 'select', label: 'Select', hotkey: 'V' },
   { tool: 'room', label: 'Room', hotkey: 'R' },
   { tool: 'stairs', label: 'Stairs', hotkey: 'S' },
+  { tool: 'doors', label: 'Doors', hotkey: 'D' },
   { tool: 'hand', label: 'Hand', hotkey: 'H / Space' },
 ];
 
 const HELP_LINES = [
-  ['V / R / S / H', 'Select / Room / Stairs / Hand tool'],
+  ['V / R / S / D / H', 'Select / Room / Stairs / Doors / Hand tool'],
   ['Drag (Room/Stairs)', 'Draw a room; release to pick its type'],
   ['1-9, 0', 'Pick a room type from the popover'],
   ['Click / Shift+click', 'Select / add to selection'],
@@ -32,12 +35,17 @@ const HELP_LINES = [
   ['Alt+Arrows', 'Resize the selected room by 1 tile'],
   ['Delete / Backspace', 'Delete the selection'],
   ['Ctrl/Cmd+D', 'Duplicate the selected rooms'],
+  ['Doors tool: click a wall', 'Add a door (Shift+click for width 2)'],
+  ['Doors tool: drag a door', 'Move it along its wall'],
+  ['Doors tool: drag its end handle', 'Resize it (width 1-3)'],
+  ['Doors tool: select + Delete', 'Remove a door'],
+  ['Doors tool: select + Arrows', 'Nudge a door along its wall'],
   ['Ctrl/Cmd+Z', 'Undo'],
   ['Ctrl/Cmd+Shift+Z or Ctrl+Y', 'Redo'],
   ['Ctrl/Cmd+G', 'Surprise me (random layout)'],
   ['P', 'Toggle the styled preview'],
   ['Ctrl/Cmd+S', 'Save (blocked while errors exist)'],
-  ['Esc', 'Cancel the popover, then clear selection, then close'],
+  ['Esc', 'Cancel the popover, then clear the door/room selection, then close'],
 ];
 
 /**
@@ -48,7 +56,7 @@ const HELP_LINES = [
  */
 export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void; targetProjectId?: string }) {
   const store = useEditorStore();
-  const { draft, selection, tool, history, future, dirty, builtin, originalId, originalUpdatedAt } = store;
+  const { draft, selection, selectedDoor, tool, history, future, dirty, builtin, originalId, originalUpdatedAt } = store;
   const layouts = useLayoutStore((s) => s.layouts);
   const settings = useSettingsStore((s) => s.settings);
   const selectedProjectId = useOfficeStore((s) => s.selectedProjectId);
@@ -80,7 +88,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
   // The generator's issues already include validateLayout's (guild-hall.md section 4); fall back to
   // the geometry-only check for the instant after an edit, before the 120ms debounce recomputes the map.
   const issues = generatedMap?.issues ?? (draft ? validateLayout(draft) : []);
-  const canSave = !!draft && !builtin && !hasLayoutErrors(issues);
+  const canSave = !!draft && canSaveLayout(issues, builtin);
 
   // ---------------------------------------------------------------------------------------- open
   useEffect(() => {
@@ -136,6 +144,10 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
 
   const performSave = async () => {
     if (!draft || !canSave || busy) return;
+    // "room-sealed" is a warning, not an error — saving is allowed, but only with an explicit
+    // confirmation (guild-hall.md section 5: sealing a room is a deliberate, if unusual, choice).
+    const sealed = sealedRoomWarnings(issues);
+    if (sealed.length && !window.confirm(`${sealed.length} room(s) are sealed and unreachable. Save anyway?`)) return;
     setBusy(true);
     setError(null);
     setConflict(null);
@@ -241,6 +253,15 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
     setTimeout(() => setFlashRoomIds((cur) => (cur === roomIds ? [] : cur)), 1200);
   };
 
+  /** IssueList's one-click "Fix: add door on <side>" (guild-hall.md section 5). */
+  const performFix = (roomId: string, suggestion: DoorSpec) => {
+    if (!generatedMap) return;
+    const room = draft?.rooms.find((r) => r.id === roomId);
+    if (!room) return;
+    store.addDoor(roomId, suggestion, autoDoorsForRoom(generatedMap, room));
+    flash([roomId]);
+  };
+
   // ------------------------------------------------------------------------------ global shortcuts
   // Capture phase + stopPropagation: the planner's own shortcuts must win over any other
   // window-level keydown listener (e.g. the office's floor-switch hotkeys), which is also why the
@@ -260,13 +281,17 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           store.redo();
           break;
         case 'delete':
-          if (selection.length) {
+          if (selectedDoor) {
+            e.preventDefault();
+            store.removeDoor(selectedDoor.roomId, selectedDoor.index);
+          } else if (selection.length) {
             e.preventDefault();
             store.removeRooms(selection);
           }
           break;
         case 'escape':
-          if (selection.length) store.clearSelection();
+          if (selectedDoor) store.clearDoorSelection();
+          else if (selection.length) store.clearSelection();
           else requestClose();
           break;
         case 'duplicate':
@@ -294,7 +319,16 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           if (action.tool === 'stairs') store.setPendingRoomType('stairs');
           break;
         case 'nudge':
-          if (selection.length === 1 && action.resize) {
+          if (selectedDoor) {
+            e.preventDefault();
+            const room = draft?.rooms.find((r) => r.id === selectedDoor.roomId);
+            const door = room?.doors?.[selectedDoor.index];
+            if (door) {
+              // A door only ever moves along its own wall: n/s doors slide in x, e/w doors slide in y.
+              const delta = door.side === 'n' || door.side === 's' ? action.dx : action.dy;
+              if (delta) store.nudgeDoor(selectedDoor.roomId, selectedDoor.index, delta);
+            }
+          } else if (selection.length === 1 && action.resize) {
             const r = draft?.rooms.find((x) => x.id === selection[0]);
             if (r) store.updateRoom(r.id, { w: Math.max(1, r.w + action.dx), h: Math.max(1, r.h + action.dy) });
           } else if (selection.length) {
@@ -306,7 +340,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
     window.addEventListener('keydown', onKeyDown, true); // capture: see comment above
     return () => window.removeEventListener('keydown', onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, draft, dirty]);
+  }, [selection, selectedDoor, draft, dirty]);
 
   if (!draft) {
     return (
@@ -419,7 +453,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <PlanCanvas generatedMap={generatedMap} issues={issues} theme={theme} flashRoomIds={flashRoomIds} />
           <div className="h-32 shrink-0 overflow-hidden border-t border-ink-700 bg-ink-900">
-            <IssueList issues={issues} onSelectIssue={flash} />
+            <IssueList issues={issues} rooms={draft.rooms} reachability={generatedMap?.reachability} onSelectIssue={flash} onFix={performFix} />
           </div>
         </div>
 
@@ -434,7 +468,13 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           theme={theme}
           selectedRoom={selectedRoom}
           onMeta={(patch) => store.setMeta(patch)}
+          onFurnishDefaults={(patch) => store.setFurnishDefaults(patch)}
           onRoomChange={(id, patch) => store.updateRoom(id, patch)}
+          onRoomFurnish={(id, patch) => store.setRoomFurnish(id, patch)}
+          onRerollFurnish={(id) => store.rerollRoomSeed(id)}
+          onResetFurnish={(id) => store.resetRoomFurnish(id)}
+          onAutoDoors={(id) => store.setRoomDoors(id, undefined)}
+          onSealRoom={(id) => store.sealRoom(id)}
         />
       </div>
 

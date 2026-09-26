@@ -235,4 +235,225 @@ describe('editorStore', () => {
   it('genRoomId returns ids matching the shared ROOM_ID_RE pattern', () => {
     for (let i = 0; i < 20; i++) expect(genRoomId()).toMatch(/^[A-Za-z0-9_-]{1,32}$/);
   });
+
+  // ------------------------------------------------------------------------------------ M8 8n
+  const walledRoom = (over: Partial<LayoutRoom> = {}): LayoutRoom => room({ type: 'meeting-room', w: 8, h: 6, ...over });
+
+  describe('furnishing (M8 8n)', () => {
+    it('setRoomFurnish merges into the room furnish, in one commit', () => {
+      useEditorStore.getState().load(layout({ rooms: [room()] }));
+      useEditorStore.getState().setRoomFurnish('a', { density: 'dense', seats: 6 });
+      let s = useEditorStore.getState();
+      expect(s.draft?.rooms[0]?.furnish).toEqual({ density: 'dense', seats: 6 });
+      expect(s.history).toHaveLength(1);
+
+      useEditorStore.getState().setRoomFurnish('a', { decor: 0.5 });
+      s = useEditorStore.getState();
+      expect(s.draft?.rooms[0]?.furnish).toEqual({ density: 'dense', seats: 6, decor: 0.5 });
+    });
+
+    it('a key patched to undefined falls back (is dropped), and an empty result clears furnish entirely', () => {
+      useEditorStore.getState().load(layout({ rooms: [room({ furnish: { density: 'dense' } })] }));
+      useEditorStore.getState().setRoomFurnish('a', { density: undefined });
+      expect(useEditorStore.getState().draft?.rooms[0]?.furnish).toBeUndefined();
+    });
+
+    it('resetRoomFurnish clears every override for that room', () => {
+      useEditorStore.getState().load(layout({ rooms: [room({ furnish: { density: 'dense', seats: 4, decor: 0.7 } })] }));
+      useEditorStore.getState().resetRoomFurnish('a');
+      expect(useEditorStore.getState().draft?.rooms[0]?.furnish).toBeUndefined();
+    });
+
+    it('rerollRoomSeed sets a fresh seed but keeps every other furnish field', () => {
+      useEditorStore.getState().load(layout({ rooms: [room({ furnish: { density: 'dense', seed: 1 } })] }));
+      useEditorStore.getState().rerollRoomSeed('a');
+      const f = useEditorStore.getState().draft?.rooms[0]?.furnish;
+      expect(f?.density).toBe('dense');
+      expect(f?.seed).toBeTypeOf('number');
+      expect(f?.seed).not.toBe(1);
+    });
+
+    it('setFurnishDefaults merges the layout-wide defaults, dropping keys patched to undefined', () => {
+      useEditorStore.getState().load(layout({ furnishDefaults: { density: 'sparse' } }));
+      useEditorStore.getState().setFurnishDefaults({ decor: 0.6 });
+      expect(useEditorStore.getState().draft?.furnishDefaults).toEqual({ density: 'sparse', decor: 0.6 });
+      useEditorStore.getState().setFurnishDefaults({ density: undefined });
+      expect(useEditorStore.getState().draft?.furnishDefaults).toEqual({ decor: 0.6 });
+    });
+
+    it('furnish edits are no-ops while editing a read-only builtin', () => {
+      useEditorStore.getState().load(layout({ builtin: true, rooms: [room()] }));
+      useEditorStore.getState().setRoomFurnish('a', { seats: 9 });
+      useEditorStore.getState().setFurnishDefaults({ decor: 0.9 });
+      expect(useEditorStore.getState().draft?.rooms[0]?.furnish).toBeUndefined();
+      expect(useEditorStore.getState().draft?.furnishDefaults).toBeUndefined();
+    });
+  });
+
+  describe('doors (M8 8n)', () => {
+    const auto = [{ side: 'n', offset: 2, width: 1 } as const];
+
+    it('setRoomDoors replaces the door list wholesale; undefined restores automatic doors', () => {
+      useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+      useEditorStore.getState().setRoomDoors('a', [{ side: 's', offset: 1, width: 2 }]);
+      expect(useEditorStore.getState().draft?.rooms[0]?.doors).toEqual([{ side: 's', offset: 1, width: 2 }]);
+      useEditorStore.getState().setRoomDoors('a', undefined);
+      expect(useEditorStore.getState().draft?.rooms[0]?.doors).toBeUndefined();
+    });
+
+    it('sealRoom sets doors to [] ("Seal room")', () => {
+      useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+      useEditorStore.getState().sealRoom('a');
+      expect(useEditorStore.getState().draft?.rooms[0]?.doors).toEqual([]);
+    });
+
+    describe('ensureExplicitDoors (materialize)', () => {
+      it('freezes the given auto doors into an explicit list, in one commit', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+        useEditorStore.getState().ensureExplicitDoors('a', auto);
+        const s = useEditorStore.getState();
+        expect(s.draft?.rooms[0]?.doors).toEqual(auto);
+        expect(s.history).toHaveLength(1);
+      });
+
+      it('is a no-op once the room already has an explicit list, including a sealed []', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom({ doors: [] })] }));
+        useEditorStore.getState().ensureExplicitDoors('a', auto);
+        const s = useEditorStore.getState();
+        expect(s.draft?.rooms[0]?.doors).toEqual([]);
+        expect(s.history).toEqual([]);
+      });
+    });
+
+    describe('addDoor', () => {
+      it('materializes the auto list and appends, in one commit, for a still-automatic room', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+        useEditorStore.getState().addDoor('a', { side: 'e', offset: 1, width: 1 }, auto);
+        const s = useEditorStore.getState();
+        expect(s.draft?.rooms[0]?.doors).toEqual([...auto, { side: 'e', offset: 1, width: 1 }]);
+        expect(s.history).toHaveLength(1);
+      });
+
+      it('appends to an already-explicit list without needing autoDoors', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom({ doors: [{ side: 'n', offset: 1, width: 1 }] })] }));
+        useEditorStore.getState().addDoor('a', { side: 's', offset: 1, width: 1 });
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors).toEqual([
+          { side: 'n', offset: 1, width: 1 },
+          { side: 's', offset: 1, width: 1 },
+        ]);
+      });
+
+      it('refuses past maxDoorsPerRoom', () => {
+        const many = Array.from({ length: 8 }, (_, i) => ({ side: 'n' as const, offset: i + 1, width: 1 }));
+        useEditorStore.getState().load(layout({ rooms: [walledRoom({ doors: many })] }));
+        useEditorStore.getState().addDoor('a', { side: 's', offset: 1, width: 1 });
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors).toHaveLength(8);
+      });
+
+      it('applies a one-click "Fix" suggestion the same way as any manually-added door', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+        const suggestion = { side: 'w' as const, offset: 2, width: 1 };
+        useEditorStore.getState().addDoor('a', suggestion, auto);
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors).toContainEqual(suggestion);
+      });
+    });
+
+    describe('updateDoor (move/resize as a single commit)', () => {
+      it('materializes then patches the given door', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+        useEditorStore.getState().updateDoor('a', 0, { offset: 3 }, auto);
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors).toEqual([{ side: 'n', offset: 3, width: 1 }]);
+      });
+
+      it('is a no-op for an out-of-range index', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom({ doors: auto.slice() })] }));
+        useEditorStore.getState().updateDoor('a', 5, { offset: 3 });
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors).toEqual(auto);
+      });
+    });
+
+    describe('removeDoor', () => {
+      it('materializes then removes the given door, and clears a matching selection', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+        useEditorStore.getState().selectDoor('a', 0);
+        useEditorStore.getState().removeDoor('a', 0, auto);
+        const s = useEditorStore.getState();
+        expect(s.draft?.rooms[0]?.doors).toEqual([]);
+        expect(s.selectedDoor).toBeNull();
+      });
+    });
+
+    describe('nudgeDoor (keyboard, one commit per call)', () => {
+      it('moves the door along its wall, clamped between the corners', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom({ doors: [{ side: 'n', offset: 3, width: 1 }] })] }));
+        useEditorStore.getState().nudgeDoor('a', 0, 1);
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors?.[0]?.offset).toBe(4);
+        useEditorStore.getState().nudgeDoor('a', 0, 100); // clamps instead of running off the wall
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors?.[0]?.offset).toBe(6); // len(8) - 1 - width(1)
+      });
+
+      it('is a no-op while the room is still automatic (nothing to nudge yet)', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+        useEditorStore.getState().nudgeDoor('a', 0, 1);
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors).toBeUndefined();
+      });
+    });
+
+    describe('setDoorRect (drag gesture) + undo/redo coalescing', () => {
+      it('coalesces many setDoorRect calls into exactly one undo entry', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom({ doors: [{ side: 'n', offset: 2, width: 1 }] })] }));
+        const before = useEditorStore.getState().history.length;
+        useEditorStore.getState().beginGesture();
+        useEditorStore.getState().setDoorRect('a', 0, { offset: 3 });
+        useEditorStore.getState().setDoorRect('a', 0, { offset: 4 });
+        useEditorStore.getState().setDoorRect('a', 0, { width: 2 });
+        useEditorStore.getState().endGesture();
+        const s = useEditorStore.getState();
+        expect(s.draft?.rooms[0]?.doors?.[0]).toEqual({ side: 'n', offset: 4, width: 2 });
+        expect(s.history).toHaveLength(before + 1);
+        useEditorStore.getState().undo();
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors?.[0]).toEqual({ side: 'n', offset: 2, width: 1 });
+      });
+    });
+
+    describe('auto-doors toggle', () => {
+      it('"Auto doors" (setRoomDoors(id, undefined)) clears an explicit list back to automatic', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom({ doors: [{ side: 'n', offset: 2, width: 1 }] })] }));
+        useEditorStore.getState().setRoomDoors('a', undefined);
+        expect(useEditorStore.getState().draft?.rooms[0]?.doors).toBeUndefined();
+      });
+    });
+
+    describe('door selection', () => {
+      it('selectDoor/clearDoorSelection track the current pick', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+        useEditorStore.getState().selectDoor('a', 0);
+        expect(useEditorStore.getState().selectedDoor).toEqual({ roomId: 'a', index: 0 });
+        useEditorStore.getState().clearDoorSelection();
+        expect(useEditorStore.getState().selectedDoor).toBeNull();
+      });
+
+      it('switching tools away from "doors" clears the door selection', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+        useEditorStore.getState().setTool('doors');
+        useEditorStore.getState().selectDoor('a', 0);
+        useEditorStore.getState().setTool('select');
+        expect(useEditorStore.getState().selectedDoor).toBeNull();
+      });
+
+      it('selecting a room clears the door selection', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom()] }));
+        useEditorStore.getState().selectDoor('a', 0);
+        useEditorStore.getState().select(['a']);
+        expect(useEditorStore.getState().selectedDoor).toBeNull();
+      });
+
+      it('removing the room that owns the selected door clears the selection', () => {
+        useEditorStore.getState().load(layout({ rooms: [walledRoom({ id: 'a' }), room({ id: 'b', x: 20 })] }));
+        useEditorStore.getState().selectDoor('a', 0);
+        useEditorStore.getState().removeRooms(['a']);
+        expect(useEditorStore.getState().selectedDoor).toBeNull();
+      });
+    });
+  });
 });

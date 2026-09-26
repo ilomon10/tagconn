@@ -1,3 +1,4 @@
+import type { DoorSide, DoorSpec } from '@tagconn/shared';
 import type { Point, Rect, TileKind } from './types';
 
 export type Side = 'top' | 'bottom' | 'left' | 'right';
@@ -8,6 +9,37 @@ export const SIDE_DIR: Record<Side, Point> = {
   left: { x: -1, y: 0 },
   right: { x: 1, y: 0 },
 };
+
+/** `DoorSpec.side` (n/s/e/w, the shared contract) <-> this file's local `Side` (top/bottom/left/right). */
+export const SHARED_TO_LOCAL_SIDE: Record<DoorSide, Side> = { n: 'top', s: 'bottom', w: 'left', e: 'right' };
+export const LOCAL_TO_SHARED_SIDE: Record<Side, DoorSide> = { top: 'n', bottom: 's', left: 'w', right: 'e' };
+
+/**
+ * Ring tile positions for an explicit `DoorSpec` on a room's footprint (M8 8n). `validateLayout`
+ * already guarantees `offset >= 1` and `offset + width <= len - 1` (never touching a corner), so no
+ * bounds re-check is needed here. `width` is undefined-means-1 (no zod default, see the contract).
+ */
+export function explicitDoorPositions(footprint: Rect, spec: DoorSpec): { side: Side; positions: Point[] } {
+  const width = spec.width ?? 1;
+  const side = SHARED_TO_LOCAL_SIDE[spec.side];
+  const positions: Point[] = [];
+  if (side === 'top' || side === 'bottom') {
+    const y = side === 'top' ? footprint.y : footprint.y + footprint.h - 1;
+    for (let i = 0; i < width; i++) positions.push({ x: footprint.x + spec.offset + i, y });
+  } else {
+    const x = side === 'left' ? footprint.x : footprint.x + footprint.w - 1;
+    for (let i = 0; i < width; i++) positions.push({ x, y: footprint.y + spec.offset + i });
+  }
+  return { side, positions };
+}
+
+/** Inverse of `explicitDoorPositions`'s offset math, for a group of contiguous ring tiles (used to
+ *  report `offset`/`width` on an auto-placed `Door` too, so the editor can materialize either kind). */
+export function doorOffsetAndWidth(footprint: Rect, side: Side, positions: readonly Point[]): { offset: number; width: number } {
+  const first = positions[0]!;
+  const offset = side === 'top' || side === 'bottom' ? first.x - footprint.x : first.y - footprint.y;
+  return { offset, width: positions.length };
+}
 
 export interface DoorRoomShape {
   id: string;
