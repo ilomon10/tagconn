@@ -1,0 +1,8 @@
+{
+  "name": "@tagconn/setup",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc -p tsconfig.json", "test": "vitest run" }
+}

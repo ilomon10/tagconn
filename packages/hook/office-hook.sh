@@ -147,11 +147,24 @@ if [ "$is_session_start" = "1" ] && [ "${TAGCONN_ATTRIBUTION:-}" != "off" ]; the
     # Guards: dir must exist, be owned by us, be a git repo, and never be
     # $HOME or /. No mkdir -p: only ever create the single ".tagconn" dir.
     if [ -n "$rd" ] && [ -O "$rd" ] && [ -e "$rd/.git" ] && [ "$rd" != "$rh" ] && [ "$rd" != "/" ]; then
-      # Skip if .tagconn already exists (file, dir, or symlink) - never
-      # touch or follow it. This is also how a user opts back out: replace
-      # .tagconn with an empty file named .tagconn (see the README itself).
-      if [ ! -e "$rd/.tagconn" ] && [ ! -L "$rd/.tagconn" ] && [ -f "$tpl" ]; then
-        if mkdir "$rd/.tagconn" 2>/dev/null; then
+      # Skip if .tagconn already exists as a file or symlink - never touch or
+      # follow it. A plain file named .tagconn is how a user opts back out (see
+      # the README itself). An existing real, owned .tagconn directory that
+      # holds only agent working files (work/, .gitignore - the office-kickoff
+      # skill creates them) still gets its README, never overwriting anything.
+      agent_only=0
+      if [ -d "$rd/.tagconn" ] && [ ! -L "$rd/.tagconn" ] && [ -O "$rd/.tagconn" ] && [ ! -e "$rd/.tagconn/README.md" ] && [ ! -L "$rd/.tagconn/README.md" ]; then
+        agent_only=1
+        for entry in "$rd/.tagconn"/* "$rd/.tagconn"/.[!.]* "$rd/.tagconn"/..?*; do
+          [ -e "$entry" ] || [ -L "$entry" ] || continue
+          case "${entry##*/}" in
+            work|.gitignore) ;;
+            *) agent_only=0 ;;
+          esac
+        done
+      fi
+      if [ ! -L "$rd/.tagconn" ] && [ -f "$tpl" ] && { [ "$agent_only" = "1" ] || [ ! -e "$rd/.tagconn" ]; }; then
+        if [ "$agent_only" = "1" ] || mkdir "$rd/.tagconn" 2>/dev/null; then
           # Re-check (SC4 L2): close the window between mkdir succeeding and
           # the write below - something could have raced us and swapped
           # .tagconn for a symlink in between. Then `cd` into it and write a

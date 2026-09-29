@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig/node.json",
+  "compilerOptions": { "allowImportingTsExtensions": true, "erasableSyntaxOnly": true },
+  "include": ["src", "test", "*.config.ts"]
+}
