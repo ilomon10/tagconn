@@ -63,7 +63,7 @@ timeout) so it can never slow down or break a Claude Code session, even if the s
 ### Option 1: tagconn Desktop (coming in v0.5.0)
 
 Download the control panel app from [GitHub Releases](https://github.com/ilomon10/tagconn/releases)
-(Windows, Linux, or macOS). Run the installer, and the setup wizard checks your system, installs
+(Windows or Linux). Run the installer, and the setup wizard checks your system, installs
 the hooks, and starts the services. See [tagconn Desktop](docs/guide/desktop.md) for the full guide.
 
 ### Option 2: From source with Docker

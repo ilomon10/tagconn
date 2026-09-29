@@ -9,11 +9,10 @@ and open the office.
 
 ## Download
 
-[GitHub Releases](https://github.com/ilomon10/tagconn/releases) has builds for Windows, Linux and macOS:
+[GitHub Releases](https://github.com/ilomon10/tagconn/releases) has builds for Windows and Linux (macOS is not supported yet):
 
 - **Windows**: `tagconn_X.Y.Z_x64-setup.exe` (NSIS installer)
 - **Linux**: `tagconn_X.Y.Z_x64.deb` (Debian/Ubuntu) and `tagconn_X.Y.Z_x64.AppImage` (any distro)
-- **macOS**: `tagconn_X.Y.Z_x64.dmg` (not yet available)
 
 When you first run the Windows setup on an older machine, SmartScreen may warn "unknown publisher"
 if the app is not code-signed. This is normal for small projects; click "More info" → "Run anyway"
@@ -132,7 +131,7 @@ new output in real time. You can copy them for bug reports.
   start.
 - **Server port**: the office URL is `http://127.0.0.1:<port>`. If you change it, the office URL
   and CORS origins follow. Restart the server to apply.
-- **Start with system**: on Windows/macOS, launch tagconn to the tray when you log in.
+- **Start with system**: launch tagconn to the tray when you log in (Windows and Linux desktops that support autostart).
 - **Start services when the app starts**: auto-start the server and runner (default on).
 - **Open the office once the server is up**: auto-open the office window or browser (default on).
 - **Data folder**: shows where the SQLite database lives (click "Settings" to customize, if needed).
@@ -152,7 +151,7 @@ delete the data folder by hand).
 
 ### Tray (system tray icon)
 
-Right-click the tagconn icon in your system tray (bottom-right on Windows, top-right on macOS/Linux)
+Right-click the tagconn icon in your system tray (bottom-right on Windows; on Linux it depends on your desktop, and some need an AppIndicator extension)
 for:
 
 - **Open office**: opens the office window (or browser).
