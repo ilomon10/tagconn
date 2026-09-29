@@ -181,6 +181,13 @@ no `cmd /c`, symlink-preserving settings writes, URL validation), S3 (hook: toke
 hook.json owner/mode, O_NOFOLLOW + dev/ino, Windows ownership fallback, fail-closed home guard) and S4
 (server: no symlink escape from webDir, nosniff + no-store on /api).
 
+**Security re-review (2026-09-29):** no Critical/High. New Mediums: N1 supervisor bare-name Windows
+spawns, N2 the server loading `.env`/`office.yaml` from cwd-relative untrusted paths in desktop mode, N3 a
+quest planting `claude.cmd` in a user PATH dir, N4 Windows path aliases in deny rules (needs the canary),
+N5 the pairing code on the browser-opener argv. Fixes are tracked as ROADMAP 11.4. If the N4 canary shows the
+matcher doesn't canonicalise paths, Windows quests must become project-read-only or run under a
+restricted token.
+
 **Windows follow-ups for the security review.** Consider denying more Windows-specific sensitive
 locations for quests, beyond the `~/` set duplicated in both forms: `AppData\Roaming` credential
 stores, the PowerShell profiles (`Documents\PowerShell\*profile.ps1`, `Documents\WindowsPowerShell\...`),
