@@ -179,12 +179,13 @@ default, Docker optional; installer + auto-update. Design: `docs/design/desktop.
   - [~] 11.1 One small `.tagconn/` per project (user decision 2026-09-29): `.office/` agent memory → `.tagconn/work/` (git-ignored via `.tagconn/.gitignore`), skills updated [x]; README template cut to 5 lines [x]; both hooks add the README next to agent-made `work/`/`.gitignore` and still honour the `.tagconn`-file opt-out [x]
   - [ ] 11.2 Windows-specific quest denies (AppData credential stores, PowerShell profiles, npm) + Windows text in web rejection guidance  [security review → Developer]
 - Wave 2: the app (parallel)
-  - [ ] E `apps/supervisor`: stdio JSON-RPC, service manager (backoff, health, logs, tree-kill), setup, Docker mode, auto-pair [Developer]
-  - [ ] F `apps/desktop` (Tauri 2): sidecar + tray + autostart/updater/single-instance; React wizard + control panel [Developer]
+  - [~] E `apps/supervisor`: stdio JSON-RPC, service manager (backoff, health, logs, tree-kill), setup, Docker mode, auto-pair [Developer]
+  - [~] F `apps/desktop` (Tauri 2): sidecar + tray + autostart/updater/single-instance; React wizard + control panel [Developer]
 - Wave 3: packaging + docs
   - [ ] G CI `desktop.yml` (windows + ubuntu matrix, node sidecar, NSIS/AppImage/deb, signed updater, ghcr images) [Developer]
   - [ ] H Docs: `docs/guide/desktop.md`, README download-first quick start, CLAUDE.md commands [Tech writer]
 - Gates
+  - [~] Wave 1 security review + sandboxed e2e QA (node hook exec form with a real haiku session, webDir serving, install/uninstall/rollback)
   - [ ] Security review (node hook, token ACLs, Windows runner policy + deny paths, supervisor args, Tauri capabilities, updater signature)
   - [ ] QA: Linux sandboxed wizard run + AppImage; Windows CI install smoke; manual Windows pass with the user; updater across two pre-releases
   - [ ] Release v0.5.0
