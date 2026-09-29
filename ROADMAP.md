@@ -149,6 +149,32 @@ so parallel or old sessions leave extra PMs on a floor.
 - [x] 10f. Quests + Receptionist empty/loading/error/offline states with the exact next step (pair, `pnpm office:runner` + copy, env var, capability, Retry on failed loads)
 - [x] 10g. QA + review (fixed: web image build after better-sqlite3 13 via a filtered install, demo quests, pair-flash while auth loads, stale run error), release v0.4.1
 
+## M11: tagconn Desktop (Windows + Linux) → v0.5.0  [in progress]
+One app (Tauri 2 + a bundled Node sidecar) with a setup wizard and an XAMPP-style control panel; native services by
+default, Docker optional; installer + auto-update. Design: `docs/design/desktop.md`. Decisions #27, #28.
+- [x] 11.0 Plan persisted (design doc, roadmap, decisions)  [PM]
+- Wave 0: contract + spikes
+  - [ ] W0a `packages/shared/src/desktop.ts` RPC contract; `server.webDir`; `corsOrigins` + :4317  [PM]
+  - [ ] W0b Spike: how Claude Code on native Windows runs hook commands (shell, quoting, PATH)  [QA, Windows CI + user]
+  - [ ] W0c Spike: claude install form on Windows (claude.exe vs .cmd shim) + "logged in" detection  [QA]
+  - [ ] W0d Spike: Windows permission-rule path form for deny rules (canary, R3-style)  [QA + user]
+  - [ ] W0e Spike: better-sqlite3 13 prebuild for node 24 win-x64  [QA, Windows CI]
+- Wave 1: portable core (parallel)
+  - [ ] A Server serves the web app (`@fastify/static`, shared security headers, SPA fallback, cache rules) + path portability (`~\`, backslash transcript paths)  [Developer]
+  - [ ] B Cross-platform node hook `office-hook.mjs` (parity with the sh hook, exit 0, no stdout, 1 s, ACL'd `hook.json`) + parity + perf tests  [Developer]
+  - [ ] C Runner platform layer (`where`, `taskkill /T`, no systemd/bwrap, `%LOCALAPPDATA%`, win32 policy: no Bash, max acceptEdits, Receptionist unsandboxed read-only)  [Developer]
+  - [ ] D `packages/setup` (install/doctor/pair core, OS paths, ACL/chmod, atomic settings.json merge + rollback); scripts become thin CLIs  [Developer]
+- Wave 2: the app (parallel)
+  - [ ] E `apps/supervisor`: stdio JSON-RPC, service manager (backoff, health, logs, tree-kill), setup, Docker mode, auto-pair  [Developer]
+  - [ ] F `apps/desktop` (Tauri 2): sidecar + tray + autostart/updater/single-instance; React wizard + control panel  [Developer]
+- Wave 3: packaging + docs
+  - [ ] G CI `desktop.yml` (windows + ubuntu matrix, node sidecar, NSIS/AppImage/deb, signed updater, ghcr images)  [Developer]
+  - [ ] H Docs: `docs/guide/desktop.md`, README download-first quick start, CLAUDE.md commands  [Tech writer]
+- Gates
+  - [ ] Security review (node hook, token ACLs, Windows runner policy + deny paths, supervisor args, Tauri capabilities, updater signature)
+  - [ ] QA: Linux sandboxed wizard run + AppImage; Windows CI install smoke; manual Windows pass with the user; updater across two pre-releases
+  - [ ] Release v0.5.0
+
 ## Backlog
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 

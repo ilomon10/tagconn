@@ -10,6 +10,7 @@ the read-only Receptionist. User-facing docs live in `docs/guide/`; keep them cu
 1. Read `ROADMAP.md`: the live checklist of what is done, in progress, or todo. Keep it updated as you work.
 2. Read `docs/architecture.md` for the design and `docs/decisions.md` for why things are the way they are.
 3. The approved plan: `~/.claude/plans/let-we-brainstorming-i-elegant-abelson.md`.
+4. While M11 is in progress: `docs/design/desktop.md` (tagconn Desktop for Windows + Linux) is the design reference.
 
 ## Commands
 - `pnpm install`: install everything. pnpm 11; native builds are allowed in `pnpm-workspace.yaml` → `allowBuilds`.
