@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { installClaudeHooks, loadSettings, uninstallClaudeHooks, type HookSpec, type HookKind } from './claudeSettings.ts';
 import { createContext, type SetupContext } from './context.ts';
 import { ensureRepoEnv, ensureRunnerTokenEnv, generateToken } from './env.ts';
@@ -97,8 +98,13 @@ export async function install(opts: InstallOptions, ctxIn?: SetupContext): Promi
   const settingsPath = join(opts.claudeDir, 'settings.json');
   const nodePath = opts.nodePath ?? process.execPath;
 
-  // Fail before writing anything (secrets included) if settings.json can't be merged into safely.
+  // Fail before writing anything (secrets included) if settings.json can't be merged into safely,
+  // or if a directory we must write into isn't writable: no half-finished installs.
   loadSettings(settingsPath);
+  if (!ctx.dryRun) {
+    assertWritableDir(opts.configDir);
+    assertWritableDir(opts.claudeDir);
+  }
 
   // Token: the repo .env is the source of truth for the CLI; without one, keep hook.json's, else generate.
   let token: string;
@@ -206,3 +212,16 @@ export async function uninstall(opts: UninstallOptions, ctxIn?: SetupContext): P
   ctx.log(`remove ${opts.configDir} manually if you want the hook script gone too.`);
   return { changed: [...ctx.changed], backup };
 }
+
+/** Creates `dir` if needed and proves it is writable, before any install step touches the disk. */
+export function assertWritableDir(dir: string): void {
+  const probe = join(dir, `.tagconn-write-test-${process.pid}`);
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(probe, '');
+    rmSync(probe, { force: true });
+  } catch (err) {
+    throw new Error(`Can't write to ${dir} (${(err as NodeJS.ErrnoException).code ?? (err as Error).message}). Fix its permissions or choose another folder, then run the install again. Nothing was changed.`);
+  }
+}
+

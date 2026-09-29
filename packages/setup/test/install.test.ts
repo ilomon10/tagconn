@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { defaultResources, HOOK_EVENTS, install, summarizeHooks, uninstall, type InstallOptions } from '../src/index.ts';
@@ -141,3 +141,20 @@ describe('install / uninstall (node hook, no repo .env)', () => {
     expect(entry.command).toContain('office-hook.sh');
   });
 });
+
+describe('install preflight: no half-finished installs', () => {
+  it.skipIf(process.getuid?.() === 0)('refuses before writing anything when the config dir is not writable', async () => {
+    const { claudeDir, ctx, opts } = sandbox();
+    const roParent = join(tempDir(), 'ro');
+    mkdirSync(roParent);
+    chmodSync(roParent, 0o555);
+    try {
+      const before = existsSync(claudeDir) ? readdirSync(claudeDir) : [];
+      await expect(install({ ...opts, configDir: join(roParent, 'tagconn') }, ctx)).rejects.toThrow(/Nothing was changed/);
+      expect(existsSync(claudeDir) ? readdirSync(claudeDir) : []).toEqual(before);
+    } finally {
+      chmodSync(roParent, 0o755);
+    }
+  });
+});
+

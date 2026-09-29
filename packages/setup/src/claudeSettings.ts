@@ -44,6 +44,83 @@ export type HookEntry = { type: string; command: string; args?: string[]; [k: st
 export type MatcherGroup = { matcher?: string; hooks: HookEntry[]; [k: string]: unknown };
 export type SettingsJson = { hooks?: Record<string, MatcherGroup[]>; [k: string]: unknown };
 
+/**
+ * Index of the first character where `text` stops being valid JSON (undefined if it parses). A small
+ * recursive-descent scanner, only used to point the user at the right line/column.
+ */
+export function jsonErrorIndex(text: string): number | undefined {
+  let i = 0;
+  const ws = () => {
+    while (i < text.length && ' \t\n\r'.includes(text[i] as string)) i++;
+  };
+  const fail = (): never => {
+    throw i;
+  };
+  const lit = (word: string) => {
+    if (text.startsWith(word, i)) i += word.length;
+    else fail();
+  };
+  const str = () => {
+    i++; // opening quote
+    while (i < text.length && text[i] !== '"') {
+      if (text[i] === '\\') i++;
+      else if ((text.charCodeAt(i) ?? 0) < 0x20) fail();
+      i++;
+    }
+    if (text[i] !== '"') fail();
+    i++;
+  };
+  const num = () => {
+    const m = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?/.exec(text.slice(i));
+    if (!m) fail();
+    i += (m as RegExpExecArray)[0].length;
+  };
+  const value = (): void => {
+    ws();
+    const c = text[i];
+    if (c === '{') {
+      i++;
+      ws();
+      if (text[i] === '}') return void i++;
+      for (;;) {
+        ws();
+        if (text[i] !== '"') fail();
+        str();
+        ws();
+        if (text[i] !== ':') fail();
+        i++;
+        value();
+        ws();
+        if (text[i] === ',') { i++; continue; }
+        if (text[i] === '}') return void i++;
+        fail();
+      }
+    } else if (c === '[') {
+      i++;
+      ws();
+      if (text[i] === ']') return void i++;
+      for (;;) {
+        value();
+        ws();
+        if (text[i] === ',') { i++; continue; }
+        if (text[i] === ']') return void i++;
+        fail();
+      }
+    } else if (c === '"') str();
+    else if (c === 't') lit('true');
+    else if (c === 'f') lit('false');
+    else if (c === 'n') lit('null');
+    else num();
+  };
+  try {
+    value();
+    ws();
+    return i < text.length ? i : undefined;
+  } catch (at) {
+    return typeof at === 'number' ? Math.min(at, text.length) : undefined;
+  }
+}
+
 /** settings.json exists but is not valid JSON. It is never overwritten; `line`/`column` are 1-based. */
 export class SettingsParseError extends Error {
   readonly code = 'settings_unparsable';
@@ -53,7 +130,8 @@ export class SettingsParseError extends Error {
   readonly column: number | undefined;
   constructor(path: string, cause: Error, text: string) {
     const m = /position (\d+)/.exec(cause.message);
-    const position = m ? Number(m[1]) : undefined;
+    // Node 24's JSON.parse messages often carry no position: find it with a small scanner instead.
+    const position = m ? Number(m[1]) : jsonErrorIndex(text);
     let line: number | undefined;
     let column: number | undefined;
     if (position !== undefined) {

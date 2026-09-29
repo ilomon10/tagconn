@@ -9,6 +9,7 @@ import {
   installHooks,
   isOurEntry,
   SettingsParseError,
+  jsonErrorIndex,
   SettingsRollbackError,
   summarizeHooks,
   uninstallClaudeHooks,
@@ -223,3 +224,21 @@ describe('settings.json write safety', () => {
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(original);
   });
 });
+
+describe('jsonErrorIndex (Node 24 parse errors often have no position)', () => {
+  it('finds where parsing stops, so the error can name a line and column', () => {
+    const bad = '{\n  "hooks": {\n    "Stop": [ oops } }\n}\n';
+    const at = jsonErrorIndex(bad) as number;
+    expect(bad.slice(at, at + 4)).toBe('oops');
+    const err = new SettingsParseError('/x/settings.json', new Error("Unexpected token 'o', is not valid JSON"), bad);
+    expect(err.line).toBe(3);
+    expect(err.column).toBe(15);
+    expect(err.message).toContain('line 3, column 15');
+  });
+  it('returns undefined for valid JSON and points past trailing garbage', () => {
+    expect(jsonErrorIndex('{"a":[1,2.5e3,"x\\"y",true,null]}')).toBeUndefined();
+    expect(jsonErrorIndex('{} x')).toBe(3);
+    expect(jsonErrorIndex('{"a":1,}')).toBe(7);
+  });
+});
+
