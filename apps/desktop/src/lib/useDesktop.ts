@@ -8,6 +8,7 @@ import { runFix, type FixEnv } from './fixes';
 import { RpcClientError, toRpcError } from './rpc';
 import { idsToStop, initialState, reducer, visibleServices, type AppState } from './state';
 import { native, rpc, type PairInfo } from './tauri';
+import { relaunchedNotice, serverNotice, trayNotice } from './notices';
 import { waitFor } from './wait';
 import { blockingChecks, ownServerRunning } from './wizard';
 
@@ -68,6 +69,12 @@ export function useDesktop() {
     if (notice?.until?.(state)) setNotice(null);
   }, [notice, state]);
 
+  useEffect(() => {
+    if (!notice?.dismissAfterMs) return;
+    const t = setTimeout(() => setNotice(null), notice.dismissAfterMs);
+    return () => clearTimeout(t);
+  }, [notice]);
+
   const recheck = useCallback(async () => {
     setChecking(true);
     try {
@@ -99,15 +106,11 @@ export function useDesktop() {
       listen<unknown>('desktop://notify', (e) => dispatch({ type: 'notify', payload: e.payload })),
       listen<{ reason: string; logs: string[] }>('desktop://sidecar-down', (e) => dispatch({ type: 'sidecar/down', reason: e.payload.reason, logs: e.payload.logs })),
       // The tray (Rust) has no UI of its own: it reports its errors here.
-      listen<{ message: string; hint?: string }>('desktop://notice', (e) => setNotice({ kind: 'error', message: e.payload.message, hint: e.payload.hint })),
-      listen('desktop://sidecar-relaunched', () =>
-        setNotice({
-          kind: 'info',
-          message: 'The service manager restarted, so your services were stopped.',
-          action: { label: 'Start again', run: () => void startAllRef.current() },
-          until: (s) => ownServerRunning(s.services),
-        }),
-      ),
+      listen<{ message: string; hint?: string }>('desktop://notice', (e) => setNotice(trayNotice(e.payload, stateRef.current.services))),
+      listen('desktop://sidecar-relaunched', () => {
+        dispatch({ type: 'services/reset' });
+        setNotice(relaunchedNotice(() => void startAllRef.current()));
+      }),
       listen('desktop://sidecar-up', () => {
         dispatch({ type: 'sidecar/up' });
         void refresh();
@@ -202,7 +205,7 @@ export function useDesktop() {
       } catch (e) {
         const n = toNotice(e);
         // Nearly every failure here is "the server is not up yet": clear the message once it is.
-        setNotice(ownServerRunning(stateRef.current.services) ? n : { ...n, until: (s) => ownServerRunning(s.services) });
+        setNotice(serverNotice(n, stateRef.current.services));
       } finally {
         setBusy((b) => {
           const n = new Set(b);

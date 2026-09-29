@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Panel } from './components/Panel';
 import { SidecarDown } from './components/SidecarDown';
 import { NoticeBar } from './components/ui';
+import { copiedNotice } from './lib/notices';
 import { native } from './lib/tauri';
 import { toNotice, useDesktop } from './lib/useDesktop';
 import { needsWizard } from './lib/wizard';
@@ -16,7 +17,7 @@ export function App() {
   const copy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      d.setNotice({ kind: 'info', message: 'Copied to the clipboard.' });
+      d.setNotice(copiedNotice());
     } catch (e) {
       d.setNotice(toNotice(e));
     }

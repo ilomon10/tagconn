@@ -104,6 +104,32 @@ async function probeCapabilities(claudePath: string, cwd: string, stateDir: stri
 }
 
 async function main(): Promise<void> {
+  // The desktop supervisor passes its pid: if it dies (even by SIGKILL), stop our quests and exit instead of
+  // running on unsupervised. ppid changes on POSIX when the parent dies; signal 0 fails once the pid is gone.
+  // Installed FIRST, before the (slow) capability probe, so a kill during a cold boot still ends us within ~2 s:
+  // until the runner is wired up there is nothing to stop, so it exits directly (`onParentGone` is swapped for
+  // the real `shutdown` below).
+  let onParentGone: () => void = () => process.exit(0);
+  const parentPid = Number(process.env.TAGCONN_PARENT_PID);
+  if (Number.isInteger(parentPid) && parentPid > 1) {
+    const startPpid = process.ppid;
+    const parentGone = () => {
+      if (process.platform !== 'win32' && process.ppid !== startPpid) return true;
+      try {
+        process.kill(parentPid, 0);
+        return false;
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code === 'ESRCH';
+      }
+    };
+    setInterval(() => {
+      if (parentGone()) {
+        logger.info('parent supervisor exited');
+        onParentGone();
+      }
+    }, 2_000).unref();
+  }
+
   const { configPath } = parseCliArgs(process.argv.slice(2));
   const cfg = loadRunnerConfig(configPath);
   logger.info('runner config loaded', { configPath: cfg.configPath, stateDir: cfg.stateDir, allowedProjectDirs: cfg.allowedProjectDirs.length });
@@ -226,28 +252,7 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
-
-  // The desktop supervisor passes its pid: if it dies (even by SIGKILL), stop our quests and exit instead of
-  // running on unsupervised. ppid changes on POSIX when the parent dies; signal 0 fails once the pid is gone.
-  const parentPid = Number(process.env.TAGCONN_PARENT_PID);
-  if (Number.isInteger(parentPid) && parentPid > 1) {
-    const startPpid = process.ppid;
-    const parentGone = () => {
-      if (process.platform !== 'win32' && process.ppid !== startPpid) return true;
-      try {
-        process.kill(parentPid, 0);
-        return false;
-      } catch (err) {
-        return (err as NodeJS.ErrnoException).code === 'ESRCH';
-      }
-    };
-    setInterval(() => {
-      if (parentGone()) {
-        logger.info('parent supervisor exited');
-        shutdown();
-      }
-    }, 2_000).unref();
-  }
+  onParentGone = shutdown;
 }
 
 main().catch((err) => {

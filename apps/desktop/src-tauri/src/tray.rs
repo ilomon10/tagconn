@@ -52,7 +52,7 @@ pub fn build(app: &AppHandle, sc: &SharedSidecar) -> tauri::Result<()> {
                             eprintln!("open office: {}", e.message);
                             // The main window shows the error banner (e.g. the server is stopped).
                             show_main(&app);
-                            let _ = app.emit("desktop://notice", json!({ "message": e.message, "hint": e.hint }));
+                            let _ = app.emit_to("main", "desktop://notice", json!({ "message": e.message, "hint": e.hint }));
                         }
                     });
                 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SetupCheck, SetupFix } from '@tagconn/shared';
-import { bannerChecks, blockingChecks, canAdvance, needsWizard, ownServerRunning, nextStep, prevStep, summarizeChecks, type WizardGate } from './wizard';
+import { bannerChecks, blockingChecks, canAdvance, displayCheck, needsWizard, ownServerRunning, nextStep, prevStep, summarizeChecks, type WizardGate } from './wizard';
 import { runFix, type FixEnv } from './fixes';
 import { addFolder, removeFolder } from './paths';
 
@@ -103,5 +103,15 @@ describe('folders', () => {
     expect(addFolder(['/a'], '/a')).toEqual(['/a']);
     expect(addFolder(['/a'], '  ')).toEqual(['/a']);
     expect(removeFolder(['/a', '/b'], '/a')).toEqual(['/b']);
+  });
+});
+
+describe('displayCheck', () => {
+  it('shows our own server on the port as OK, not failed', () => {
+    const c = chk({ id: 'server_port', status: 'fail', detail: 'Port 4317 is in use' });
+    expect(displayCheck(c, true)).toMatchObject({ status: 'ok', detail: expect.stringContaining('own server') });
+    expect(displayCheck(c, false)).toBe(c);
+    const other = chk({ id: 'docker', status: 'fail' });
+    expect(displayCheck(other, true)).toBe(other);
   });
 });

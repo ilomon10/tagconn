@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, type ComponentPropsWithRef, type ReactNode } from 'react';
 import type { CheckStatus } from '@tagconn/shared';
 import type { AppState, Light } from '../lib/state';
 
@@ -12,7 +12,7 @@ const variants: Record<Variant, string> = {
   danger: 'bg-red-900 text-red-50 hover:bg-red-800',
 };
 
-export function Button({ variant = 'subtle', className, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+export function Button({ variant = 'subtle', className, ...rest }: ComponentPropsWithRef<'button'> & { variant?: Variant }) {
   return (
     <button
       type="button"
@@ -86,6 +86,21 @@ export function Dialog({ title, onClose, children, blocking, side, wide }: { tit
     (node?.querySelector<HTMLElement>('[data-autofocus]') ?? node?.querySelector<HTMLElement>(FOCUSABLE) ?? node)?.focus();
     return () => opener?.focus?.();
   }, []);
+  // Focus can be lost while the dialog is open (e.g. the focused button just became disabled), so keydown
+  // never reaches the dialog. Escape then closes the topmost dialog from the document instead.
+  useEffect(() => {
+    if (blocking || !onClose) return;
+    const onDocKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const node = ref.current;
+      if (!node || node.contains(document.activeElement)) return; // the dialog's own handler takes it
+      const modals = document.querySelectorAll('[aria-modal="true"]');
+      if (modals[modals.length - 1] !== node) return;
+      onClose();
+    };
+    document.addEventListener('keydown', onDocKey);
+    return () => document.removeEventListener('keydown', onDocKey);
+  }, [blocking, onClose]);
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape' && !blocking) {
       e.stopPropagation();
@@ -137,6 +152,8 @@ export interface Notice {
   hint?: string;
   /** Clears the notice as soon as this holds for the app state (the condition it reports has resolved). */
   until?: (s: AppState) => boolean;
+  /** Removes the notice by itself after this many ms (confirmations). */
+  dismissAfterMs?: number;
   action?: { label: string; run: () => void };
 }
 

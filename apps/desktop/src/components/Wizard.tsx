@@ -3,7 +3,7 @@ import type { SetupCheck } from '@tagconn/shared';
 import { addFolder, removeFolder } from '../lib/paths';
 import { visibleServices } from '../lib/state';
 import type { Desktop } from '../lib/useDesktop';
-import { STEP_TITLES, WIZARD_STEPS, blockingChecks, canAdvance, ownServerRunning, nextStep, prevStep, summarizeChecks, type WizardStep } from '../lib/wizard';
+import { STEP_TITLES, WIZARD_STEPS, blockingChecks, canAdvance, displayCheck, ownServerRunning, nextStep, prevStep, summarizeChecks, type WizardStep } from '../lib/wizard';
 import { SERVICE_LABELS, ServiceRow } from './ServiceRow';
 import { Button, CheckIcon, Toggle } from './ui';
 
@@ -31,14 +31,18 @@ export function Wizard({ d, onFinish, onExit }: { d: Desktop; onFinish: () => vo
   const [step, setStep] = useState<WizardStep>('welcome');
   const heading = useRef<HTMLHeadingElement>(null);
   const first = useRef(true);
+  const startBtn = useRef<HTMLButtonElement>(null);
   // The focused Next button is disabled or replaced on a step change, which drops focus to <body>: move it to the heading.
   useEffect(() => {
-    if (first.current) first.current = false;
-    else heading.current?.focus();
+    if (first.current) {
+      first.current = false;
+      startBtn.current?.focus(); // the Welcome step's primary action
+    } else heading.current?.focus();
   }, [step]);
   const gate = { checks: d.checks, checking: d.checking, installResult: d.installResult, services: d.state.services };
   const ok = canAdvance(step, gate);
   const idx = WIZARD_STEPS.indexOf(step);
+  const own = ownServerRunning(d.state.services);
   const config = d.config;
   const runMode = config?.runMode ?? 'native';
   const settingsPath = d.info ? `${d.info.paths.claudeDir}/settings.json` : '~/.claude/settings.json';
@@ -87,14 +91,14 @@ export function Wizard({ d, onFinish, onExit }: { d: Desktop; onFinish: () => vo
               <>
                 <p role="status" className="text-sm text-ink-300">
                   {(() => {
-                    const s = summarizeChecks(d.checks);
+                    const s = summarizeChecks(d.checks.map((c) => displayCheck(c, own)));
                     return `${s.ok} ok, ${s.warn} warning${s.warn === 1 ? '' : 's'}, ${s.fail} failed.`;
                   })()}
                   {blockingChecks(d.checks, ownServerRunning(d.state.services)).length > 0 && ' Fix the required failures to continue.'}
                 </p>
                 <ul className="space-y-2">
                   {d.checks.map((c) => (
-                    <CheckRow key={c.id} check={c} d={d} gotoHooks={() => setStep('hooks')} />
+                    <CheckRow key={c.id} check={displayCheck(c, own)} d={d} gotoHooks={() => setStep('hooks')} />
                   ))}
                 </ul>
               </>
@@ -216,7 +220,7 @@ export function Wizard({ d, onFinish, onExit }: { d: Desktop; onFinish: () => vo
             Go to control panel
           </Button>
         ) : (
-          <Button variant="primary" disabled={!ok} onClick={() => setStep(nextStep(step))}>
+          <Button ref={startBtn} variant="primary" disabled={!ok} onClick={() => setStep(nextStep(step))}>
             {step === 'welcome' ? 'Start setup' : 'Next'}
           </Button>
         )}

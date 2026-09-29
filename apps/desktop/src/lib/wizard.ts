@@ -73,6 +73,12 @@ export function bannerChecks(setupDone: boolean, checks: SetupCheck[] | null, se
   return setupDone ? blockingChecks(checks, ownServerRunning(services)) : [];
 }
 
+/** What the check list shows: our own server holding the port is fine, not a failure. */
+export function displayCheck(c: SetupCheck, ownRunning: boolean): SetupCheck {
+  if (c.id === 'server_port' && c.status === 'fail' && ownRunning) return { ...c, status: 'ok', detail: "In use by tagconn's own server (OK)." };
+  return c;
+}
+
 /** Aggregate of the check list for the summary line. */
 export function summarizeChecks(checks: SetupCheck[]): { ok: number; warn: number; fail: number } {
   return {

@@ -16,7 +16,8 @@ export type Action =
   | { type: 'notify'; payload: unknown }
   | { type: 'logs/set'; lines: LogLine[] }
   | { type: 'sidecar/down'; reason: string; logs: string[] }
-  | { type: 'sidecar/up' };
+  | { type: 'sidecar/up' }
+  | { type: 'services/reset' };
 
 const cap = (lines: LogLine[]) => (lines.length > MAX_LOG_LINES ? lines.slice(lines.length - MAX_LOG_LINES) : lines);
 
@@ -43,6 +44,9 @@ export function reducer(state: AppState, action: Action): AppState {
       const live = state.logs.filter((l) => l.ts > last);
       return { ...state, logs: cap([...action.lines, ...live]) };
     }
+    // The supervisor was relaunched: its services died with it, so nothing is known to run until a refresh.
+    case 'services/reset':
+      return { ...state, services: {} };
     case 'sidecar/down':
       return { ...state, sidecarDown: { reason: action.reason, logs: action.logs } };
     case 'sidecar/up':

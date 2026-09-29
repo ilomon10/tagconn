@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
+use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Manager, State, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
@@ -95,6 +96,16 @@ pub async fn do_open_office(app: &AppHandle, sc: &Sidecar, in_browser: bool) -> 
         .title("tagconn office")
         .inner_size(1360.0, 860.0)
         .on_navigation(is_office_url)
+        // window.open / target=_blank must not create unrestricted webviews: http(s) goes to the system browser, the rest is dropped.
+        .on_new_window({
+            let app = app.clone();
+            move |url, _features| {
+                if matches!(url.scheme(), "http" | "https") {
+                    let _ = app.opener().open_url(url.as_str(), None::<&str>);
+                }
+                NewWindowResponse::Deny
+            }
+        })
         .build()
         .map_err(internal)?;
     Ok(None)

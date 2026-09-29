@@ -173,6 +173,14 @@ The README template stays `<configDir>/attribution-README.md`. The sh hook keeps
 - **Docker mode** uses compose project `tagconn-desktop` and volume `desktop-office-data`, separate from the
   repo's `office:up` stack.
 
+- **Bundled node** is `tagconn-node[.exe]` next to the app executable (never `/usr/bin/node`).
+- **Opener scope:** the JS opener may only open `https://github.com/ilomon10/tagconn[/*]` and the two help URLs.
+  Loopback URLs are opened by Rust (`open_office`), outside the scope. `glob` `*` would also match `@` and `/`, so
+  a `http://127.0.0.1:*` entry would allow `http://127.0.0.1:@evil.example/`.
+- **Office window popups** (`target=_blank`, `window.open`) are denied; http(s) links go to the system browser.
+- **Sidecar env:** every `NODE_*` variable is removed before the supervisor starts; sidecar events go to the main
+  window only.
+
 ### Real Windows machine checklist (collected from Waves 0–1; run with the user)
 Use a canary folder (never real dotfiles) and haiku with a small budget.
 1. The hook in exec form (`command` = node.exe, `args` = [office-hook.mjs]) fires, and an event reaches the office.
@@ -311,7 +319,7 @@ systemd, so give `isolation_unavailable` and `mode_not_allowed` Windows-specific
 ### Wave 3: packaging, CI, docs
 - `.github/workflows/desktop.yml` builds on a matrix of windows-latest and ubuntu-22.04:
   - builds the web, server, runner and supervisor bundles;
-  - downloads official node 24.21.0 as the sidecar `binaries/node-<target-triple>`;
+  - downloads official node 24.21.0 as the sidecar `binaries/tagconn-node-<target-triple>`;
   - installs better-sqlite3 for that node ABI on each target;
   - runs `tauri build`, producing an NSIS setup .exe, an AppImage and a .deb;
   - signs with the Tauri updater key (`TAURI_SIGNING_PRIVATE_KEY` secret) and publishes `latest.json`

@@ -1,7 +1,7 @@
 {
   "bundle": {
     "createUpdaterArtifacts": true,
-    "externalBin": ["binaries/node"],
+    "externalBin": ["binaries/tagconn-node"],
     "resources": { "resources/": "./" }
   },
   "plugins": {

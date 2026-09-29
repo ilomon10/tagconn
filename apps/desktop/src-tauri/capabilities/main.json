@@ -21,8 +21,8 @@
     {
       "identifier": "opener:allow-open-url",
       "allow": [
-        { "url": "http://127.0.0.1:*" },
-        { "url": "https://github.com/ilomon10/tagconn*" },
+        { "url": "https://github.com/ilomon10/tagconn" },
+        { "url": "https://github.com/ilomon10/tagconn/*" },
         { "url": "https://docs.claude.com/en/docs/claude-code/*" },
         { "url": "https://git-scm.com/download/*" }
       ]

@@ -11,6 +11,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
+
+/// Events go to the control window only; the office window loads a remote page and must never see them.
+fn emit_main<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    let _ = app.emit_to("main", event, payload);
+}
 use tokio::sync::oneshot;
 
 const STDERR_TAIL: usize = 200;
@@ -99,8 +104,9 @@ fn resolve_command(app: &AppHandle) -> Result<LaunchCmd, String> {
         }
     }
     let res = app.path().resource_dir().map_err(|e| e.to_string())?;
-    // Prod: the bundled node (tauri externalBin) sits next to the app executable, named `node`.
-    let node_name = if cfg!(windows) { "node.exe" } else { "node" };
+    // Prod: the bundled node (tauri externalBin `binaries/tagconn-node`) sits next to the app executable as
+    // `tagconn-node[.exe]`, never `node` (a package must not ship /usr/bin/node).
+    let node_name = if cfg!(windows) { "tagconn-node.exe" } else { "tagconn-node" };
     let bundled_node = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(node_name))).filter(|p| p.is_file());
     if let (Some(node), Some((root, js))) = (bundled_node, bundled_supervisor(&res)) {
         return Ok(LaunchCmd { program: node, args: vec![js.to_string_lossy().into_owned()], bundle: Some(root) });
@@ -143,6 +149,12 @@ impl Sidecar {
         cmd.current_dir(&data);
         if let Some(dir) = &launch.bundle {
             cmd.env("TAGCONN_BUNDLE_DIR", dir);
+        }
+        // The sidecar's node must not pick up the user's NODE_OPTIONS (--require/--import), NODE_PATH, NODE_EXTRA_CA_CERTS, ...
+        for (k, _) in std::env::vars_os() {
+            if k.to_string_lossy().to_uppercase().starts_with("NODE_") {
+                cmd.env_remove(&k);
+            }
         }
         cmd.env("TAGCONN_APP_VERSION", self.app.package_info().version.to_string());
         #[cfg(windows)]
@@ -195,7 +207,7 @@ impl Sidecar {
                     let _ = tx.send(outcome);
                 }
             } else if msg.get("method").is_some() {
-                let _ = self.app.emit("desktop://notify", msg);
+                emit_main(&self.app, "desktop://notify", msg);
             }
         }
     }
@@ -249,9 +261,9 @@ impl Sidecar {
             self.push_tail("[desktop] relaunching once".into());
             match self.spawn() {
                 Ok(()) => {
-                    let _ = self.app.emit("desktop://sidecar-up", ());
+                    emit_main(&self.app, "desktop://sidecar-up", ());
                     // The old supervisor's services died with it: tell the UI so it can offer Start again.
-                    let _ = self.app.emit("desktop://sidecar-relaunched", ());
+                    emit_main(&self.app, "desktop://sidecar-relaunched", ());
                     return;
                 }
                 Err(e) => self.mark_down(format!("{reason} Relaunch failed: {e}")),
@@ -263,7 +275,7 @@ impl Sidecar {
 
     fn mark_down(&self, reason: String) {
         self.state.lock().unwrap().down = Some(reason.clone());
-        let _ = self.app.emit("desktop://sidecar-down", json!({ "reason": reason, "logs": self.tail() }));
+        emit_main(&self.app, "desktop://sidecar-down", json!({ "reason": reason, "logs": self.tail() }));
     }
 
     /// The UI's Retry: a clean start with a fresh relaunch budget.
@@ -276,7 +288,7 @@ impl Sidecar {
         }
         match self.spawn() {
             Ok(()) => {
-                let _ = self.app.emit("desktop://sidecar-up", ());
+                emit_main(&self.app, "desktop://sidecar-up", ());
                 Ok(())
             }
             Err(e) => {
