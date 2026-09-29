@@ -18,7 +18,13 @@ straight to step 2.
 
 ## 2. Create the backlog
 
-Create `.office/backlog.md` with a table:
+Create `.tagconn/work/backlog.md` with a table. `.tagconn/work/` is the team's scratch space in the
+project: the backlog, a `plan.md` if the work needs one, and `handoffs/` for long reports. If
+`.tagconn/.gitignore` doesn't exist yet, create it containing the single line `work/`, so this
+working memory stays out of git while `.tagconn/office.json` (the office profile) can still be
+committed. If an older `.office/backlog.md` exists, move it here instead of starting a second one.
+If `.tagconn` is a plain **file** (the project opted out of tagconn files), write nothing there: keep
+the backlog in the conversation instead.
 
 ```markdown
 # Backlog
@@ -50,7 +56,7 @@ Before spawning a wave, re-check with `task-sizing`: are the tasks in this wave 
 ## 4. Update backlog statuses
 
 As each subagent's `handoff` block comes back (see `handoff-report` skill), update its row in
-`.office/backlog.md`: `todo` → `doing` (when spawned) → `done` / `blocked` / `failed`. If `blocked`,
+`.tagconn/work/backlog.md`: `todo` → `doing` (when spawned) → `done` / `blocked` / `failed`. If `blocked`,
 either resolve it yourself (answer the question, provide the missing contract) and re-spawn, or
 surface it to the user if only they can decide.
 
@@ -65,4 +71,4 @@ Fix anything they raise, looping back to step 3 for fix-up tasks as needed.
 
 Summarize: what was built, where (key files), how it was verified (tests run), anything deferred or
 blocked, and what (if anything) the user needs to do next (e.g. run a migration, review a PR). Keep
-it concise - point at `.office/backlog.md` for full detail rather than repeating it all.
+it concise - point at `.tagconn/work/backlog.md` for full detail rather than repeating it all.

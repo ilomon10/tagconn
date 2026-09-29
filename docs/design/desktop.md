@@ -150,6 +150,27 @@ The node hook reads it (override with `TAGCONN_HOOK_CONFIG`). Import uses `<url>
 The README template stays `<configDir>/attribution-README.md`. The sh hook keeps `curl.conf` and
 `attribution.conf`. The desktop writes `hook.json` and registers only the node hook.
 
+### Real Windows machine checklist (collected from Waves 0–1; run with the user)
+Use a canary folder (never real dotfiles) and haiku with a small budget.
+1. The hook in exec form (`command` = node.exe, `args` = [office-hook.mjs]) fires, and an event reaches the office.
+2. `where.exe claude` output for the native, npm (`claude.cmd`) and winget installs. The runner's shim
+   parsing launches `node cli.js` the same way the `.cmd` does.
+3. The deny-rule path form: which of `//C:/Users/<u>/...` and `C:/Users/<u>/...` the CLI honours
+   (canary write refused). Then drop the other form.
+4. `taskkill /PID <pid> /T /F` reaps the whole claude tree when a quest is stopped.
+5. The trust key style in `%USERPROFILE%\.claude.json`: slashes and drive-letter case.
+6. The stdin prompt (`-p` with stdin) works from a Node parent on win32.
+7. `icacls` ACLs on hook.json, runner.json and the state dir are applied and verified by setup.
+8. Whether `CLAUDE_CONFIG_DIR` is honoured on Windows. Sandboxed Windows tests depend on it.
+9. better-sqlite3 13 loads under the bundled node 24.21 on win-x64.
+
+**Windows follow-ups for the security review.** Consider denying more Windows-specific sensitive
+locations for quests, beyond the `~/` set duplicated in both forms: `AppData\Roaming` credential
+stores, the PowerShell profiles (`Documents\PowerShell\*profile.ps1`, `Documents\WindowsPowerShell\...`),
+`AppData\Roaming\npm` and the `.npmrc` location.
+The web's rejection guidance (`apps/web/src/features/quests/rejectionGuidance.ts`) still talks about
+systemd, so give `isolation_unavailable` and `mode_not_allowed` Windows-specific text (task F, or the PM).
+
 ### Wave 1: portable core (4 developers in parallel)
 - **A. Server serves the web app.** Add `@fastify/static` in a new `apps/server/src/core/web/` plugin.
   It is active only when `server.webDir` is set; `/api` and `/socket.io` are untouched.

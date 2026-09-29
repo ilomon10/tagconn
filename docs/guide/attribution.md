@@ -9,6 +9,7 @@ paths, and nothing is ever applied without asking first (by default).
 | File | Written by | When |
 |---|---|---|
 | `.tagconn/README.md` | The hook, once | Only if you opted in at install time (`pnpm office:install --attribution yes`, or "y" at the interactive prompt — the default is **off**), and only the first time you open that repo with Claude Code with the hook installed. Explains what the directory is and how to restore/save. Never overwritten. |
+| `.tagconn/work/` | Your agents (the `office-kickoff` skill) | The team's working memory for this project: `backlog.md`, an optional `plan.md`, `handoffs/`. Git-ignored through `.tagconn/.gitignore` (`work/`), so it is never committed unless you change that. It replaces the old `.office/` folder; an existing `.office/backlog.md` is moved here. |
 | `.tagconn/office.json` | An explicit save action | The floor's name, visual style, room layout, and any named heroes (referenced by role, never host-specific data). Only ever written when you ask for it (below) — never automatically. |
 
 `.tagconn/README.md`'s own text documents an opt-out: replace the directory with an empty **file**

@@ -24,7 +24,7 @@ A task is **done** only when every item below is true. If any item is false, the
    high/critical findings block "done".
 6. **Docs updated when behavior changed.** README, CLAUDE.md, architecture docs, or inline comments
    reflect the new behavior if a user- or developer-facing behavior changed.
-7. **Backlog updated.** `.office/backlog.md` (or the tracker in use) reflects the final status, and
+7. **Backlog updated.** `.tagconn/work/backlog.md` (or the tracker in use) reflects the final status, and
    the task's `handoff` block is accurate.
 
 ## Using this as a checklist

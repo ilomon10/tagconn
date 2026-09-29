@@ -144,7 +144,7 @@ subagents, stripping the `office-*` frontmatter keys Claude doesn't understand a
 `packages/agent-templates/skills/*/SKILL.md` are Claude Code skills installed the same way (marked
 with a `.tagconn-managed` file in each skill dir):
 
-- **office-kickoff** - the PM playbook: clarify the goal, build `.office/backlog.md`, spawn
+- **office-kickoff** - the PM playbook: clarify the goal, build `.tagconn/work/backlog.md`, spawn
   analyst/architect/developer/qa-engineer/code-reviewer/security-engineer in parallel, file-disjoint
   waves, verify, report.
 - **handoff-report** - the exact ` ```handoff ` block every subagent ends its reply with, so the
