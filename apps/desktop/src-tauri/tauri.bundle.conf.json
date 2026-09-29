@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "createUpdaterArtifacts": true,
+    "externalBin": ["binaries/node"],
+    "resources": { "resources/": "./" }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": ["https://github.com/ilomon10/tagconn/releases/latest/download/latest.json"]
+    }
+  }
+}

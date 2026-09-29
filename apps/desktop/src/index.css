@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+/* Tokens copied from apps/web/src/index.css (not imported: the apps stay independent). */
+@theme {
+  --color-ink-950: #0f0d15;
+  --color-ink-900: #15121e;
+  --color-ink-850: #1b1726;
+  --color-ink-800: #221d30;
+  --color-ink-700: #2e2840;
+  --color-ink-600: #3d3555;
+  --color-ink-400: #7d7399;
+  --color-ink-300: #a79dc2;
+  --color-ink-100: #ece6f7;
+  --color-cozy: #f5c07a;
+  --font-pixel: ui-monospace, "JetBrains Mono", Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink-950);
+  color: var(--color-ink-100);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-600) transparent;
+}
+
+input,
+select,
+textarea {
+  color-scheme: dark;
+}
+
+/* Visible keyboard focus everywhere (>= 3:1 against the ink backgrounds). */
+:focus-visible {
+  outline: 2px solid var(--color-cozy);
+  outline-offset: 2px;
+}
+
+/* "unavailable" status light: a striped disc (shape, not only colour). */
+.light-unavailable {
+  background: repeating-linear-gradient(45deg, var(--color-ink-300) 0 2px, var(--color-ink-700) 2px 4px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .light-starting {
+    animation: pulse-light 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse-light {
+    50% {
+      opacity: 0.35;
+    }
+  }
+}

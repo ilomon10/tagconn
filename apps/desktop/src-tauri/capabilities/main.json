@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The bundled control UI. The office window loads a remote URL and has NO capability, so it has no IPC access at all.",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-rpc",
+    "allow-sidecar-status",
+    "allow-sidecar-retry",
+    "allow-open-office",
+    "allow-find-free-port",
+    "allow-reveal-path",
+    "allow-updates-configured",
+    "allow-check-update",
+    "allow-install-update",
+    "dialog:allow-open",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://127.0.0.1:*" },
+        { "url": "https://github.com/ilomon10/tagconn*" },
+        { "url": "https://docs.claude.com/en/docs/claude-code/*" },
+        { "url": "https://git-scm.com/download/*" }
+      ]
+    }
+  ]
+}

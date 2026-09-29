@@ -1,0 +1,6 @@
+dist
+src-tauri/target
+src-tauri/gen
+# Filled in by CI (task G): the bundled node and the supervisor bundle.
+src-tauri/binaries
+src-tauri/resources

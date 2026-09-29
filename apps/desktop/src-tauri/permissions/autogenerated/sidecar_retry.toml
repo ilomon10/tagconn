@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sidecar-retry"
+description = "Enables the sidecar_retry command without any pre-configured scope."
+commands.allow = ["sidecar_retry"]
+
+[[permission]]
+identifier = "deny-sidecar-retry"
+description = "Denies the sidecar_retry command without any pre-configured scope."
+commands.deny = ["sidecar_retry"]
