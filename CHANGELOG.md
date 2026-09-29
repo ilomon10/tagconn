@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-29
+
 ### Fixed
 - The first desktop installers: v0.5.0 was tagged, but its CI packaging failed (the Linux package lost its bundled node through a config override, a package check expected the wrong path form, and unpacking node on Windows got an empty path), so v0.5.0 has no GitHub release. v0.5.1 is the first release with tagconn Desktop (preview) installers; everything else is the same as v0.5.0.
 - The release script also bumps the desktop app's version files.
@@ -135,7 +137,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/ilomon10/tagconn/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ilomon10/tagconn/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/ilomon10/tagconn/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ilomon10/tagconn/compare/v0.3.0...v0.4.0
