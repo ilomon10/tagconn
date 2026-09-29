@@ -188,9 +188,10 @@ default, Docker optional; installer + auto-update. Design: `docs/design/desktop.
   - [x] Wave 1 sandboxed e2e QA pass (node hook with 3 real haiku sessions, webDir, uninstall); fixed: settings.json line/column, install preflight
   - [~] 11.3 Wave 1 security review (1 High, 4 Med, 12 Low) → fixes S1 runner/shared [x], S2 setup [x], S3 hook [x], S4 server [x]; re-review [x]: no Critical/High; 5 Medium + Lows (N1–N16) → round-3 fixes 11.4
   - [x] Wave 1 security review + sandboxed e2e QA (node hook exec form with a real haiku session, webDir serving, install/uninstall/rollback)
-  - [~] 11.4 Round-3 security fixes: runner N3/N10/N11 [x], setup N9/N16 [x], supervisor+server N1/N2/N6/N7/N8/N13/N15 [~], desktop N5/N14 [~]; N4 (Windows path aliases) needs the real-Windows canary
-  - [~] 11.6 Desktop QA fixes: A, B, C, E, F, G, H, L, M in apps/desktop; B (start resolves on running), D, I, J, K + crash hint in the supervisor/server  [Developers T1, T4]
+  - [x] 11.4 Round-3 security fixes: runner N3/N10/N11 [x], setup N9/N16 [x], supervisor+server N1/N2/N6/N7/N8/N13/N15 [x], desktop N5/N14 [x], runner dataDir deny + parent watchdog [x]; N4 (Windows path aliases) needs the real-Windows canary
+  - [x] 11.6 Desktop QA fixes: A, B, C, E, F, G, H, L, M in apps/desktop; B (start resolves on running), D, I, J, K + crash hint in the supervisor/server  [Developers T1, T4]
   - [x] 11.5 Locale-independent Windows ACL checks: runner winAcl.ts and setup secrets.ts/nodeRuntime.ts match SYSTEM/Administrators by English name, so a non-English Windows fails closed (install refused). Read ACEs as SIDs (PowerShell `Get-Acl` + `IdentityReference.Translate([SecurityIdentifier])`, path via env) and share one parser  [Developer]
+  - [~] 11.7 Final desktop QA (GUI smoke of the A/B/F/N5 fixes on Linux) + final security pass  
   - [ ] Security review (node hook, token ACLs, Windows runner policy + deny paths, supervisor args, Tauri capabilities, updater signature)
   - [x] QA: Linux control panel/settings/logs/tray/quit/a11y pass: 3 bugs (A wizard hijacks the panel on a port re-check, B open-office-on-start race, M wizard focus loss) + D–L → 11.6; Linux sandboxed wizard run [x] + AppImage; Windows CI install smoke; manual Windows pass with the user; updater across two pre-releases
   - [ ] Release v0.5.0

@@ -150,6 +150,29 @@ The node hook reads it (override with `TAGCONN_HOOK_CONFIG`). Import uses `<url>
 The README template stays `<configDir>/attribution-README.md`. The sh hook keeps `curl.conf` and
 `attribution.conf`. The desktop writes `hook.json` and registers only the node hook.
 
+### Behaviour added after QA and the security reviews (2026-09-29)
+- **Wizard vs panel:** the wizard shows only until setup completes once. Later failed checks appear as a "Setup
+  problems" banner with their fixes, and "Run setup again" reopens the wizard. `server_port` never blocks
+  while our own server holds the port.
+- **Start semantics:** `service.start` resolves only once the service is running (for the server, the first
+  health OK). It rejects with `spawn_failed` after 30 s or on a permanent crash. Open-office-on-start relies on this.
+- **Pairing:** the in-app office window gets the code in the URL fragment through the webview (never argv).
+  "Open in browser" opens the plain URL and the app shows the code, with a countdown, for the user to type in.
+  The server no longer logs the boot pairing code in desktop mode, and the supervisor redacts code shapes.
+- **Desktop-mode server config:** `OFFICE_NO_DOTENV=1` and `OFFICE_CONFIG=<config>/office.yaml`. The server
+  never reads `.env`/`office.yaml` relative to its cwd, and runs with cwd = the data dir.
+  `OFFICE_SERVER__ALLOWED_HOSTS` is loopback only.
+- **Process lifetime:** the server and runner get `TAGCONN_PARENT_PID` and exit when the supervisor is gone.
+  The supervisor exits (stopping services) on stdin EOF, a broken pipe or a changed parent pid, with a 25 s
+  hard deadline. Stale-PID cleanup matches the current bundle and the process start time. There's no kill
+  after a child has exited. Shutdown closes socket.io first (< 1 s).
+- **Windows helpers** always run by absolute System32 path with a fixed cwd. docker is found on absolute PATH
+  entries only. ACL checks read SIDs through PowerShell `Get-Acl` (locale-independent).
+- **runner.json** carries `dataDir`, `bundleDir` and `hookNodePath`, written by the supervisor so quests can't
+  touch them.
+- **Docker mode** uses compose project `tagconn-desktop` and volume `desktop-office-data`, separate from the
+  repo's `office:up` stack.
+
 ### Real Windows machine checklist (collected from Waves 0–1; run with the user)
 Use a canary folder (never real dotfiles) and haiku with a small budget.
 1. The hook in exec form (`command` = node.exe, `args` = [office-hook.mjs]) fires, and an event reaches the office.
