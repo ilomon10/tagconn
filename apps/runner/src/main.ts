@@ -110,6 +110,10 @@ async function main(): Promise<void> {
 
   // Resolve first: on win32 an npm `.cmd` shim cannot be spawned directly, so probes and runs use its real target.
   const claudeLaunch = resolveClaudeLaunch(cfg.claudePath);
+  // L7: on win32 never fall back to spawning a bare `claude` (a planted claude.exe in the project dir would win).
+  if (!claudeLaunch && currentPlatform().isWin32) {
+    throw new ConfigError(`could not resolve claudePath "${cfg.claudePath}" to an absolute claude.exe (or a parseable npm claude.cmd shim); set claudePath in runner.json to its absolute path`);
+  }
   const { caps, version } = await probeCapabilities(claudeLaunch?.command ?? cfg.claudePath, cfg.stateDir, cfg.stateDir, claudeLaunch?.args ?? []);
   // L1: this log is informational only now — the REAL gate is assertRequiredCapabilities() called
   // per run inside runManager.startQuest/startReceptionist (it used to be dead code: this was the

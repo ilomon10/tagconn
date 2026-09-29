@@ -167,7 +167,10 @@ Use a canary folder (never real dotfiles) and haiku with a small budget.
 4. `taskkill /PID <pid> /T /F` reaps the whole claude tree when a quest is stopped.
 5. The trust key style in `%USERPROFILE%\.claude.json`: slashes and drive-letter case.
 6. The stdin prompt (`-p` with stdin) works from a Node parent on win32.
-7. `icacls` ACLs on hook.json, runner.json and the state dir are applied and verified by setup.
+7. `icacls` ACLs on hook.json, runner.json and the state dir are applied and verified by setup, and the
+   runner's load-time ACL check (apps/runner/src/winAcl.ts) accepts them. It parses icacls output that shows
+   LOCALIZED names for SYSTEM/Administrators: test on a non-English Windows too, and if it fails closed there,
+   switch the check to well-known SIDs (S-1-5-18, S-1-5-32-544).
 8. Whether `CLAUDE_CONFIG_DIR` is honoured on Windows. Sandboxed Windows tests depend on it.
 9. better-sqlite3 13 loads under the bundled node 24.21 on win-x64.
 

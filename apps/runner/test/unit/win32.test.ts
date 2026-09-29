@@ -37,10 +37,22 @@ function win(fs: FakeFs, env: NodeJS.ProcessEnv = { USERPROFILE: HOME, LOCALAPPD
     },
     run: (command, args) => {
       fs.runs?.push([command, args]);
-      if (command === 'where.exe') return fs.where ? { status: 0, stdout: fs.where.join('\r\n') + '\r\n' } : { status: 1, stdout: '' };
+      if (command.endsWith('\\System32\\where.exe')) return fs.where ? { status: 0, stdout: fs.where.join('\r\n') + '\r\n' } : { status: 1, stdout: '' };
       return { status: 0, stdout: '' };
     },
     nodeExecPath: 'C:\\node\\node.exe',
+  });
+}
+
+/** A win32 Platform whose whoami/icacls/dir answers say `file` is private to Ann. */
+export function winWithGoodAcl(file: string): Platform {
+  return makePlatform({
+    ...win({ files: {} }),
+    run: (command) => {
+      if (command.endsWith('whoami.exe')) return { status: 0, stdout: '"desktop\\ann","S-1-5-21-1-2-3-1001"\r\n' };
+      if (command.endsWith('icacls.exe')) return { status: 0, stdout: `${file} DESKTOP\\ann:(F)\r\n       NT AUTHORITY\\SYSTEM:(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n` };
+      return { status: 0, stdout: `01/02/2026  10:00 AM               123 DESKTOP\\ann ${file.split('/').pop()}\r\n` };
+    },
   });
 }
 
@@ -75,11 +87,31 @@ describe('win32 claude path resolution', () => {
     expect(resolveClaudeLaunch('claude', p)).toEqual({ command: exe, args: [] });
   });
 
-  it('an .exe beats an npm shim listed earlier', () => {
+  it('keeps PATH order: an earlier shim is not overridden by a later .exe (or the fallback)', () => {
     const exe = `${HOME}\\.local\\bin\\claude.exe`;
     const cmd = `${NPM}\\claude.cmd`;
-    const p = win({ files: { [exe]: '', [cmd]: SHIM }, where: [`${NPM}\\claude`, cmd] });
-    expect(resolveClaudeLaunch('claude', p)?.command).toBe(exe);
+    const cli = `${NPM}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`;
+    const p = win({ files: { [exe]: '', [cmd]: SHIM, [cli]: '' }, where: [`${NPM}\\claude`, cmd, 'C:\\Later\\claude.exe'] });
+    expect(resolveClaudeLaunch('claude', p)).toEqual({ command: 'C:\\node\\node.exe', args: [cli] });
+    // the first hit is an unparseable shim: fail closed rather than fall through to a later .exe
+    const bad = win({ files: { [exe]: '', [cmd]: '@echo hi %*', 'C:\\Later\\claude.exe': '' }, where: [cmd, 'C:\\Later\\claude.exe'] });
+    expect(resolveClaudeLaunch('claude', bad)).toBeUndefined();
+  });
+
+  it('uses the absolute System32 where.exe with $PATH: (PATH only), a timeout and a fixed cwd; drops relative hits', () => {
+    const calls: Array<[string, string[], unknown]> = [];
+    const p = makePlatform({
+      ...win({ files: { 'C:\\Tools\\claude.exe': '' } }, { USERPROFILE: HOME, SystemRoot: 'C:\\Windows' }),
+      run: (c, a, o) => {
+        calls.push([c, a, o]);
+        return { status: 0, stdout: '.\\claude.exe\r\nC:\\Tools\\claude.exe\r\n' };
+      },
+      exists: (f) => f === 'C:\\Tools\\claude.exe' || f === '.\\claude.exe',
+    });
+    expect(resolveClaudeLaunch('claude', p)?.command).toBe('C:\\Tools\\claude.exe');
+    expect(calls[0]?.[0]).toBe('C:\\Windows\\System32\\where.exe');
+    expect(calls[0]?.[1]).toEqual(['$PATH:claude']);
+    expect(calls[0]?.[2]).toMatchObject({ cwd: 'C:\\Windows', timeoutMs: expect.any(Number) });
   });
 
   it('resolves an npm .cmd shim to node + cli.js, never through cmd.exe', () => {
@@ -88,7 +120,7 @@ describe('win32 claude path resolution', () => {
     const runs: Array<[string, string[]]> = [];
     const p = win({ files: { [cmd]: SHIM, [cli]: '' }, where: [`${NPM}\\claude`, cmd], runs });
     expect(resolveClaudeLaunch('claude', p)).toEqual({ command: 'C:\\node\\node.exe', args: [cli] });
-    expect(runs.every(([c]) => c === 'where.exe')).toBe(true);
+    expect(runs.every(([c]) => c.endsWith('\\System32\\where.exe'))).toBe(true);
   });
 
   it('uses a node.exe sitting next to the shim', () => {
@@ -127,8 +159,8 @@ describe('win32 process control and probes', () => {
     expect(taskkillArgs(4242)).toEqual(['/PID', '4242', '/T', '/F']);
     const runs: Array<[string, string[]]> = [];
     const kill = vi.fn();
-    killTree(4242, { platform: makePlatform({ ...win({ files: {}, runs }), kill }), signal: 'SIGTERM', group: false });
-    expect(runs).toEqual([['taskkill', ['/PID', '4242', '/T', '/F']]]);
+    killTree(4242, { platform: makePlatform({ ...win({ files: {}, runs }, { USERPROFILE: HOME, SystemRoot: 'C:\\Windows' }), kill }), signal: 'SIGTERM', group: false });
+    expect(runs).toEqual([['C:\\Windows\\System32\\taskkill.exe', ['/PID', '4242', '/T', '/F']]]);
     expect(kill).not.toHaveBeenCalled();
   });
 
@@ -174,13 +206,13 @@ describe('win32 state dir and config', () => {
     expect(defaultStateDir(posix({}))).toBe('/home/u/.local/state/tagconn');
   });
 
-  it('skips the 0600 mode check on win32 (ACL is set by packages/setup)', () => {
+  it('skips the POSIX 0600 mode check on win32 (the ACL is verified through icacls instead, see win32Hardening.test.ts)', () => {
     const root = mkSandbox();
     try {
       const path = join(root, 'runner.json');
       writeFileSync(path, JSON.stringify({ url: 'http://127.0.0.1:4317', token: 'a'.repeat(32), stateDir: join(root, 'state') }), { mode: 0o644 });
       expect(() => loadRunnerConfig(path)).toThrow(/0600/);
-      expect(loadRunnerConfig(path, win({ files: {} })).configPath).toBe(path);
+      expect(loadRunnerConfig(path, winWithGoodAcl(path)).configPath).toBe(path);
     } finally {
       rmSandbox(root);
     }
@@ -348,11 +380,15 @@ describe('deny-rule path forms (shared)', () => {
       'Read(~/.ssh/**)',
       'Read(//C:/Users/Ann/.ssh/**)',
       'Read(C:/Users/Ann/.ssh/**)',
+      'Read(//c:/Users/Ann/.ssh/**)',
+      'Read(c:/Users/Ann/.ssh/**)',
       'Read(**/.env)',
       'Bash',
       'Edit(~/.npmrc)',
       'Edit(//C:/Users/Ann/.npmrc)',
       'Edit(C:/Users/Ann/.npmrc)',
+      'Edit(//c:/Users/Ann/.npmrc)',
+      'Edit(c:/Users/Ann/.npmrc)',
     ]);
   });
 });

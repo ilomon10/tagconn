@@ -1,7 +1,7 @@
 // Platform layer (M11 Wave 1 C, decision #28). Everything OS-specific in the runner goes through an
 // injectable `Platform`, so the win32 behaviour is testable on Linux by passing a win32 object.
 //
-// claude path on Windows (docs/design/desktop.md "Wave 0 results" W0c): `where.exe claude`, then
+// claude path on Windows (docs/design/desktop.md "Wave 0 results" W0c): `where.exe $PATH:claude` (first PATH hit), then
 // %USERPROFILE%\.local\bin\claude.exe. We always resolve to a REAL launch target and never run a
 // `.cmd`/`.bat` shim through cmd.exe: the prompt fallback (`-- <prompt>`) and model text would need
 // cmd.exe-safe escaping, which is unreliable, and Node itself refuses to spawn a .cmd without a shell.
@@ -24,12 +24,36 @@ export interface Platform {
   exists(p: string): boolean;
   realpath(p: string): string;
   readText(p: string): string;
-  /** Runs a helper binary synchronously (where.exe, sh, taskkill). Never throws. */
-  run(command: string, args: string[]): { status: number | null; stdout: string };
+  /**
+   * Runs a helper binary synchronously (where.exe, sh, taskkill, icacls). Never throws. Always bounded by
+   * a timeout (default 10s) and run from a fixed cwd (win32: %SystemRoot%, else `/`), never the caller's cwd.
+   */
+  run(command: string, args: string[], opts?: RunOptions): { status: number | null; stdout: string };
   /** process.kill, injectable. */
   kill(pid: number, signal: NodeJS.Signals): void;
   /** The node executable used to launch an npm shim's cli.js. */
   nodeExecPath: string;
+}
+
+export interface RunOptions {
+  timeoutMs?: number;
+  cwd?: string;
+}
+
+const DEFAULT_RUN_TIMEOUT_MS = 10_000;
+
+/** `%SystemRoot%` (falling back to %windir%, then C:\\Windows) from a win32 environment. */
+export function systemRoot(env: NodeJS.ProcessEnv): string {
+  return env.SystemRoot || env.SYSTEMROOT || env.windir || env.WINDIR || 'C:\\Windows';
+}
+
+/**
+ * Absolute path of a Windows system binary (`where.exe`, `taskkill.exe`, `icacls.exe`, `whoami.exe`,
+ * `cmd.exe`) under `%SystemRoot%\System32`. Never a bare name: a planted exe in the cwd or on a
+ * user-writable PATH entry must not be run by the runner.
+ */
+export function win32SystemBin(platform: Platform, name: string): string {
+  return platform.path.join(systemRoot(platform.env), 'System32', name);
 }
 
 export function currentPlatform(): Platform {
@@ -48,8 +72,10 @@ export function makePlatform(overrides: Partial<Platform>): Platform {
     exists: existsSync,
     realpath: (p) => realpathSync(p),
     readText: (p) => readFileSync(p, 'utf8'),
-    run: (command, args) => {
-      const r = spawnSync(command, args, { encoding: 'utf8', windowsHide: true });
+    run: (command, args, opts) => {
+      const env = overrides.env ?? process.env;
+      const cwd = opts?.cwd ?? (isWin32 ? systemRoot(env) : '/');
+      const r = spawnSync(command, args, { encoding: 'utf8', windowsHide: true, timeout: opts?.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, cwd });
       return { status: r.status, stdout: r.stdout ?? '' };
     },
     kill: (pid, signal) => process.kill(pid, signal),
@@ -110,12 +136,19 @@ function safeRealpath(p: string, platform: Platform): string {
   }
 }
 
+/**
+ * PATH-ORDER lookup (M11 review M2): `where.exe $PATH:claude` searches PATH only (never the cwd, which
+ * plain `where.exe claude` also does) and prints hits in PATH order. Only absolute hits with a launchable
+ * extension are kept (the extensionless file npm also drops is a sh script). The FIRST hit wins; a later
+ * .exe never overrides an earlier .cmd shim. %USERPROFILE%\.local\bin\claude.exe is the fallback when
+ * PATH has nothing.
+ */
 function winCandidates(claudePath: string, platform: Platform): string[] {
   const found: string[] = [];
   if (platform.path.isAbsolute(claudePath)) {
     found.push(claudePath);
   } else {
-    const r = platform.run('where.exe', [claudePath]);
+    const r = platform.run(win32SystemBin(platform, 'where.exe'), [`$PATH:${claudePath}`], { timeoutMs: 10_000, cwd: systemRoot(platform.env) });
     if (r.status === 0) found.push(...r.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
     const profile = platform.env.USERPROFILE ?? platform.homedir();
     found.push(platform.path.join(profile, '.local', 'bin', 'claude.exe'));
@@ -124,16 +157,14 @@ function winCandidates(claudePath: string, platform: Platform): string[] {
 }
 
 function resolveWin32(claudePath: string, platform: Platform): ClaudeLaunch | undefined {
-  const candidates = winCandidates(claudePath, platform).filter((c) => platform.exists(c));
   const ext = (c: string) => platform.path.extname(c).toLowerCase();
-  // A real .exe always wins over a shim; the extensionless file npm also drops is a sh script, skipped.
-  const exe = candidates.find((c) => ext(c) === '.exe');
-  if (exe) return { command: safeRealpath(exe, platform), args: [] };
-  for (const shim of candidates.filter((c) => ext(c) === '.cmd' || ext(c) === '.bat')) {
-    const launch = parseCmdShim(shim, platform);
-    if (launch) return launch;
-  }
-  return undefined;
+  const launchable = winCandidates(claudePath, platform).filter(
+    (c) => platform.path.isAbsolute(c) && ['.exe', '.cmd', '.bat'].includes(ext(c)) && platform.exists(c),
+  );
+  const first = launchable[0];
+  if (!first) return undefined;
+  if (ext(first) === '.exe') return { command: safeRealpath(first, platform), args: [] };
+  return parseCmdShim(first, platform);
 }
 
 function resolvePosix(claudePath: string, platform: Platform): ClaudeLaunch | undefined {
@@ -171,7 +202,7 @@ export function taskkillArgs(pid: number): string[] {
 export function killTree(pid: number, opts: { platform?: Platform; signal: NodeJS.Signals; group: boolean }): void {
   const platform = opts.platform ?? currentPlatform();
   if (platform.isWin32) {
-    platform.run('taskkill', taskkillArgs(pid));
+    platform.run(win32SystemBin(platform, 'taskkill.exe'), taskkillArgs(pid), { timeoutMs: 10_000 });
     return;
   }
   try {

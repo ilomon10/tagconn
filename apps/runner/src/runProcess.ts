@@ -129,6 +129,8 @@ export function spawnRun(spec: SpawnSpec, limits: RunProcessLimits, killGraceMs:
   });
 
   function stop(): void {
+    // L6: the child already ended, so its pid may be reused by an unrelated process: never signal it.
+    if (ended) return;
     if (spec.wrapper === 'systemd-scope' && spec.scopeUnitName) {
       spawnSync('systemctl', ['--user', 'stop', spec.scopeUnitName], { stdio: 'ignore' });
       return;

@@ -21,6 +21,7 @@ import { checkOutputCap, createOutputCapState, type RunOutputCap, type RunOutput
 import type { ResolvedRunnerConfig } from './config.js';
 import { buildRunEnv } from './env.js';
 import { currentPlatform, type Platform } from './platform.js';
+import { tagconnOwnDirs } from './windowsDeny.js';
 import { canResume, computeFingerprint, recordSession, saveLedger, type Ledger } from './ledger.js';
 import type { Logger } from './logger.js';
 import { questSpawnSpec, receptionistSpawnSpec } from './spawnPlan.js';
@@ -94,6 +95,11 @@ export function createRunManager(deps: RunManagerDeps) {
     return deps.claudeBinRealPath ?? deps.cfg.claudePath;
   }
 
+  /** L7: on win32 a bare `claude` (cwd = the project) must never be spawned; refuse when no launch target resolved. */
+  function missingWin32Launch(): boolean {
+    return platform.isWin32 && !deps.claudeBinRealPath;
+  }
+
   function nextSeq(runId: string): number {
     const run = active.get(runId);
     if (!run) return 1;
@@ -153,6 +159,7 @@ export function createRunManager(deps: RunManagerDeps) {
     } catch (err) {
       return rejectStart(cmd.runId, 'capability_missing', err instanceof Error ? err.message : String(err));
     }
+    if (missingWin32Launch()) return rejectStart(cmd.runId, 'spawn_failed', 'claude could not be resolved to an absolute path on Windows');
     if (cmd.projectDir === null) return rejectStart(cmd.runId, 'dir_not_allowed', 'quests require a project directory');
     const check = validateQuestStart(
       {
@@ -211,12 +218,15 @@ export function createRunManager(deps: RunManagerDeps) {
       return rejectStart(cmd.runId, 'capability_missing', err instanceof Error ? err.message : String(err));
     }
 
+    if (missingWin32Launch()) return rejectStart(cmd.runId, 'spawn_failed', 'claude could not be resolved to an absolute path on Windows');
+
     // Defense in depth (T6): project scope only inside allowedProjectDirs, even though the server
     // (S3, receptionist module) already restricts this to a registered project.
     let projectRealDir: string | undefined;
     if (opts.scope === 'project') {
       if (!cmd.projectDir) return rejectStart(cmd.runId, 'dir_not_allowed', 'project-scope receptionist requires a project directory');
-      const dirCheck = checkAllowedDir(cmd.projectDir, deps.cfg.allowedProjectDirs);
+      if (!platform.path.isAbsolute(cmd.projectDir)) return rejectStart(cmd.runId, 'dir_not_allowed');
+      const dirCheck = checkAllowedDir(cmd.projectDir, deps.cfg.allowedProjectDirs, platform);
       if (!dirCheck.ok || !dirCheck.realDir) return rejectStart(cmd.runId, 'dir_not_allowed');
       projectRealDir = dirCheck.realDir;
     }
@@ -252,6 +262,7 @@ export function createRunManager(deps: RunManagerDeps) {
       stdinPrompt: deps.caps.stdinPrompt,
       prompt: cmd.prompt,
       platform,
+      tagconnDirs: platform.isWin32 ? tagconnOwnDirs(platform.env, platform.homedir(), { configPath: deps.cfg.configPath, stateDir: deps.cfg.stateDir }) : undefined,
     });
     const fingerprint = computeFingerprint({ tools: built.toolSet, mode: 'plan', restricted: built.restricted, safeMode: cmd.safeMode, webFetchDomains });
     if (cmd.resumeSessionId && !canResume(deps.ledger, cmd.resumeSessionId, fingerprint)) {

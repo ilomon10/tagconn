@@ -8,6 +8,7 @@ import { platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { type RunnerLocalConfig, RunnerLocalConfigSchema } from '@tagconn/shared';
 import { currentPlatform, defaultStateDir, type Platform } from './platform.js';
+import { verifyWindowsConfigAcl } from './winAcl.js';
 
 export class ConfigError extends Error {}
 
@@ -40,8 +41,12 @@ export function loadRunnerConfig(configPath: string, plat: Platform = currentPla
   const abs = resolve(configPath);
   if (!existsSync(abs)) throw new ConfigError(`runner config not found: ${abs}`);
 
-  // POSIX permission/ownership check. Skipped on win32 (no mode bits there): the file's user-only ACL is
-  // set by packages/setup at install time, not verified here.
+  // win32 has no mode bits: verify the owner and the ACL through icacls (M11 review M3), failing closed.
+  if (plat.isWin32) {
+    const problem = verifyWindowsConfigAcl(abs, plat);
+    if (problem) throw new ConfigError(`runner config ${abs} is not private to the current user: ${problem}`);
+  }
+  // POSIX permission/ownership check.
   if (!plat.isWin32 && typeof process.getuid === 'function') {
     const st = statSync(abs);
     const mode = st.mode & 0o777;
@@ -65,6 +70,17 @@ export function loadRunnerConfig(configPath: string, plat: Platform = currentPla
     throw new ConfigError(`runner config ${abs} failed validation: ${parsed.error.message}`);
   }
   const cfg = parsed.data;
+
+  // L8: the schema's AbsPath also accepts a drive-letter path; that is only absolute on win32 (on POSIX `C:/x` is relative).
+  const pathFields: Array<[string, string | undefined]> = [
+    ...cfg.allowedProjectDirs.map((p): [string, string] => ['allowedProjectDirs', p]),
+    ...cfg.trustOverrideDirs.map((p): [string, string] => ['trustOverrideDirs', p]),
+    ['stateDir', cfg.stateDir],
+    ['questMcpConfigPath', cfg.questMcpConfigPath],
+  ];
+  for (const [field, value] of pathFields) {
+    if (value !== undefined && !plat.path.isAbsolute(value)) throw new ConfigError(`runner config ${abs}: ${field} entry "${value}" is not an absolute path on this platform`);
+  }
 
   const stateDirRaw = cfg.stateDir ?? defaultStateDir(plat);
   mkdirSync(stateDirRaw, { recursive: true, mode: 0o700 });

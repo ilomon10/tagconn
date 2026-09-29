@@ -2,11 +2,12 @@
 // §2.3, steps 2-7; step 1 schema and step 8 concurrency are checked by the caller). Composed from
 // trust.ts (dir/trust) and toolPolicy.ts (mode/tools/containment) plus the resume ledger.
 
-import { absoluteRulePathForms, type RunEndReason, type RunnerCapabilities, type RunnerLocalConfig, type RunPermissionMode } from '@tagconn/shared';
+import { absoluteRulePathFormsWin32, absoluteRulePath, type RunEndReason, type RunnerCapabilities, type RunnerLocalConfig, type RunPermissionMode } from '@tagconn/shared';
 import { canResume, computeFingerprint, type Ledger } from './ledger.js';
 import { currentPlatform, type Platform } from './platform.js';
 import { checkQuestPolicy } from './toolPolicy.js';
 import { checkAllowedDir, isTrustedDir } from './trust.js';
+import { tagconnOwnDirs, windowsTagconnDirDenyRules } from './windowsDeny.js';
 
 export interface QuestValidationInput {
   projectDir: string;
@@ -41,13 +42,16 @@ export function validateQuestStart(
      *  since it cannot be a static DEFAULT_QUEST_ALWAYS_DENY entry (stateDir is host-configurable and
      *  is not always under $HOME). */
     stateDir: string;
+    /** win32 (M11 review H1): the runner.json in use; its directory is denied for every file tool. */
+    configPath?: string;
   },
   caps: Pick<RunnerCapabilities, 'permissionModes' | 'systemdScope'>,
   claudeJsonPath: string,
   ledger: Ledger,
   platform: Platform = currentPlatform(),
 ): QuestValidationOk | QuestValidationFail {
-  // 2. Dir.
+  // 2. Dir. L8: a drive-letter path is only absolute on win32 (on POSIX `C:/x` is a relative path).
+  if (!platform.path.isAbsolute(input.projectDir)) return { ok: false, failure: 'dir_not_allowed' };
   const dirCheck = checkAllowedDir(input.projectDir, cfg.allowedProjectDirs, platform);
   if (!dirCheck.ok || !dirCheck.realDir) return { ok: false, failure: 'dir_not_allowed' };
   const realDir = dirCheck.realDir;
@@ -85,9 +89,14 @@ export function validateQuestStart(
   // instead of silently matching nothing (see its doc in packages/shared/src/runner.ts).
   // win32: both candidate absolute forms (see absoluteRulePathForms).
   const stateDirDeny = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].flatMap((tool) =>
-    absoluteRulePathForms(cfg.stateDir, platform.isWin32).map((form) => `${tool}(${form}/**)`),
+    (platform.isWin32 ? absoluteRulePathFormsWin32(cfg.stateDir) : [absoluteRulePath(cfg.stateDir)]).map((form) => `${tool}(${form}/**)`),
   );
-  const disallowedTools = Array.from(new Set([...policy.disallowedTools, ...stateDirDeny]));
+  // H1 (win32): tagconn's own real dirs (config dir of the runner.json in use, state dir, %LOCALAPPDATA%\tagconn,
+  // %APPDATA%\tagconn) are neither readable nor writable, in every absolute form.
+  const ownDirDeny = platform.isWin32
+    ? windowsTagconnDirDenyRules(tagconnOwnDirs(platform.env, platform.homedir(), { configPath: cfg.configPath, stateDir: cfg.stateDir }))
+    : [];
+  const disallowedTools = Array.from(new Set([...policy.disallowedTools, ...stateDirDeny, ...ownDirDeny]));
 
   return { ok: true, realDir, disallowedTools, requiresScope: policy.requiresScope, toolSet: policy.toolSet, allowedTools: policy.allowedTools, fingerprint };
 }

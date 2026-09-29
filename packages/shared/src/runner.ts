@@ -110,6 +110,21 @@ export function absoluteRulePathForms(absPath: string, win32 = false): string[] 
   return [absoluteRulePath(p)];
 }
 
+/**
+ * M11 review M4: like `absoluteRulePathForms(absPath, true)` but a drive path is emitted with BOTH the
+ * upper-case and the lower-case drive letter (`C:` and `c:`), since the rule matcher's drive-letter case
+ * handling on Windows is unverified. Order: `//C:/x`, `C:/x`, `//c:/x`, `c:/x`. Works for globs too.
+ */
+export function absoluteRulePathFormsWin32(absPath: string): string[] {
+  const p = absPath.replace(/\\/g, '/');
+  const m = /^([A-Za-z]):(\/.*)$/.exec(p);
+  if (!m) return [absoluteRulePath(p)];
+  const rest = m[2]!;
+  const out: string[] = [];
+  for (const letter of [m[1]!.toUpperCase(), m[1]!.toLowerCase()]) out.push(`//${letter}:${rest}`, `${letter}:${rest}`);
+  return Array.from(new Set(out));
+}
+
 const HOME_RULE_RE = /^([A-Za-z]+)\(~(\/.*)\)$/;
 
 /**
@@ -118,7 +133,7 @@ const HOME_RULE_RE = /^([A-Za-z]+)\(~(\/.*)\)$/;
  * home-scoped pass through untouched. Result is de-duplicated, order preserved.
  */
 export function expandHomeDenyRules(rules: readonly string[], homeDir: string): string[] {
-  const forms = absoluteRulePathForms(homeDir.replace(/[\\/]+$/, ''), true);
+  const forms = absoluteRulePathFormsWin32(homeDir.replace(/[\\/]+$/, ''));
   const out: string[] = [];
   for (const rule of rules) {
     out.push(rule);

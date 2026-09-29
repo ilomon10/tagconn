@@ -13,6 +13,7 @@ import {
   type RunnerLocalConfig,
 } from '@tagconn/shared';
 import { currentPlatform, type Platform } from './platform.js';
+import { windowsSensitiveDenyRules } from './windowsDeny.js';
 
 /** Decision #28: on Windows there is no sandbox, so quests never go above this mode. */
 export const WIN32_MAX_PERMISSION_MODE: RunPermissionMode = 'acceptEdits';
@@ -21,6 +22,9 @@ export const WIN32_MAX_PERMISSION_MODE: RunPermissionMode = 'acceptEdits';
 export function effectiveMaxPermissionMode(configured: RunPermissionMode, platform: Platform = currentPlatform()): RunPermissionMode {
   return platform.isWin32 && !permissionModeWithin(configured, WIN32_MAX_PERMISSION_MODE) ? WIN32_MAX_PERMISSION_MODE : configured;
 }
+
+/** win32 hard denies for the shell tools (no sandbox or cgroup kill there). */
+export const WIN32_SHELL_DENY = ['PowerShell', 'PowerShell(*)'] as const;
 
 export type PolicyFailure = Extract<RunEndReason, 'mode_not_allowed' | 'tool_not_allowed' | 'isolation_unavailable'>;
 
@@ -68,6 +72,11 @@ export interface PolicyCheckFail {
 /** `Bash`, `Bash(...)`; anything starting with the literal tool name "Bash". */
 function isBashRule(rule: string): boolean {
   return rule === 'Bash' || rule.startsWith('Bash(');
+}
+
+/** `PowerShell`, `PowerShell(...)`: the Windows shell tool, treated exactly like Bash on win32 (M11 review M4). */
+function isPowerShellRule(rule: string): boolean {
+  return rule === 'PowerShell' || rule.startsWith('PowerShell(');
 }
 
 /** A rule the CLI would use to grant Bash / auto-approve execution without an explicit allow rule. */
@@ -118,7 +127,7 @@ export function checkQuestPolicy(
 
   // Decision #28: on win32 Bash is always hard-denied and never in --tools, whatever the allow rules
   // (there is no sandbox or cgroup kill). Its allow rules are dropped so they are not passed on the wire.
-  const allowedTools = platform.isWin32 ? input.allowedTools.filter((r) => !isBashRule(r)) : [...input.allowedTools];
+  const allowedTools = platform.isWin32 ? input.allowedTools.filter((r) => !isBashRule(r) && !isPowerShellRule(r)) : [...input.allowedTools];
 
   // 6. Containment: Bash allow rule, or a mode that can execute without one, needs a cgroup kill.
   const hasBashRule = allowedTools.some(isBashRule);
@@ -134,10 +143,20 @@ export function checkQuestPolicy(
   // questToolPolicy.alwaysDeny is merged IN ADDITION to it, never in place of it — a host operator who
   // overrides alwaysDeny (e.g. to add one project-specific deny) must not thereby silently drop the
   // built-in HOME-scoped config/secret-read denies.
-  const denies = dedupe([...callerDisallowedTools, ...DEFAULT_QUEST_ALWAYS_DENY, ...ctx.questToolPolicy.alwaysDeny, ...(hasBashRule ? [] : ['Bash'])]);
-  // win32: the absolute-path rule form is undocumented, so every `~/` deny is also emitted in both candidate forms.
-  const disallowedTools = platform.isWin32 ? expandHomeDenyRules(denies, platform.homedir()) : denies;
-  const toolSet = buildQuestToolSet(allowedTools);
+  // win32 (M4): PowerShell is hard-denied next to Bash, whatever the allow rules, and never in --tools.
+  const denies = dedupe([
+    ...callerDisallowedTools,
+    ...DEFAULT_QUEST_ALWAYS_DENY,
+    ...ctx.questToolPolicy.alwaysDeny,
+    ...(hasBashRule ? [] : ['Bash']),
+    ...(platform.isWin32 ? WIN32_SHELL_DENY : []),
+  ]);
+  // win32: the absolute-path rule form is undocumented, so every `~/` deny is also emitted in every candidate
+  // form (both slash styles, both drive-letter cases), plus the Windows credential/persistence list (H1).
+  const disallowedTools = platform.isWin32
+    ? dedupe([...expandHomeDenyRules(denies, platform.homedir()), ...windowsSensitiveDenyRules(platform.env, platform.homedir())])
+    : denies;
+  const toolSet = buildQuestToolSet(allowedTools).filter((t) => !(platform.isWin32 && t === 'PowerShell'));
   if (hasBashRule) toolSet.push('Bash');
   return { ok: true, disallowedTools, requiresScope, toolSet: dedupe(toolSet), allowedTools };
 }

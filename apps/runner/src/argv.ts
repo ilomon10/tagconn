@@ -22,6 +22,7 @@ import {
   type RunPermissionMode,
 } from '@tagconn/shared';
 import type { Platform } from './platform.js';
+import { windowsSensitiveDenyRules, windowsTagconnDirDenyRules } from './windowsDeny.js';
 
 export class CapabilityError extends Error {}
 
@@ -124,8 +125,10 @@ export interface ReceptionistArgvInput extends StdinOrFallback {
   addDirDocs?: string;
   /** Server `extraDenyReadGlobs` (already formatted as `Read(<glob>)`) plus any server extra denies. */
   extraDisallowedTools: readonly string[];
-  /** Only consulted for win32, where the `~/` Read denies are also emitted in both absolute-path forms. */
+  /** Only consulted for win32, where the `~/` Read denies are also emitted in every absolute-path form. */
   platform?: Platform;
+  /** win32 only: tagconn's own real directories (windowsDeny.ts tagconnOwnDirs), denied for every file tool. */
+  tagconnDirs?: readonly string[];
 }
 
 export interface ReceptionistArgvResult {
@@ -164,7 +167,18 @@ export function buildReceptionistArgv(input: ReceptionistArgvInput): Receptionis
     ...RECEPTIONIST_WEBFETCH_DENY_RULES,
     ...input.extraDisallowedTools,
   ];
-  const disallowedTools = input.platform?.isWin32 ? expandHomeDenyRules(plainDenies, input.platform.homedir()) : plainDenies;
+  const plat = input.platform;
+  const disallowedTools = plat?.isWin32
+    ? Array.from(
+        new Set([
+          ...expandHomeDenyRules(plainDenies, plat.homedir()),
+          'PowerShell',
+          'PowerShell(*)',
+          ...windowsSensitiveDenyRules(plat.env, plat.homedir()),
+          ...windowsTagconnDirDenyRules(input.tagconnDirs ?? []),
+        ]),
+      )
+    : plainDenies;
 
   const argv = [input.claudePath, '-p', '--output-format=stream-json', '--verbose', '--include-partial-messages'];
   argv.push(
