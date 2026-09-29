@@ -1,6 +1,22 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { copyPlan, DEPLOYS, NODE_VERSION, nodeDistFor, parseArgs, parseShasums, supportedTriples } from '../build-desktop-resources.ts';
+import {
+  collectDeployedPackages,
+  copyPlan,
+  DEPLOYS,
+  lockfileViolations,
+  NODE_VERSION,
+  nodeDistFor,
+  parseArgs,
+  parseLockfilePackages,
+  parseShasums,
+  pinnedSha256,
+  PINNED_NODE_SHA256,
+  supportedTriples,
+  verifyDeploy,
+} from '../build-desktop-resources.ts';
 
 describe('nodeDistFor', () => {
   it('maps the Windows x64 triple to the zip and node.exe', () => {
@@ -10,7 +26,7 @@ describe('nodeDistFor', () => {
       archive: 'node-v24.21.0-win-x64.zip',
       ext: 'zip',
       binInArchive: 'node-v24.21.0-win-x64/node.exe',
-      sidecar: 'node-x86_64-pc-windows-msvc.exe',
+      sidecar: 'tagconn-node-x86_64-pc-windows-msvc.exe',
       prebuild: 'win32-x64.node',
     });
   });
@@ -19,7 +35,7 @@ describe('nodeDistFor', () => {
     const x64 = nodeDistFor('x86_64-unknown-linux-gnu');
     expect(x64.archive).toBe(`node-v${NODE_VERSION}-linux-x64.tar.xz`);
     expect(x64.binInArchive).toBe(`node-v${NODE_VERSION}-linux-x64/bin/node`);
-    expect(x64.sidecar).toBe('node-x86_64-unknown-linux-gnu');
+    expect(x64.sidecar).toBe('tagconn-node-x86_64-unknown-linux-gnu');
     expect(x64.prebuild).toBe('linux-x64.node');
     const arm = nodeDistFor('aarch64-unknown-linux-gnu');
     expect(arm.archive).toContain('linux-arm64');
@@ -93,5 +109,116 @@ describe('parseArgs', () => {
     expect(a.out).toMatch(/src-tauri[\\/]resources$/);
     expect(a.binariesDir).toMatch(/src-tauri[\\/]binaries$/);
     expect(a.nodeVersion).toBe(NODE_VERSION);
+  });
+});
+
+describe('pinnedSha256', () => {
+  it('has a 64-hex pin for the archive of every supported triple at the default version', () => {
+    for (const triple of supportedTriples()) {
+      expect(pinnedSha256(NODE_VERSION, nodeDistFor(triple).archive)).toMatch(/^[0-9a-f]{64}$/);
+    }
+    expect(Object.keys(PINNED_NODE_SHA256[NODE_VERSION] ?? {})).toHaveLength(supportedTriples().length);
+  });
+  it('returns undefined for an unpinned version, archive or prototype key', () => {
+    expect(pinnedSha256('24.0.0', 'node-v24.0.0-linux-x64.tar.xz')).toBeUndefined();
+    expect(pinnedSha256(NODE_VERSION, 'node-v24.21.0-darwin-arm64.tar.gz')).toBeUndefined();
+    expect(pinnedSha256('__proto__', 'x')).toBeUndefined();
+    expect(pinnedSha256(NODE_VERSION, 'constructor')).toBeUndefined();
+  });
+});
+
+const LOCK = `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      socket.io:
+        specifier: ^4.8.0
+        version: 4.8.3
+
+packages:
+
+  '@fastify/cors@11.0.1':
+    resolution: {integrity: sha512-x}
+
+  socket.io@4.8.3:
+    resolution: {integrity: sha512-y}
+    engines: {node: '>=10.2.0'}
+
+  "quoted@1.0.0":
+    resolution: {integrity: sha512-z}
+
+snapshots:
+
+  socket.io@4.8.3:
+    dependencies:
+      other: 1.0.0
+
+  notinpackages@1.0.0: {}
+`;
+
+describe('parseLockfilePackages', () => {
+  it('reads only the keys of the packages: section', () => {
+    expect([...parseLockfilePackages(LOCK)].sort()).toEqual(['@fastify/cors@11.0.1', 'quoted@1.0.0', 'socket.io@4.8.3']);
+  });
+  it('is empty without a packages: section', () => {
+    expect(parseLockfilePackages('lockfileVersion: 9\n').size).toBe(0);
+  });
+});
+
+describe('lockfileViolations', () => {
+  const lock = parseLockfilePackages(LOCK);
+  it('flags a version that differs from the lockfile and an unknown package', () => {
+    const bad = lockfileViolations(
+      [
+        { name: 'socket.io', version: '4.8.4', dir: '/nm/socket.io' },
+        { name: '@fastify/cors', version: '11.0.1', dir: '/nm/@fastify/cors' },
+        { name: 'evil', version: '1.0.0', dir: '/nm/evil' },
+      ],
+      lock,
+    );
+    expect(bad).toEqual(['socket.io@4.8.4 (/nm/socket.io)', 'evil@1.0.0 (/nm/evil)']);
+  });
+  it('skips the ignored workspace packages', () => {
+    expect(lockfileViolations([{ name: '@tagconn/shared', version: '0.3.0', dir: '/x' }], lock, new Set(['@tagconn/shared']))).toEqual([]);
+  });
+});
+
+describe('collectDeployedPackages / verifyDeploy', () => {
+  const pkg = (dir: string, name: string, version: string) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version }));
+  };
+  it('finds hoisted, scoped, nested and .pnpm virtual-store packages and checks them', () => {
+    const root = mkdtempSync(join(tmpdir(), 'tagconn-deploy-'));
+    try {
+      const nm = join(root, 'node_modules');
+      pkg(join(nm, 'socket.io'), 'socket.io', '4.8.3');
+      pkg(join(nm, '@fastify', 'cors'), '@fastify/cors', '11.0.1');
+      pkg(join(nm, 'socket.io', 'node_modules', 'quoted'), 'quoted', '1.0.0');
+      pkg(join(nm, '.pnpm', 'quoted@1.0.0', 'node_modules', 'quoted'), 'quoted', '1.0.0');
+      mkdirSync(join(nm, '.bin'), { recursive: true });
+      symlinkSync(join(nm, '.pnpm', 'quoted@1.0.0', 'node_modules', 'quoted'), join(nm, 'quoted'), 'dir');
+      const found = collectDeployedPackages(nm).map((p) => `${p.name}@${p.version}`);
+      expect(found.filter((f) => f === 'quoted@1.0.0')).toHaveLength(2); // nested copy + the store copy (symlink deduped)
+      expect(found).toEqual(expect.arrayContaining(['socket.io@4.8.3', '@fastify/cors@11.0.1']));
+      const lock = join(root, 'pnpm-lock.yaml');
+      writeFileSync(lock, LOCK);
+      expect(verifyDeploy(nm, lock)).toBe(found.length);
+      pkg(join(nm, 'socket.io'), 'socket.io', '4.8.4');
+      expect(() => verifyDeploy(nm, lock)).toThrow(/socket\.io@4\.8\.4/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it('fails on an empty node_modules', () => {
+    const root = mkdtempSync(join(tmpdir(), 'tagconn-deploy-'));
+    try {
+      writeFileSync(join(root, 'l.yaml'), LOCK);
+      expect(() => verifyDeploy(join(root, 'node_modules'), join(root, 'l.yaml'))).toThrow(/no packages found/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

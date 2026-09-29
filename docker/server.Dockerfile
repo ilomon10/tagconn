@@ -56,9 +56,14 @@ RUN pnpm --filter @tagconn/server build
 RUN pnpm --filter @tagconn/web build
 # Self-contained prod artifact: dist + production-only node_modules with the
 # workspace deps (@tagconn/shared, @tagconn/agent-templates) resolved in.
-# pnpm v10+ requires --legacy for non-injected workspaces (no
-# dependenciesMeta.injected set on these packages).
-RUN pnpm --filter @tagconn/server deploy --prod --legacy /out
+# No --legacy: that mode ignores pnpm-lock.yaml (it resolved newer versions than
+# locked). The plain deploy honours the lockfile but needs
+# injectWorkspacePackages, set here in this throwaway build stage only (the
+# install above already ran without it). The last step fails the build if any
+# deployed package's name@version is not pinned in pnpm-lock.yaml.
+RUN echo 'injectWorkspacePackages: true' >> pnpm-workspace.yaml \
+  && pnpm --filter @tagconn/server deploy --prod /out \
+  && node scripts/build-desktop-resources.ts --verify-deploy /out/node_modules --lockfile pnpm-lock.yaml
 
 # ---------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS run

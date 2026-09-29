@@ -1,5 +1,5 @@
 // Assembles apps/desktop/src-tauri/resources/ (what the packaged app runs) and the bundled node sidecar
-// (src-tauri/binaries/node-<triple>[.exe]) from the built workspace. Run after `pnpm build`:
+// (src-tauri/binaries/tagconn-node-<triple>[.exe]) from the built workspace. Run after `pnpm build`:
 //
 //   node scripts/build-desktop-resources.ts --target x86_64-unknown-linux-gnu [--cache-dir DIR] [--node-version 24.21.0]
 //                                           [--out DIR] [--binaries-dir DIR] [--skip-node]
@@ -8,11 +8,15 @@
 //   supervisor/supervisor.js   server/main.js + server/node_modules   runner/main.js + runner/node_modules
 //   web/   hook/office-hook.{mjs,sh}   agent-templates/{roles,skills,attribution}   docker-compose.yml
 // better-sqlite3 13 is N-API with prebuilt binaries for every platform, so its node ABI never differs; the
-// script keeps only the target's prebuild. The node download is verified against the published SHASUMS256.txt.
+// script keeps only the target's prebuild. The node download must match the SHA-256 pinned in PINNED_NODE_SHA256
+// (and, as a second layer, the published SHASUMS256.txt). Node is bundled under its own name (tagconn-node) so an
+// installed package never ships /usr/bin/node. `pnpm deploy` honours the lockfile (inject-workspace-packages is set
+// in the staged workspace only) and every deployed package is then checked against pnpm-lock.yaml.
+//   node scripts/build-desktop-resources.ts --verify-deploy <node_modules dir> [--lockfile pnpm-lock.yaml]
 // Node builtins only, erasable TS (runs as `node scripts/build-desktop-resources.ts`).
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -29,7 +33,7 @@ export interface NodeDist {
   ext: 'zip' | 'tar.xz';
   /** Path of the node executable inside the archive. */
   binInArchive: string;
-  /** File name under src-tauri/binaries (Tauri externalBin: node-<triple>[.exe]). */
+  /** File name under src-tauri/binaries (Tauri externalBin: tagconn-node-<triple>[.exe]). */
   sidecar: string;
   /** better-sqlite3 prebuild to keep, e.g. win32-x64.node. */
   prebuild: string;
@@ -57,9 +61,25 @@ export function nodeDistFor(triple: string, version: string = NODE_VERSION): Nod
     archive: `${base}.${win ? 'zip' : 'tar.xz'}`,
     ext: win ? 'zip' : 'tar.xz',
     binInArchive: win ? `${base}/node.exe` : `${base}/bin/node`,
-    sidecar: `node-${triple}${win ? '.exe' : ''}`,
+    sidecar: `tagconn-node-${triple}${win ? '.exe' : ''}`,
     prebuild: `${win ? 'win32' : 'linux'}-${t.arch}.node`,
   };
+}
+
+/** SHA-256 of the official node archives, per version, from https://nodejs.org/dist/v<version>/SHASUMS256.txt. */
+export const PINNED_NODE_SHA256: Record<string, Record<string, string>> = {
+  '24.21.0': {
+    'node-v24.21.0-win-x64.zip': '158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541',
+    'node-v24.21.0-win-arm64.zip': '8779b1bde1d39f8d420e3b57aa657b39891af434d3de44a919044cec06785921',
+    'node-v24.21.0-linux-x64.tar.xz': 'fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6',
+    'node-v24.21.0-linux-arm64.tar.xz': '6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2',
+  },
+};
+
+/** The pinned digest of a node archive, or undefined when that version/archive has no pin. */
+export function pinnedSha256(version: string, archive: string): string | undefined {
+  const perVersion = Object.hasOwn(PINNED_NODE_SHA256, version) ? PINNED_NODE_SHA256[version] : undefined;
+  return perVersion && Object.hasOwn(perVersion, archive) ? perVersion[archive] : undefined;
 }
 
 /** Parses a SHASUMS256.txt ("<sha256>  <file>" per line) into file -> lowercase hex digest. */
@@ -70,6 +90,88 @@ export function parseShasums(text: string): Map<string, string> {
     if (m?.[1] && m[2]) out.set(m[2], m[1].toLowerCase());
   }
   return out;
+}
+
+/** The name@version keys of the `packages:` section of a pnpm-lock.yaml (lockfileVersion 9). */
+export function parseLockfilePackages(text: string): Set<string> {
+  const out = new Set<string>();
+  let inPackages = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\S/.test(line)) {
+      inPackages = line.trimEnd() === 'packages:';
+      continue;
+    }
+    if (!inPackages) continue;
+    const m = /^ {2}(?:'([^']+)'|"([^"]+)"|([^\s'"][^\s]*)):\s*$/.exec(line);
+    const key = m?.[1] ?? m?.[2] ?? m?.[3];
+    if (key) out.add(key);
+  }
+  return out;
+}
+
+export interface DeployedPackage {
+  name: string;
+  version: string;
+  dir: string;
+}
+
+/** Deployed packages whose name@version is not in the lockfile (workspace packages in `ignore` are skipped). */
+export function lockfileViolations(deployed: DeployedPackage[], lock: Set<string>, ignore: Set<string> = new Set()): string[] {
+  return deployed.filter((p) => !ignore.has(p.name) && !lock.has(`${p.name}@${p.version}`)).map((p) => `${p.name}@${p.version} (${p.dir})`);
+}
+
+/** Every package under a node_modules dir (hoisted nesting and the .pnpm virtual store included), read from package.json. */
+export function collectDeployedPackages(nm: string): DeployedPackage[] {
+  const out: DeployedPackage[] = [];
+  const seen = new Set<string>();
+  const isDir = (p: string) => {
+    try {
+      return statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+  const readPkg = (dir: string) => {
+    try {
+      const j = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: unknown; version?: unknown };
+      return typeof j.name === 'string' && typeof j.version === 'string' ? { name: j.name, version: j.version } : null;
+    } catch {
+      return null;
+    }
+  };
+  const visitPkg = (dir: string) => {
+    const real = realpathSync(dir);
+    if (seen.has(real)) return;
+    seen.add(real);
+    const pkg = readPkg(dir);
+    if (pkg) out.push({ ...pkg, dir });
+    walk(join(dir, 'node_modules'));
+  };
+  function walk(dir: string): void {
+    if (!isDir(dir)) return;
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      if (name === '.bin' || !isDir(p)) continue;
+      if (name === '.pnpm') {
+        for (const store of readdirSync(p)) walk(join(p, store, 'node_modules'));
+      } else if (name.startsWith('@')) {
+        for (const sub of readdirSync(p)) if (isDir(join(p, sub))) visitPkg(join(p, sub));
+      } else if (!name.startsWith('.')) {
+        visitPkg(p);
+      }
+    }
+  }
+  walk(nm);
+  return out;
+}
+
+/** Throws unless every package under `nm` is pinned by the lockfile at `lockfile`. Returns how many were checked. */
+export function verifyDeploy(nm: string, lockfile: string, ignore: Set<string> = new Set()): number {
+  const deployed = collectDeployedPackages(nm);
+  if (deployed.length === 0) throw new Error(`no packages found under ${nm}`);
+  const bad = lockfileViolations(deployed, parseLockfilePackages(readFileSync(lockfile, 'utf8')), ignore);
+  if (bad.length > 0) throw new Error(`${bad.length} deployed package(s) are not in ${lockfile}:\n  ${bad.join('\n  ')}`);
+  return deployed.length;
 }
 
 /** Repo-relative source -> resource-relative destination. `web` etc. are directories, the rest single files. */
@@ -156,8 +258,10 @@ async function download(url: string, dest: string): Promise<void> {
   renameSync(tmp, dest);
 }
 
-/** Downloads (or reuses from the cache) the node archive, verified against SHASUMS256.txt. Returns its path. */
+/** Downloads (or reuses from the cache) the node archive: pinned SHA-256 first, SHASUMS256.txt as a second layer. */
 async function fetchNodeArchive(dist: NodeDist, version: string, cacheDir: string): Promise<string> {
+  const pinned = pinnedSha256(version, dist.archive);
+  if (!pinned) throw new Error(`no pinned SHA-256 for ${dist.archive} (node ${version}): add it to PINNED_NODE_SHA256 from the official SHASUMS256.txt`);
   mkdirSync(cacheDir, { recursive: true });
   const base = `${NODE_DIST_BASE}/v${version}`;
   const sumsPath = join(cacheDir, `SHASUMS256-v${version}.txt`);
@@ -167,19 +271,20 @@ async function fetchNodeArchive(dist: NodeDist, version: string, cacheDir: strin
     if (!existsSync(sumsPath)) throw err;
     log(`${(err as Error).message}; using the cached SHASUMS256.txt`);
   }
-  const expected = parseShasums(readFileSync(sumsPath, 'utf8')).get(dist.archive);
-  if (!expected) throw new Error(`SHASUMS256.txt for node v${version} has no entry for ${dist.archive}`);
+  const published = parseShasums(readFileSync(sumsPath, 'utf8')).get(dist.archive);
+  if (!published) throw new Error(`SHASUMS256.txt for node v${version} has no entry for ${dist.archive}`);
+  if (published !== pinned) throw new Error(`SHASUMS256.txt says ${published} for ${dist.archive} but ${pinned} is pinned: refusing to continue`);
   const archive = join(cacheDir, dist.archive);
-  if (existsSync(archive) && sha256File(archive) === expected) {
+  if (existsSync(archive) && sha256File(archive) === pinned) {
     log(`node archive cached: ${archive}`);
     return archive;
   }
   log(`downloading ${dist.archive}`);
   await download(`${base}/${dist.archive}`, archive);
   const actual = sha256File(archive);
-  if (actual !== expected) {
+  if (actual !== pinned) {
     rmSync(archive, { force: true });
-    throw new Error(`checksum mismatch for ${dist.archive}: expected ${expected}, got ${actual} (the download was discarded)`);
+    throw new Error(`checksum mismatch for ${dist.archive}: expected ${pinned}, got ${actual} (the download was discarded)`);
   }
   return archive;
 }
@@ -195,7 +300,7 @@ function extractArchive(archive: string, ext: NodeDist['ext'], into: string): vo
   if (r.status !== 0) throw new Error(`extracting ${basename(archive)} failed (exit ${r.status})`);
 }
 
-/** Puts the verified node at binaries/node-<triple>[.exe]. Idempotent: a marker records what is installed. */
+/** Puts the verified node at binaries/tagconn-node-<triple>[.exe]. Idempotent: a marker records what is installed. */
 async function installNode(args: Args): Promise<string> {
   const dist = nodeDistFor(args.target, args.nodeVersion);
   const dest = join(args.binariesDir, dist.sidecar);
@@ -243,6 +348,8 @@ function stageWorkspace(ws: string): void {
   for (const f of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc']) {
     if (existsSync(join(ROOT, f))) cpSync(join(ROOT, f), join(ws, f));
   }
+  // Only in this copy (the repo's install is unchanged): lets the non-legacy `pnpm deploy` run, which honours the lockfile.
+  appendFileSync(join(ws, 'pnpm-workspace.yaml'), '\ninjectWorkspacePackages: true\n');
   const skip = (src: string) => !/[\\/](node_modules|dist|\.turbo)$/.test(src);
   for (const group of ['apps', 'packages']) {
     for (const name of readdirSync(join(ROOT, group), { withFileTypes: true })) {
@@ -264,10 +371,10 @@ function stageWorkspace(ws: string): void {
 function deployProd(ws: string, filter: string, dir: string, dist: NodeDist): string {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dirname(dir), { recursive: true });
-  // ignore-scripts: better-sqlite3 ships prebuilt N-API binaries, so no compiler is needed. --legacy: workspace deps are
-  // copied, not linked. hoisted: real directories (no .pnpm store or junctions), which
-  // Tauri's resource copy and the NSIS installer handle safely.
-  pnpm(['--filter', filter, 'deploy', '--prod', '--legacy', '--config.node-linker=hoisted', '--config.verify-deps-before-run=false', '--config.ignore-scripts=true', dir], ws);
+  // ignore-scripts: better-sqlite3 ships prebuilt N-API binaries, so no compiler is needed. No --legacy: that mode
+  // ignores the lockfile (it resolved newer versions than locked); the plain deploy uses it, workspace deps injected.
+  // hoisted: real directories (no .pnpm store or junctions), which Tauri's resource copy and the NSIS installer handle safely.
+  pnpm(['--filter', filter, 'deploy', '--prod', '--config.node-linker=hoisted', '--config.verify-deps-before-run=false', '--config.ignore-scripts=true', dir], ws);
   const nm = join(dir, 'node_modules');
   if (!existsSync(nm)) throw new Error(`pnpm deploy for ${filter} produced no node_modules`);
   // .bin holds symlinks/shims; @tagconn/shared is bundled into the JS by tsup.
@@ -280,7 +387,21 @@ function deployProd(ws: string, filter: string, dir: string, dist: NodeDist): st
     for (const f of readdirSync(prebuilds)) if (f !== dist.prebuild) rmSync(join(prebuilds, f), { force: true });
     for (const d of ['deps', 'src', 'build']) rmSync(join(sqlite, d), { recursive: true, force: true });
   }
+  const checked = verifyDeploy(nm, join(ws, 'pnpm-lock.yaml'), workspaceNames(ws));
+  log(`${filter}: ${checked} deployed packages all match pnpm-lock.yaml`);
   return nm;
+}
+
+/** Names of the workspace's own packages (never in the lockfile's `packages:`), read from the staged manifests. */
+function workspaceNames(ws: string): Set<string> {
+  const names = new Set<string>();
+  for (const group of ['apps', 'packages']) {
+    for (const d of readdirSync(join(ws, group), { withFileTypes: true })) {
+      const f = join(ws, group, d.name, 'package.json');
+      if (d.isDirectory() && existsSync(f)) names.add((JSON.parse(readFileSync(f, 'utf8')) as { name: string }).name);
+    }
+  }
+  return names;
 }
 
 /** The repo's pnpm workspace state; a deploy that leaked into the real workspace changes it (production: true). */
@@ -315,6 +436,16 @@ function assemble(args: Args, dist: NodeDist): void {
 }
 
 export async function main(argv: string[]): Promise<void> {
+  if (argv[0] === '--verify-deploy') {
+    const dir = argv[1];
+    if (!dir) throw new Error('--verify-deploy needs a node_modules directory');
+    let lockfile = join(ROOT, 'pnpm-lock.yaml');
+    if (argv[2] === '--lockfile' && argv[3]) lockfile = resolve(argv[3]);
+    else if (argv.length > 2) throw new Error(`unknown argument "${argv[2]}"`);
+    const ws = new Set<string>(['@tagconn/shared', '@tagconn/agent-templates']);
+    log(`${verifyDeploy(resolve(dir), lockfile, ws)} packages under ${dir} all match ${lockfile}`);
+    return;
+  }
   const args = parseArgs(argv);
   const dist = nodeDistFor(args.target, args.nodeVersion);
   log(`target ${args.target}, node ${args.nodeVersion}, cache ${args.cacheDir}`);
