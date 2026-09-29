@@ -120,12 +120,19 @@ export function parseNpmShim(deps: CheckDeps, shimPath: string): { cmd: string; 
   for (const m of text.matchAll(re)) {
     const rel = m[1] as string;
     if (/(^|[\\/])node\.exe$/i.test(rel)) continue;
+    // Never follow a `..` out of the shim's directory tree.
+    if (rel.split(/[\\/]+/).includes('..')) return null;
     target = p.resolve(dir, rel);
     break;
   }
   if (!target) return null;
+  // The target must stay inside the shim's own dir and be the Claude Code package's cli.js or a binary inside it.
+  const relToDir = p.relative(dir.toLowerCase(), target.toLowerCase());
+  if (relToDir === '' || relToDir.startsWith('..') || p.isAbsolute(relToDir)) return null;
+  const pkg = /(^|[\\/])node_modules[\\/]@anthropic-ai[\\/]claude-code[\\/]/i;
+  if (!pkg.test(relToDir)) return null;
   if (/\.exe$/i.test(target)) return { cmd: target, prefix: [] };
-  if (!/\.(c|m)?js$/i.test(target)) return null;
+  if (!/[\\/]node_modules[\\/]@anthropic-ai[\\/]claude-code[\\/]cli\.js$/i.test(target)) return null;
   const local = p.join(dir, 'node.exe');
   const node = deps.exists(local) ? local : findOnWindowsPath(deps, 'node').find((c) => /\.exe$/i.test(c));
   return node ? { cmd: node, prefix: [target] } : null;
@@ -148,9 +155,8 @@ export function findClaude(deps: CheckDeps): string | null {
   const p = pathFor(deps.platform);
   if (deps.platform === 'win32') {
     const lines = findOnWindowsPath(deps, 'claude');
-    // Prefer a real .exe over an npm .cmd shim.
-    const found = lines.find((l) => /\.exe$/i.test(l)) ?? lines[0];
-    if (found) return found;
+    // The runner's rule: the FIRST PATH hit (.exe or .cmd/.bat) wins; a later .exe never overrides an earlier shim.
+    if (lines[0]) return lines[0];
     const native = p.join(deps.env.USERPROFILE || deps.homedir, '.local', 'bin', 'claude.exe');
     return deps.exists(native) ? native : null;
   }

@@ -1,7 +1,7 @@
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { defaultNodeDir, ensureCurlConf, install, installClaudeHooks, stabilizeNodePath, transientNodeReason, type ExecFn, type InstallOptions } from '../src/index.ts';
+import { defaultNodeDir, ensureCurlConf, install, installClaudeHooks, nodeWritableReason, stabilizeNodePath, transientNodeReason, type ExecFn, type InstallOptions } from '../src/index.ts';
 import { quietContext, tempDir } from './support/sandbox.ts';
 
 /** A "stable" tree under the sandbox: temp roots are overridden so the sandbox itself does not count as temporary. */
@@ -19,6 +19,7 @@ describe('transientNodeReason', () => {
   it('a node in a stable, user-only tree is fine', () => {
     const { node, opts } = tree();
     expect(transientNodeReason(quietContext().ctx, node, opts)).toBeNull();
+    expect(nodeWritableReason(quietContext().ctx, node, opts)).toBeNull();
   });
 
   it('flags temp roots, AppImage mounts, fnm multishells', () => {
@@ -35,9 +36,23 @@ describe('transientNodeReason', () => {
     const { root, node, opts } = tree();
     const { ctx } = quietContext();
     chmodSync(join(root, 'opt'), 0o775);
-    expect(transientNodeReason(ctx, node, opts)).toMatch(/writable by other users/);
+    expect(nodeWritableReason(ctx, node, opts)).toMatch(/writable by other users/);
     chmodSync(join(root, 'opt'), 0o1777);
-    expect(transientNodeReason(ctx, node, opts)).toBeNull();
+    expect(nodeWritableReason(ctx, node, opts)).toBeNull();
+  });
+
+  it('flags a component owned by another user, including a sticky world-writable dir', () => {
+    const { root, node, opts } = tree();
+    const { ctx } = quietContext();
+    expect(nodeWritableReason(ctx, node, { ...opts, uid: 4242424 })).toMatch(/owned by another user/);
+    chmodSync(join(root, 'opt'), 0o1777);
+    expect(nodeWritableReason(ctx, node, { ...opts, uid: 4242424 })).toMatch(/owned by another user/);
+  });
+
+  it('flags a group-writable binary itself', () => {
+    const { node, opts } = tree();
+    chmodSync(node, 0o775);
+    expect(nodeWritableReason(quietContext().ctx, node, opts)).toMatch(new RegExp(`${node.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} is writable`));
   });
 
   it('follows a symlink to the real location', () => {
@@ -45,6 +60,44 @@ describe('transientNodeReason', () => {
     const link = join(root, 'link-node');
     symlinkSync(node, link);
     expect(transientNodeReason(quietContext().ctx, link, { tempRoots: [root] })).toMatch(/temporary/);
+  });
+});
+
+describe('nodeWritableReason (win32, mocked icacls)', () => {
+  const SID = 'S-1-5-21-1-2-3-1001';
+  const node = 'C:\\Program Files\\nodejs\\node.exe';
+  function winCtx(acls: Record<string, string[]>) {
+    const exec: ExecFn = (cmd, args) => {
+      if (/whoami/i.test(cmd)) return { status: 0, stdout: `"PC\\u","${SID}"`, stderr: '' };
+      const path = args[0] as string;
+      const aces = acls[path] ?? ['NT AUTHORITY\\SYSTEM:(F)'];
+      return { status: 0, stdout: `${path} ${aces[0]}\n${aces.slice(1).map((a) => `        ${a}`).join('\n')}\n\nSuccessfully processed 1 files; Failed processing 0 files\n`, stderr: '' };
+    };
+    return quietContext({ platform: 'win32', exec, env: { SystemRoot: 'C:\\Windows' } }).ctx;
+  }
+  const safe = ['NT AUTHORITY\\SYSTEM:(I)(F)', 'BUILTIN\\Administrators:(I)(F)', 'BUILTIN\\Users:(I)(RX)', 'NT AUTHORITY\\Authenticated Users:(I)(RX)'];
+
+  it('a Program Files style ACL (read-only for Users) is fine, inherit-only and DENY entries are ignored', () => {
+    const acls = { [node]: safe, 'C:\\Program Files\\nodejs': safe, 'C:\\': ['NT AUTHORITY\\Authenticated Users:(OI)(CI)(IO)(M)', 'NT AUTHORITY\\Authenticated Users:(AD)', 'Everyone:(DENY)(F)', ...safe] };
+    expect(nodeWritableReason(winCtx(acls), node)).toBeNull();
+  });
+
+  it.each([
+    ['C:\\Program Files\\nodejs', 'BUILTIN\\Users:(I)(OI)(CI)(M)', /nodejs is writable by BUILTIN\\Users/],
+    ['C:\\Program Files\\nodejs', 'NT AUTHORITY\\Authenticated Users:(OI)(CI)(WD,AD)', /Authenticated Users/],
+    ['C:\\Program Files', 'Everyone:(F)', /Everyone/],
+    ['C:\\', 'BUILTIN\\Users:(OI)(CI)(M)', /BUILTIN\\Users/],
+    [node, '*S-1-5-21-9-9-9-1234:(F)', /S-1-5-21-9-9-9-1234/],
+  ])('%s: %s is unsafe', (path, ace, re) => {
+    const acls = { [node]: safe, 'C:\\Program Files\\nodejs': safe, 'C:\\Program Files': safe, 'C:\\': safe, [path]: [ace, ...safe] };
+    expect(nodeWritableReason(winCtx(acls), node)).toMatch(re);
+  });
+
+  it('fails closed when icacls or whoami fails', () => {
+    const noIcacls: ExecFn = (cmd) => (/whoami/i.test(cmd) ? { status: 0, stdout: `"PC\\u","${SID}"`, stderr: '' } : { status: 1, stdout: '', stderr: 'nope' });
+    expect(nodeWritableReason(quietContext({ platform: 'win32', exec: noIcacls }).ctx, node)).toMatch(/could not be read/);
+    const noWhoami: ExecFn = () => ({ status: 1, stdout: '', stderr: '' });
+    expect(nodeWritableReason(quietContext({ platform: 'win32', exec: noWhoami }).ctx, node)).toMatch(/could not be determined/);
   });
 });
 
@@ -90,6 +143,25 @@ describe('stabilizeNodePath', () => {
     writeFileSync(dest, readFileSync(node, 'utf8').replace('v22', 'v21')); // same length, different bytes
     stabilizeNodePath(ctx, node, { ...opts, tempRoots: [root] });
     expect(readFileSync(dest, 'utf8')).toContain('v22');
+  });
+
+  it('refuses a shared-writable node instead of copying it', () => {
+    const { root, node, opts } = tree();
+    chmodSync(join(root, 'opt', 'node'), 0o777);
+    const { ctx } = quietContext();
+    expect(() => stabilizeNodePath(ctx, node, { ...opts, tempRoots: [root] })).toThrow(/Refusing.*writable by other users.*bundled node/);
+    expect(existsSync(opts.nodeDir)).toBe(false);
+    expect(() => stabilizeNodePath(quietContext({ dryRun: true }).ctx, node, opts)).toThrow(/Refusing/);
+  });
+
+  it('forces an existing stable dir to 0700 and copies from the opened file', () => {
+    const { root, node, opts } = tree();
+    mkdirSync(opts.nodeDir, { recursive: true, mode: 0o755 });
+    chmodSync(opts.nodeDir, 0o755);
+    const { ctx } = quietContext({ exec: () => ({ status: 0, stdout: 'v22.0.0', stderr: '' }) });
+    const dest = stabilizeNodePath(ctx, node, { ...opts, tempRoots: [root] });
+    expect(statSync(opts.nodeDir).mode & 0o777).toBe(0o700);
+    expect(readFileSync(dest, 'utf8')).toBe(readFileSync(node, 'utf8'));
   });
 
   it('dry run copies nothing', () => {

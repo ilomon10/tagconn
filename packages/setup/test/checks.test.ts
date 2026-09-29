@@ -12,6 +12,7 @@ import {
   checkServerPort,
   defaultCheckDeps,
   findClaude,
+  parseNpmShim,
   HOOK_EVENTS,
   installHooks,
   runSetupChecks,
@@ -78,10 +79,10 @@ describe('claude_cli / claude_login', () => {
 
   const winPath = { platform: 'win32' as const, homedir: 'C:\\Users\\u', env: { USERPROFILE: 'C:\\Users\\u', Path: 'relative\\bin;.;C:\\npm;C:\\bin' } };
 
-  it('win32: searches PATH in order, ignoring relative entries; prefers a real .exe over an npm .cmd shim', () => {
+  it('win32: searches PATH in order, ignoring relative entries; the FIRST PATH hit wins (an earlier .cmd shim beats a later .exe)', () => {
     const files = { 'C:\\npm\\claude.cmd': '', 'C:\\bin\\claude.exe': '', 'relative\\bin\\claude.exe': '', '.\\claude.exe': '' };
     const both = deps({ ...winPath, files });
-    expect(findClaude(both.d)).toBe('C:\\bin\\claude.exe');
+    expect(findClaude(both.d)).toBe('C:\\npm\\claude.cmd');
     expect(both.calls).toEqual([]); // no where.exe (it searches the cwd first)
     const shimOnly = deps({ ...winPath, files: { 'C:\\npm\\claude.cmd': '', 'relative\\bin\\claude.exe': '' } });
     expect(findClaude(shimOnly.d)).toBe('C:\\npm\\claude.cmd');
@@ -102,6 +103,23 @@ describe('claude_cli / claude_login', () => {
     d.env = { ...d.env, Path: 'C:\\npm' };
     expect(checkClaudeCli(d).status).toBe('ok');
     expect(calls.some((c) => /cmd\.exe/i.test(c[0]))).toBe(false);
+  });
+
+  it('win32: a shim whose target escapes its dir, has `..`, or is not the claude-code cli.js is not run', () => {
+    const mk = (target: string) => `"%_prog%"  "%dp0%\\${target}" %*`;
+    for (const target of [
+      '..\\evil\\node_modules\\@anthropic-ai\\claude-code\\cli.js',
+      'node_modules\\..\\..\\x\\node_modules\\@anthropic-ai\\claude-code\\cli.js',
+      'node_modules\\other\\cli.js',
+      'node_modules\\@anthropic-ai\\claude-code\\evil.js',
+      'evil.exe',
+    ]) {
+      const { d, calls } = deps({ ...winPath, files: { 'C:\\npm\\claude.cmd': mk(target), 'C:\\npm\\node.exe': '' } });
+      d.env = { ...d.env, Path: 'C:\\npm' };
+      expect(parseNpmShim(d, 'C:\\npm\\claude.cmd'), target).toBeNull();
+      expect(checkClaudeCli(d).status).toBe('fail');
+      expect(calls).toEqual([]);
+    }
   });
 
   it('win32: an unparsable .cmd shim is not run at all', () => {

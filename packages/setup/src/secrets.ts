@@ -99,22 +99,35 @@ function icaclsHint(path: string, sid: string | null, env: Record<string, string
 const WHOAMI_FAIL = (env: Record<string, string | undefined>) =>
   `could not determine your Windows user SID (${systemBin(env, 'whoami')} /user failed)`;
 
-/** Principals (left of `:(`) of the ACEs in `icacls <file>` output. The first line also carries the path. */
-export function parseIcaclsPrincipals(output: string, path: string): string[] {
-  const out: string[] = [];
+export interface IcaclsAce {
+  principal: string;
+  /** Every token inside the `(...)` groups after the principal: inheritance flags, DENY, and rights (F, M, W, WD, ...), upper-cased. */
+  flags: string[];
+}
+
+/** The ACEs of `icacls <path>` output. The first line also carries the path. */
+export function parseIcaclsAces(output: string, path: string): IcaclsAce[] {
+  const out: IcaclsAce[] = [];
   for (const raw of tolerantText(output).split(/\r?\n/)) {
     if (/^\s*Successfully processed/i.test(raw)) break;
     let line = raw.trim();
     if (!line) continue;
     if (line.startsWith(path)) line = line.slice(path.length).trim();
     const idx = line.indexOf(':(');
-    if (idx > 0) out.push(line.slice(0, idx).trim());
+    if (idx <= 0) continue;
+    const flags = [...line.slice(idx + 1).matchAll(/\(([^)]*)\)/g)].flatMap((m) => (m[1] ?? '').split(',').map((t) => t.trim().toUpperCase()).filter(Boolean));
+    out.push({ principal: line.slice(0, idx).trim(), flags });
   }
   return out;
 }
 
+/** Principals (left of `:(`) of the ACEs in `icacls <file>` output. */
+export function parseIcaclsPrincipals(output: string, path: string): string[] {
+  return parseIcaclsAces(output, path).map((a) => a.principal);
+}
+
 /** An ACE is ours if it is the user's SID text, or the account name whoami reported (case-insensitive). */
-function isCurrentUser(ace: string, user: WindowsUser): boolean {
+export function isCurrentUser(ace: string, user: WindowsUser): boolean {
   const a = ace.replace(/^\*/, '').toLowerCase();
   if (a === user.sid.toLowerCase()) return true;
   const n = user.name.toLowerCase();
