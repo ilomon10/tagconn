@@ -177,19 +177,19 @@ default, Docker optional; installer + auto-update. Design: `docs/design/desktop.
   - [x] C Runner platform layer (`where`, `taskkill /T`, no systemd/bwrap, `%LOCALAPPDATA%`, win32 policy: no Bash, max acceptEdits, Receptionist unsandboxed read-only) [Developer]
   - [x] D `packages/setup` (install/doctor/pair core, OS paths, ACL/chmod, atomic settings.json merge + rollback); scripts become thin CLIs [Developer]
   - [~] 11.1 One small `.tagconn/` per project (user decision 2026-09-29): `.office/` agent memory → `.tagconn/work/` (git-ignored via `.tagconn/.gitignore`), skills updated [x]; README template cut to 5 lines [x]; both hooks add the README next to agent-made `work/`/`.gitignore` and still honour the `.tagconn`-file opt-out [x]
-  - [x] 11.2 Windows-specific quest denies (done in 11.3 S1); web rejection guidance Windows text still open (task F) (AppData credential stores, PowerShell profiles, npm) + Windows text in web rejection guidance  [security review → Developer]
+  - [x] 11.2 Windows-specific quest denies (done in 11.3 S1); web rejection guidance Windows text [~] (AppData credential stores, PowerShell profiles, npm) + Windows text in web rejection guidance  [security review → Developer]
 - Wave 2: the app (parallel)
   - [x] E `apps/supervisor`: stdio JSON-RPC, service manager (backoff, health, logs, tree-kill), setup, Docker mode, auto-pair [Developer]
-  - [~] F `apps/desktop` (Tauri 2): sidecar + tray + autostart/updater/single-instance; React wizard + control panel [Developer]
+  - [x] F `apps/desktop` (Tauri 2; wizard + service start + paired office verified on Linux; supervisor orphan-spin found and fixed): sidecar + tray + autostart/updater/single-instance; React wizard + control panel [Developer]
 - Wave 3: packaging + docs
-  - [ ] G CI `desktop.yml` (windows + ubuntu matrix, node sidecar, NSIS/AppImage/deb, signed updater, ghcr images) [Developer]
-  - [ ] H Docs: `docs/guide/desktop.md`, README download-first quick start, CLAUDE.md commands [Tech writer]
+  - [~] G CI `desktop.yml` (windows + ubuntu matrix, node sidecar, NSIS/AppImage/deb, signed updater, ghcr images) [Developer]
+  - [~] H Docs: `docs/guide/desktop.md`, README download-first quick start, CLAUDE.md commands [Tech writer]
 - Gates
   - [x] Wave 1 sandboxed e2e QA pass (node hook with 3 real haiku sessions, webDir, uninstall); fixed: settings.json line/column, install preflight
   - [~] 11.3 Wave 1 security review (1 High, 4 Med, 12 Low) → fixes S1 runner/shared [x], S2 setup [x], S3 hook [x], S4 server [x]; re-review (also covers apps/supervisor) [~]
   - [x] Wave 1 security review + sandboxed e2e QA (node hook exec form with a real haiku session, webDir serving, install/uninstall/rollback)
   - [ ] Security review (node hook, token ACLs, Windows runner policy + deny paths, supervisor args, Tauri capabilities, updater signature)
-  - [ ] QA: Linux sandboxed wizard run + AppImage; Windows CI install smoke; manual Windows pass with the user; updater across two pre-releases
+  - [~] QA: Linux control panel/settings/logs/quit pass [~]; Linux sandboxed wizard run [x] + AppImage; Windows CI install smoke; manual Windows pass with the user; updater across two pre-releases
   - [ ] Release v0.5.0
 
 ## Backlog
