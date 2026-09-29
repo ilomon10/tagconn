@@ -1,7 +1,9 @@
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DockerService, type DockerRun } from '../src/docker.ts';
+import { DockerService, findDocker, type DockerRun } from '../src/docker.ts';
 import { LogHub } from '../src/logHub.ts';
-import { recorder, waitFor } from './helpers.ts';
+import { recorder, tempDir, waitFor } from './helpers.ts';
 
 function make(run: DockerRun) {
   const rec = recorder();
@@ -38,9 +40,9 @@ describe('DockerService', () => {
     expect((await svc.start()).state).toBe('starting');
     await waitFor(() => svc.status().state === 'running', 2000, 'running');
     expect(svc.status().url).toBe('http://127.0.0.1:4400');
-    expect(calls[1]).toEqual(['compose', '-p', 'tagconn', '-f', '/bundle/docker-compose.yml', 'up', '-d']);
+    expect(calls[1]).toEqual(['compose', '-p', 'tagconn-desktop', '-f', '/bundle/docker-compose.yml', 'up', '-d']);
     expect((await svc.stop()).state).toBe('stopped');
-    expect(calls[2]).toEqual(['compose', '-p', 'tagconn', '-f', '/bundle/docker-compose.yml', 'down']);
+    expect(calls[2]).toEqual(['compose', '-p', 'tagconn-desktop', '-f', '/bundle/docker-compose.yml', 'down']);
   });
 
   it('turns a failed `up` into crashed with the last stderr line', async () => {
@@ -48,5 +50,33 @@ describe('DockerService', () => {
     await svc.start();
     await waitFor(() => svc.status().state === 'crashed', 2000, 'crashed');
     expect(svc.status().lastError).toContain('image not found');
+  });
+});
+
+describe('findDocker (N1)', () => {
+  const plantDocker = (dir: string) => {
+    mkdirSync(dir, { recursive: true });
+    const f = join(dir, 'docker');
+    writeFileSync(f, '#!/bin/sh\n');
+    chmodSync(f, 0o755);
+    return f;
+  };
+
+  it('walks absolute PATH entries only: relative entries and the cwd never win', () => {
+    const root = tempDir();
+    const cwd = join(root, 'cwd');
+    const good = join(root, 'good');
+    plantDocker(cwd);
+    const goodDocker = plantDocker(good);
+    const env = { PATH: ['.', '', 'relbin', cwd, good].join(delimiter) };
+    expect(findDocker(env, 'linux', cwd)).toBe(goodDocker);
+  });
+
+  it('is undefined when only the cwd or relative entries have a docker', () => {
+    const root = tempDir();
+    const cwd = join(root, 'cwd');
+    plantDocker(cwd);
+    expect(findDocker({ PATH: [cwd, '.', 'x'].join(delimiter) }, 'linux', cwd)).toBeUndefined();
+    expect(findDocker({}, 'linux', cwd)).toBeUndefined();
   });
 });

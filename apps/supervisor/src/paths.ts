@@ -24,6 +24,8 @@ export function isSandboxedConfig(env: Environment = process.env, platform: Node
 }
 
 export interface Bundle {
+  /** The packaged resources dir (TAGCONN_BUNDLE_DIR); absent in the repo layout, where the bundle is the checkout. */
+  dir?: string;
   serverJs: string;
   runnerJs: string;
   webDir: string;
@@ -54,6 +56,7 @@ export function resolveBundle(env: Environment = process.env): Bundle {
   const root = resolve(dir);
   const templates = join(root, 'agent-templates');
   return {
+    dir: root,
     serverJs: join(root, 'server', 'main.js'),
     runnerJs: join(root, 'runner', 'main.js'),
     webDir: join(root, 'web'),

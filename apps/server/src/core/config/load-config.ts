@@ -5,7 +5,11 @@ import YAML from 'yaml';
 import { deepMerge, expandHome, getPath, isPlainObject, type PlainObject, setPath } from './merge.js';
 
 export interface LoadConfigOptions {
-  /** Explicit YAML file; `false` disables file loading. Default: $OFFICE_CONFIG or the first existing candidate. */
+  /**
+   * Explicit YAML file; `false` disables file loading. Default: $OFFICE_CONFIG or the first existing candidate.
+   * $OFFICE_CONFIG=none disables file loading; with OFFICE_NO_DOTENV=1 (desktop mode) the cwd-relative candidates
+   * are never searched, so only an explicit, tagconn-owned file is read.
+   */
   configFile?: string | false;
   env?: Record<string, string | undefined>;
   cwd?: string;
@@ -23,17 +27,39 @@ export interface LoadedConfig {
 
 const CANDIDATES = ['./config/office.yaml', '../../config/office.yaml'];
 /** Env vars with an OFFICE_ prefix that are not settings paths. */
-const RESERVED_ENV = new Set(['OFFICE_CONFIG', 'OFFICE_TEMPLATES_DIR', 'OFFICE_HOOK_TOKEN']);
+const RESERVED_ENV = new Set(['OFFICE_CONFIG', 'OFFICE_TEMPLATES_DIR', 'OFFICE_HOOK_TOKEN', 'OFFICE_NO_DOTENV']);
+
+/** OFFICE_NO_DOTENV=1|true: neither `.env` nor a cwd-relative `office.yaml` may be loaded (desktop mode). */
+export function isNoDotenv(env: Record<string, string | undefined> | undefined): boolean {
+  const v = env?.OFFICE_NO_DOTENV?.trim().toLowerCase();
+  return v === '1' || v === 'true';
+}
+
+/**
+ * `pnpm dev` runs from apps/server with no shell-level env loaded, so OFFICE_HOOK_TOKEN (and any other override)
+ * would silently be empty. Load a `.env` next to the cwd or the repo root, without clobbering anything already set
+ * (`process.loadEnvFile` never overrides existing env vars). N2: OFFICE_NO_DOTENV=1 (set by the desktop supervisor)
+ * skips this entirely: a cwd-relative `.env` is untrusted input there. Returns the file loaded, if any.
+ */
+export function loadDotEnv(env: Record<string, string | undefined> = process.env, cwd: string = process.cwd()): string | undefined {
+  if (isNoDotenv(env)) return undefined;
+  const file = [resolve(cwd, '.env'), resolve(cwd, '../../.env')].find((f) => existsSync(f));
+  if (file) process.loadEnvFile(file);
+  return file;
+}
 
 export function resolveConfigFile(opts: LoadConfigOptions): string | undefined {
   if (opts.configFile === false) return undefined;
   const cwd = opts.cwd ?? process.cwd();
   const explicit = opts.configFile ?? opts.env?.OFFICE_CONFIG;
+  if (explicit === 'none') return undefined;
   if (explicit) {
     const path = resolve(cwd, expandHome(explicit));
     if (!existsSync(path)) throw new Error(`Config file not found: ${path}`);
     return path;
   }
+  // N2: desktop mode must never pick up a `./config/office.yaml` planted in whatever the cwd happens to be.
+  if (isNoDotenv(opts.env)) return undefined;
   return CANDIDATES.map((c) => resolve(cwd, c)).find((p) => existsSync(p));
 }
 

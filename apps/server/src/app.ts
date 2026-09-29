@@ -64,7 +64,14 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   const app = Fastify({
     logger: opts.logger ?? defaultLogger(config.base.server.logLevel),
     bodyLimit: config.base.ingest.maxPayloadBytes,
+    forceCloseConnections: true,
   }).withTypeProvider<ZodTypeProvider>();
+
+  // QA: the supervisor polls /api/health every few seconds; its request logs would flood the logs drawer. A route-level
+  // logLevel silences them (info) while a warning or error on that route would still show. Registered before any route.
+  app.addHook('onRoute', (route) => {
+    if (route.url === '/api/health') route.logLevel = 'warn';
+  });
 
   // Core (order matters: DI first; every other plugin resolves from the container).
   await app.register(diPlugin, { config, templatesDir: opts.templatesDir ?? resolveTemplatesDir(env) });

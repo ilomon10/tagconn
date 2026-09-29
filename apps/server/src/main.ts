@@ -1,18 +1,5 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { buildApp } from './app.js';
-import { loadConfig } from './core/config/index.js';
-
-/**
- * `pnpm dev` runs from apps/server with no shell-level env loaded, so OFFICE_HOOK_TOKEN (and any
- * other override) would silently be empty. Load a `.env` next to the cwd or the repo root, without
- * clobbering anything already set (`process.loadEnvFile` never overrides existing env vars).
- */
-function loadDotEnv(): void {
-  const candidates = [resolve(process.cwd(), '.env'), resolve(process.cwd(), '../../.env')];
-  const file = candidates.find((f) => existsSync(f));
-  if (file) process.loadEnvFile(file);
-}
+import { loadConfig, loadDotEnv } from './core/config/index.js';
 
 async function main() {
   loadDotEnv();
@@ -28,6 +15,8 @@ async function main() {
     const force = setTimeout(() => process.exit(1), 10_000);
     force.unref();
     try {
+      // Disconnect socket.io clients first: fastify's close would otherwise wait for every open (web socket) connection.
+      app.diContainer.cradle.io.engine.close();
       await app.close();
       process.exit(0);
     } catch (err) {
@@ -37,6 +26,25 @@ async function main() {
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+  // QA K: the desktop supervisor passes its pid; if it dies (even by SIGKILL) nobody would stop us. ppid changes on
+  // POSIX when the parent dies, and signal 0 fails once the pid is gone (the only signal on win32, where ppid is static).
+  const parentPid = Number(process.env.TAGCONN_PARENT_PID);
+  if (Number.isInteger(parentPid) && parentPid > 1) {
+    const startPpid = process.ppid;
+    const gone = () => {
+      if (process.platform !== 'win32' && process.ppid !== startPpid) return true;
+      try {
+        process.kill(parentPid, 0);
+        return false;
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code === 'ESRCH';
+      }
+    };
+    setInterval(() => {
+      if (gone()) void shutdown('parent exited');
+    }, 2_000).unref();
+  }
 
   if (config.configFile) app.log.info({ configFile: config.configFile }, 'loaded config file');
   await app.listen({ host, port });

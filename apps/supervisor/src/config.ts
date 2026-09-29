@@ -1,7 +1,11 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { join } from 'node:path';
 import { DEFAULT_DESKTOP_CONFIG, DesktopConfigSchema, type DesktopConfig } from '@tagconn/shared';
-import { writeFileAtomic, writeSecretFile } from '@tagconn/setup';
+import { warnBroadAllowDirs, writeFileAtomic, writeSecretFile, type ExecFn } from '@tagconn/setup';
+import { ensureDataDir } from './dataDir.ts';
+import { RpcFailure } from './errors.ts';
 import type { Environment } from './paths.ts';
 
 export interface ConfigStoreOptions {
@@ -9,6 +13,9 @@ export interface ConfigStoreOptions {
   env?: Environment;
   platform?: NodeJS.Platform;
   warn?: (msg: string) => void;
+  /** Home dir for the validation below (default: the OS one). */
+  homeDir?: string;
+  exec?: ExecFn;
 }
 
 export const officeUrl = (port: number): string => `http://127.0.0.1:${port}`;
@@ -43,10 +50,58 @@ export class ConfigStore {
   set(patch: Partial<DesktopConfig>): DesktopConfig {
     const before = this.get();
     const merged = DesktopConfigSchema.parse({ ...before, ...definedOnly(patch) });
+    this.validatePaths(merged, patch);
+    if (merged.dataDir) {
+      try {
+        ensureDataDir(merged.dataDir, { platform: this.opts.platform, env: this.opts.env, exec: this.opts.exec });
+      } catch (err) {
+        throw new RpcFailure('invalid_request', `Cannot create the data folder ${merged.dataDir}: ${(err as Error).message}`, 'Choose another data folder.');
+      }
+    }
     writeFileAtomic(this.path, JSON.stringify(merged, null, 2) + '\n');
     if (merged.serverPort !== before.serverPort) this.rewritePort(merged.serverPort);
     if (JSON.stringify(merged.allowedProjectDirs) !== JSON.stringify(before.allowedProjectDirs)) this.rewriteAllowedDirs(merged.allowedProjectDirs);
     return merged;
+  }
+
+  /**
+   * N8: dataDir and allowedProjectDirs come from the UI. Both must be absolute and neither may be a filesystem
+   * root or the home folder; the data dir must not sit inside an allowed dir (a quest could then read or replace
+   * the database and tokens). Broad parents (many repos below) only draw the setup warning.
+   */
+  private validatePaths(merged: DesktopConfig, patch: Partial<DesktopConfig>): void {
+    const platform = this.opts.platform ?? process.platform;
+    const p = platform === 'win32' ? path.win32 : path.posix;
+    const canon = (d: string): string => {
+      let out = p.resolve(d);
+      if (platform === process.platform) {
+        try {
+          out = realpathSync(out);
+        } catch {
+          /* not created yet: compared as given */
+        }
+      }
+      out = out.length > p.parse(out).root.length ? out.replace(/[\\/]+$/, '') : out;
+      return platform === 'win32' ? out.toLowerCase() : out;
+    };
+    const home = canon(this.opts.homeDir ?? this.opts.env?.HOME ?? this.opts.env?.USERPROFILE ?? homedir());
+    const check = (what: string, dir: string): string => {
+      if (!p.isAbsolute(dir)) throw new RpcFailure('invalid_request', `${what} must be an absolute path (got "${dir}").`, 'Pick the folder with the folder chooser.');
+      const c = canon(dir);
+      if (p.dirname(c) === c) throw new RpcFailure('invalid_request', `${what} cannot be a drive or filesystem root (${dir}).`, 'Pick a project folder instead.');
+      if (c === home) throw new RpcFailure('invalid_request', `${what} cannot be your home folder (${dir}).`, 'Pick a specific folder inside it.');
+      return c;
+    };
+    // Only what this patch touches is checked, so an old saved value can never block an unrelated change.
+    const dataDir = merged.dataDir ? (patch.dataDir !== undefined ? check('The data folder', merged.dataDir) : canon(merged.dataDir)) : undefined;
+    const allowed = merged.allowedProjectDirs.map((d) => (patch.allowedProjectDirs !== undefined ? check('An allowed project folder', d) : canon(d)));
+    if (dataDir) {
+      const hit = allowed.find((a) => dataDir === a || dataDir.startsWith(a + p.sep));
+      if (hit !== undefined) {
+        throw new RpcFailure('invalid_request', `The data folder ${merged.dataDir} is inside an allowed project folder, where quests could reach the database.`, 'Choose a data folder outside every allowed project folder.');
+      }
+    }
+    if (patch.allowedProjectDirs !== undefined) warnBroadAllowDirs(merged.allowedProjectDirs, this.warn);
   }
 
   /**
@@ -72,14 +127,26 @@ export class ConfigStore {
     this.rewriteJson('runner.json', (o) => ({ ...o, allowedProjectDirs: dirs }));
   }
 
+  /** Merges `fields` (undefined values skipped) into runner.json when any differ. False when missing or unchanged. */
+  updateRunnerJson(fields: Record<string, unknown>): boolean {
+    const defined = definedOnly(fields);
+    let changed = false;
+    this.rewriteJson('runner.json', (o) => {
+      changed = Object.entries(defined).some(([k, v]) => JSON.stringify(o[k]) !== JSON.stringify(v));
+      return changed ? { ...o, ...defined } : o;
+    }, () => changed);
+    return changed;
+  }
+
   /** Rewrites a secret JSON file in place (keeping every other field); a missing file is skipped. */
-  private rewriteJson(name: string, edit: (o: Record<string, unknown>) => Record<string, unknown>): void {
+  private rewriteJson(name: string, edit: (o: Record<string, unknown>) => Record<string, unknown>, shouldWrite: () => boolean = () => true): void {
     const path = join(this.opts.configDir, name);
     if (!existsSync(path)) return;
     try {
       const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not a JSON object');
       const next = edit(parsed as Record<string, unknown>);
+      if (!shouldWrite()) return;
       writeSecretFile(path, JSON.stringify(next, null, 2) + '\n', { env: this.opts.env, platform: this.opts.platform });
     } catch (err) {
       this.warn(`could not update ${path}: ${(err as Error).message}`);

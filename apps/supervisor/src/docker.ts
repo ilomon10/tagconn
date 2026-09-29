@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
+import path from 'node:path';
 import type { ServiceStatus, ServiceState } from '@tagconn/shared';
 import { RpcFailure } from './errors.ts';
 import type { LogHub } from './logHub.ts';
+import { helperCwd } from './proc.ts';
 import type { ServiceController } from './service.ts';
 
 export interface DockerRunResult {
@@ -14,19 +17,49 @@ export interface DockerRunResult {
 /** Runs `docker <args>` and streams each output line to `onLine`. */
 export type DockerRun = (args: string[], opts: { env: NodeJS.ProcessEnv; onLine: (stream: 'stdout' | 'stderr', line: string) => void; timeoutMs: number }) => Promise<DockerRunResult>;
 
+/**
+ * N1: finds `docker` by walking the ABSOLUTE entries of PATH only. A relative entry (`.`, `bin`, empty) or the cwd
+ * would let a planted docker.exe win; the spawn then uses the absolute path, so the cwd is never searched.
+ */
+export function findDocker(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, cwd: string = process.cwd()): string | undefined {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const pathVar = env.PATH ?? env.Path ?? '';
+  const names = platform === 'win32' ? ['docker.exe'] : ['docker'];
+  const norm = (d: string) => (platform === 'win32' ? p.resolve(d).toLowerCase() : p.resolve(d));
+  for (const raw of pathVar.split(p.delimiter)) {
+    const dir = raw.trim().replace(/^"(.*)"$/, '$1');
+    if (!dir || !p.isAbsolute(dir) || norm(dir) === norm(cwd)) continue;
+    for (const name of names) {
+      const file = p.join(dir, name);
+      try {
+        if (existsSync(file) && statSync(file).isFile()) return file;
+      } catch {
+        /* unreadable entry: next */
+      }
+    }
+  }
+  return undefined;
+}
+
 export const realDockerRun: DockerRun = (args, opts) =>
   new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let timer: NodeJS.Timeout | undefined;
     const done = (r: DockerRunResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       resolve(r);
     };
-    const child = spawn('docker', args, { env: opts.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: false });
-    const timer = setTimeout(() => {
+    const docker = findDocker(opts.env);
+    if (!docker) {
+      done({ status: null, stdout, stderr, error: Object.assign(new Error('docker was not found in PATH'), { code: 'ENOENT' }) });
+      return;
+    }
+    const child = spawn(docker, args, { env: opts.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: false, cwd: helperCwd(process.platform, opts.env) });
+    timer = setTimeout(() => {
       child.kill();
       done({ status: null, stdout, stderr, error: new Error(`docker ${args[0]} timed out`) });
     }, opts.timeoutMs);
@@ -41,6 +74,9 @@ export const realDockerRun: DockerRun = (args, opts) =>
     child.once('error', (error) => done({ status: null, stdout, stderr, error }));
     child.once('close', (status) => done({ status, stdout, stderr }));
   });
+
+/** N15: a project name of its own, so `docker compose down` here can never touch the repo's `pnpm office:up` stack. */
+export const DOCKER_PROJECT = 'tagconn-desktop';
 
 export interface DockerDeps {
   logs: LogHub;
@@ -88,7 +124,7 @@ export class DockerService implements ServiceController {
 
   private compose(args: string[], timeoutMs: number): Promise<DockerRunResult> {
     const env = { ...process.env, ...this.deps.env() };
-    return this.run(['compose', '-p', 'tagconn', '-f', this.deps.composeFile(), ...args], {
+    return this.run(['compose', '-p', DOCKER_PROJECT, '-f', this.deps.composeFile(), ...args], {
       env,
       timeoutMs,
       onLine: (stream, line) => this.deps.logs.push('docker', stream, line),

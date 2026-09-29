@@ -18,6 +18,8 @@ export interface ServiceDefinition {
   id: ServiceId;
   /** Throws an RpcFailure (port_in_use, spawn_failed...) when the service cannot start. */
   prepare: () => Promise<LaunchSpec>;
+  /** The bundle path this install expects its process to run (N7): stale PIDs are matched against it, never the PID file's own. */
+  marker?: () => string;
   /** Polled for readiness and hangs. Without it the service counts as running once spawned. */
   healthUrl?: () => string;
   url?: () => string | undefined;
@@ -39,6 +41,8 @@ export interface Timing {
   healthTimeoutMs: number;
   /** A service that has never been healthy is only counted as hung after this long. */
   startGraceMs: number;
+  /** `start()` rejects when the service is still not `running` after this long. */
+  startTimeoutMs: number;
 }
 
 export const DEFAULT_TIMING: Timing = {
@@ -52,6 +56,7 @@ export const DEFAULT_TIMING: Timing = {
   healthMisses: 3,
   healthTimeoutMs: 2_000,
   startGraceMs: 30_000,
+  startTimeoutMs: 30_000,
 };
 
 export type SpawnFn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
@@ -118,6 +123,8 @@ export class ManagedService implements ServiceController {
   private forceTimer: NodeJS.Timeout | undefined;
   private lastStderr = '';
   private disposed = false;
+  private lastSignal: NodeJS.Signals | null = null;
+  private waiters = new Set<() => void>();
 
   constructor(def: ServiceDefinition, deps: ServiceDeps) {
     this.def = def;
@@ -149,8 +156,9 @@ export class ManagedService implements ServiceController {
   }
 
   /** Kills a PID left behind by a previous supervisor. Safe to call at boot. */
-  cleanStale(): void {
-    const res = cleanStalePid(this.d.pidDir, this.id, this.d.ops);
+  cleanStale(expectedMarker: string | undefined = this.def.marker?.()): void {
+    // Without an expected marker nothing can be verified as ours: the file is just dropped, no process is killed.
+    const res = cleanStalePid(this.d.pidDir, this.id, this.d.ops, expectedMarker ?? '\0');
     if (res === 'killed') this.log(`killed a stale ${this.id} process left by a previous run`);
     else if (res === 'foreign') this.log(`ignored a stale ${this.id} PID file: that PID now belongs to another program`);
   }
@@ -158,7 +166,11 @@ export class ManagedService implements ServiceController {
   async start(): Promise<ServiceStatus> {
     if (this.disposed) throw new RpcFailure('busy', 'The supervisor is shutting down.');
     if (this.state === 'stopping') await this.exited;
-    if (this.state === 'starting' || this.state === 'running') return this.status();
+    if (this.state === 'running') return this.status();
+    if (this.state === 'starting') {
+      await this.untilRunning();
+      return this.status();
+    }
     this.restarts = 0;
     this.crashes = [];
     this.lastError = undefined;
@@ -170,7 +182,43 @@ export class ManagedService implements ServiceController {
       this.setState('stopped');
       throw err;
     }
+    await this.untilRunning();
     return this.status();
+  }
+
+  /**
+   * Resolves once the service is `running` (first health OK when it has a health URL); rejects with a clear error
+   * when it gives up (crashed), is stopped meanwhile, or is still not running after `startTimeoutMs`. Automatic
+   * restarts in between (state `starting` again) keep waiting. On a timeout the service is left as it is.
+   */
+  private untilRunning(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        finish(() =>
+          reject(
+            new RpcFailure(
+              'spawn_failed',
+              `${this.id} did not become ready within ${Math.round(this.t.startTimeoutMs / 1000)} s.`,
+              'It may still be starting: check the logs, then press Start again or pick another port in Settings.',
+            ),
+          ),
+        );
+      }, this.t.startTimeoutMs);
+      const check = () => {
+        if (this.state === 'running') finish(resolve);
+        else if (this.state === 'crashed') finish(() => reject(new RpcFailure('spawn_failed', this.lastError ?? `${this.id} crashed.`)));
+        else if (this.state === 'stopped' || this.state === 'stopping' || this.state === 'unavailable') {
+          finish(() => reject(new RpcFailure('spawn_failed', this.lastError ?? `${this.id} was stopped before it became ready.`)));
+        }
+      };
+      const finish = (fn: () => void) => {
+        clearTimeout(timer);
+        this.waiters.delete(check);
+        fn();
+      };
+      this.waiters.add(check);
+      check();
+    });
   }
 
   async stop(): Promise<ServiceStatus> {
@@ -207,6 +255,7 @@ export class ManagedService implements ServiceController {
     this.state = state;
     this.since = this.d.now();
     this.d.onChange(this.status());
+    for (const w of [...this.waiters]) w();
   }
 
   private log(msg: string): void {
@@ -215,11 +264,12 @@ export class ManagedService implements ServiceController {
 
   private async launch(): Promise<void> {
     const spec = await this.def.prepare();
-    this.cleanStale();
+    this.cleanStale(spec.marker);
     const gen = ++this.generation;
     this.stopping = false;
     this.killReason = undefined;
     this.lastStderr = '';
+    this.lastSignal = null;
     this.exited = new Promise<void>((resolve) => (this.resolveExited = resolve));
     const win32 = this.d.ops.platform === 'win32';
     this.log(`starting: ${spec.command} ${spec.args.join(' ')}`);
@@ -240,7 +290,10 @@ export class ManagedService implements ServiceController {
     this.child = child;
     this.pid = child.pid;
     this.startedAt = this.d.now();
-    if (child.pid !== undefined) writePidFile(this.d.pidDir, this.id, { pid: child.pid, marker: spec.marker, startedAt: this.startedAt });
+    if (child.pid !== undefined) {
+      const startTime = this.d.ops.startTime?.(child.pid) ?? undefined;
+      writePidFile(this.d.pidDir, this.id, { pid: child.pid, marker: spec.marker, startedAt: this.startedAt, ...(startTime ? { startTime } : {}) });
+    }
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (c: string) => this.d.logs.feed(this.id, 'stdout', c));
@@ -268,8 +321,8 @@ export class ManagedService implements ServiceController {
     clearTimeout(this.healthTimer);
     clearTimeout(this.forceTimer);
     this.d.logs.flush(this.id);
-    // Leftover grandchildren must not keep holding the port or a database.
-    if (this.pid !== undefined && !spawnError && this.d.ops.platform !== 'win32') killTree(this.pid, 'SIGKILL', this.d.ops);
+    // N7 (same as runner L6): the child has ended, so its pid may already belong to someone else. Never signal it.
+    this.lastSignal = signal;
     removePidFile(this.d.pidDir, this.id);
     this.child = undefined;
     this.pid = undefined;
@@ -292,6 +345,14 @@ export class ManagedService implements ServiceController {
     this.recordCrash(reason);
   }
 
+  /** A signal exit (not one we sent for a hang) is not a port or sqlite problem: say what it looks like instead. */
+  private hint(): string {
+    if (this.lastSignal && !this.killReason) {
+      return `It was killed by a signal (${this.lastSignal}), possibly by you (a task manager, kill) or by the operating system's out-of-memory killer. Free some memory, then press Start.`;
+    }
+    return this.def.crashHint ?? 'Read the logs, fix the cause, then press Start. "Copy diagnostics" gathers everything for a bug report.';
+  }
+
   private recordCrash(reason: string): void {
     const now = this.d.now();
     this.crashes = this.crashes.filter((c) => now - c < this.t.crashWindowMs);
@@ -299,7 +360,7 @@ export class ManagedService implements ServiceController {
     if (this.crashes.length >= this.t.maxCrashes) {
       this.lastError =
         `${this.id} ${reason}. It crashed ${this.crashes.length} times within ${Math.round(this.t.crashWindowMs / 1000)} s, so the supervisor gave up. ` +
-        (this.def.crashHint ?? 'Read the logs, fix the cause, then press Start. "Copy diagnostics" gathers everything for a bug report.');
+        this.hint();
       this.log('giving up after repeated crashes');
       this.setState('crashed');
       return;
@@ -328,7 +389,7 @@ export class ManagedService implements ServiceController {
     const url = this.def.healthUrl?.();
     if (gen !== this.generation || !url) return;
     const ok = await this.d.health(url, this.t.healthTimeoutMs);
-    if (gen !== this.generation || !this.child) return;
+    if (gen !== this.generation || !this.child || this.stopping) return;
     if (ok) {
       if (this.state === 'starting') {
         this.lastError = undefined;

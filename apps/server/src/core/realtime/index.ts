@@ -124,6 +124,9 @@ export const realtimePlugin = fp(
 
     app.addHook('preClose', async () => {
       office.disconnectSockets(true);
+      // QA I: also drop the engine.io transports (a websocket is detached from the http server, so fastify's own
+      // close would wait for it forever); a stop must not depend on an open browser window.
+      io.engine.close();
     });
     app.addHook('onClose', async () => {
       await new Promise<void>((resolve) => {

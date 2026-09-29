@@ -1,5 +1,5 @@
 # Docker mode of tagconn Desktop: published images instead of the native server.
-# The supervisor runs `docker compose -p tagconn -f <this file> up -d` with these variables set:
+# The supervisor runs `docker compose -p tagconn-desktop -f <this file> up -d` with these variables set:
 #   OFFICE_PORT, TAGCONN_VERSION, TAGCONN_CLAUDE_DIR, OFFICE_HOOK_TOKEN, OFFICE_RUNNER__*, OFFICE_SERVER__CORS_ORIGINS
 services:
   server:
@@ -15,7 +15,7 @@ services:
       OFFICE_RUNNER__ALLOWED_PROJECT_DIRS: ${OFFICE_RUNNER__ALLOWED_PROJECT_DIRS:-[]}
       OFFICE_SERVER__CORS_ORIGINS: ${OFFICE_SERVER__CORS_ORIGINS:-}
     volumes:
-      - office-data:/data
+      - desktop-office-data:/data
       - ${TAGCONN_CLAUDE_DIR}/agents:/claude/agents
       - ${TAGCONN_CLAUDE_DIR}/projects:/claude/projects:ro
     ports:
@@ -29,4 +29,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  office-data:
+  desktop-office-data:

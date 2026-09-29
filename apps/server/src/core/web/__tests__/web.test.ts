@@ -122,6 +122,33 @@ describe('web plugin', () => {
     expect((await app!.inject({ url: '/ok.txt' })).body).toBe('inside');
   });
 
+  it('N13: refuses a directory request whose index.html is a symlink leaving the web dir', async () => {
+    const dir = makeTempDir('tagconn-web-idx-');
+    const outside = makeTempDir('tagconn-web-idx-out-');
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>tagconn</title>');
+    writeFileSync(join(outside, 'index.html'), 'SECRET-INDEX');
+    mkdirSync(join(dir, 'sub'));
+    symlinkSync(join(outside, 'index.html'), join(dir, 'sub', 'index.html'));
+    symlinkSync(outside, join(dir, 'linked'));
+    await build({ server: { webDir: dir } });
+    for (const url of ['/sub/', '/sub', '/linked/', '/linked']) {
+      const res = await app!.inject({ url });
+      expect(res.statusCode, url).toBe(404);
+      expect(res.body).not.toContain('SECRET-INDEX');
+    }
+    expect((await app!.inject({ url: '/' })).body).toContain('<title>tagconn</title>');
+  });
+
+  it('N13: does not serve when the root index.html itself is a symlink leaving the web dir', async () => {
+    const dir = makeTempDir('tagconn-web-rootidx-');
+    const outside = makeTempDir('tagconn-web-rootidx-out-');
+    writeFileSync(join(outside, 'index.html'), 'SECRET-INDEX');
+    symlinkSync(join(outside, 'index.html'), join(dir, 'index.html'));
+    const res = await (await build({ server: { webDir: dir } })).inject({ url: '/' });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).not.toContain('SECRET-INDEX');
+  });
+
   it('does not serve when webDir has no index.html', async () => {
     const res = await (await build({ server: { webDir: makeTempDir('tagconn-empty-') } })).inject({ url: '/' });
     expect(res.statusCode).toBe(404);

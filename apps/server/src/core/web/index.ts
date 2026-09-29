@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import { ASSET_CACHE_CONTROL, INDEX_CACHE_CONTROL, SECURITY_HEADERS } from '@tagconn/shared';
@@ -37,18 +37,37 @@ export const webPlugin = fp(
       return;
     }
 
-    // @fastify/static follows symlinks; refuse any existing file whose realpath leaves the web dir.
+    // @fastify/static follows symlinks; refuse any existing file whose realpath leaves the web dir. N13: a directory
+    // request is served as its index.html, so that resolved file is checked too (a symlinked index.html or a
+    // symlinked sub-directory must not expose a file outside the dir), as is the root index.html the SPA fallback uses.
     const realRoot = realpathSync(root);
+    const inside = (real: string): boolean => real === realRoot || real.startsWith(realRoot + sep);
+    const resolvesInside = (file: string): boolean => {
+      let real: string;
+      try {
+        real = realpathSync(file);
+      } catch {
+        return true; // does not exist: static/SPA fallback handles it
+      }
+      if (!inside(real)) return false;
+      try {
+        if (statSync(real).isDirectory()) {
+          const index = join(real, 'index.html');
+          return !existsSync(index) || inside(realpathSync(index));
+        }
+      } catch {
+        /* vanished meanwhile: nothing to serve */
+      }
+      return true;
+    };
+    if (!resolvesInside(join(root, 'index.html'))) {
+      app.log.warn({ webDir: root }, 'server.webDir/index.html is a symlink leaving the web dir; not serving the web app');
+      return;
+    }
     app.addHook('onRequest', async (req, reply) => {
       const path = pathnameOf(req.url);
       if ((req.method !== 'GET' && req.method !== 'HEAD') || isBackendPath(path) || isTraversal(path)) return;
-      let real: string;
-      try {
-        real = realpathSync(join(root, decodeURIComponent(path)));
-      } catch {
-        return; // does not exist: static/SPA fallback handles it
-      }
-      if (real !== realRoot && !real.startsWith(realRoot + sep)) return reply.code(404).send({ error: 'Not Found', statusCode: 404 });
+      if (!resolvesInside(join(root, decodeURIComponent(path)))) return reply.code(404).send({ error: 'Not Found', statusCode: 404 });
     });
 
     await app.register(fastifyStatic, { root, wildcard: true, index: 'index.html', dotfiles: 'ignore', cacheControl: false });
