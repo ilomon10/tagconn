@@ -36,16 +36,16 @@ export function validateNoSingleQuote(path: string, label: string): void {
 /** Validates a server URL: http(s) only, no whitespace/quotes, parseable by `new URL()`. */
 export function validateUrl(raw: string): string {
   if (/["'\s]/.test(raw)) {
-    throw new Error(`--url is invalid: must not contain whitespace or quotes (got ${JSON.stringify(raw)})`);
+    throw new Error(`The server URL is invalid: must not contain whitespace or quotes (got ${JSON.stringify(raw)})`);
   }
   let parsed: URL;
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error(`--url is invalid: ${JSON.stringify(raw)} is not a valid URL`);
+    throw new Error(`The server URL is invalid: ${JSON.stringify(raw)} is not a valid URL`);
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(`--url must use http or https (got ${JSON.stringify(parsed.protocol)})`);
+    throw new Error(`The server URL must use http or https (got ${JSON.stringify(parsed.protocol)})`);
   }
   return raw.replace(/\/+$/, '');
 }

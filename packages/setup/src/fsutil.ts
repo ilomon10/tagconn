@@ -5,8 +5,10 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -21,6 +23,11 @@ export interface FsOps {
   copyFileSync: (from: string, to: string) => void;
   rmSync: (path: string, opts: { force: true }) => void;
   mkdirSync: (path: string, opts: { recursive: true }) => void;
+  /** Resolves symlinks, so a symlinked file is written through and stays a symlink. Optional for test fakes. */
+  realpathSync?: (path: string) => string;
+  /** The file's permission bits (POSIX), copied onto the replacement. Optional for test fakes. */
+  modeOf?: (path: string) => number;
+  chmodSync?: (path: string, mode: number) => void;
 }
 
 export const defaultFs: FsOps = {
@@ -31,6 +38,9 @@ export const defaultFs: FsOps = {
   copyFileSync,
   rmSync: (path, opts) => rmSync(path, opts),
   mkdirSync: (path, opts) => void mkdirSync(path, opts),
+  realpathSync: (path) => realpathSync(path),
+  modeOf: (path) => statSync(path).mode & 0o7777,
+  chmodSync,
 };
 
 export function baseName(path: string): string {
@@ -38,13 +48,32 @@ export function baseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/** Atomic text write: a sibling temp file (exclusive create), then rename over the target. */
+/** The path to actually replace: the symlink's target if `path` is a symlink (so it stays a symlink). */
+export function writeTargetOf(path: string, fs: FsOps = defaultFs): string {
+  if (!fs.existsSync(path)) return path;
+  try {
+    return fs.realpathSync ? fs.realpathSync(path) : path;
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Atomic text write: a sibling temp file (exclusive create), then rename over the target. Writes through
+ * realpath (a symlinked file stays a symlink) and copies an existing file's permission bits onto the
+ * replacement (POSIX). On win32 the replacement gets the folder's inherited ACL, not the old file's custom
+ * ACL; settings.json normally has none.
+ */
 export function writeFileAtomic(path: string, text: string, fs: FsOps = defaultFs): void {
-  fs.mkdirSync(dirname(path), { recursive: true });
-  const tmpPath = join(dirname(path), `.${baseName(path)}.tagconn-tmp-${randomBytes(6).toString('hex')}`);
+  const target = writeTargetOf(path, fs);
+  fs.mkdirSync(dirname(target), { recursive: true });
+  const tmpPath = join(dirname(target), `.${baseName(target)}.tagconn-tmp-${randomBytes(6).toString('hex')}`);
   try {
     fs.writeFileSync(tmpPath, text, { encoding: 'utf8', flag: 'wx' });
-    fs.renameSync(tmpPath, path);
+    if (fs.modeOf && fs.chmodSync && fs.existsSync(target) && process.platform !== 'win32') {
+      fs.chmodSync(tmpPath, fs.modeOf(target));
+    }
+    fs.renameSync(tmpPath, target);
   } catch (err) {
     try {
       fs.rmSync(tmpPath, { force: true });

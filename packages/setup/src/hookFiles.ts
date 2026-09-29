@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { secretOptions, touch, type SetupContext } from './context.ts';
 import { ensureConfigDir } from './fsutil.ts';
 import { writeSecretFile } from './secrets.ts';
+import { validateUrl } from './validate.ts';
 
 // The sh-hook side of the install (curl.conf, the copied office-hook.sh) plus the attribution files
 // that both hook kinds share (see docs/design/runner-and-helpdesk.md §6.2).
@@ -13,7 +14,9 @@ import { writeSecretFile } from './secrets.ts';
  * shared secret and target URL, so the hook never puts the token on a
  * command line (visible to any local user via `ps`).
  */
-export function ensureCurlConf(ctx: SetupContext, configDir: string, token: string, url: string): string {
+export function ensureCurlConf(ctx: SetupContext, configDir: string, token: string, urlIn: string): string {
+  // The URL is written between quotes into a curl config: a quote or newline would inject more options.
+  const url = validateUrl(urlIn);
   const confPath = join(configDir, 'curl.conf');
   const content =
     `# Written by tagconn scripts/install.ts. Contains the hook's shared secret -\n` +
@@ -140,7 +143,8 @@ export function removeAttributionReadme(ctx: SetupContext, configDir: string): v
  * Installed by default - unlike the README template, importing writes nothing to the
  * repo and the server always asks before applying an import (settings.attribution.autoImport).
  */
-export function ensureAttributionConf(ctx: SetupContext, configDir: string, token: string, url: string): string {
+export function ensureAttributionConf(ctx: SetupContext, configDir: string, token: string, urlIn: string): string {
+  const url = validateUrl(urlIn);
   const confPath = join(configDir, 'attribution.conf');
   const content =
     `# Written by tagconn scripts/install.ts. Used by the hook to POST\n` +

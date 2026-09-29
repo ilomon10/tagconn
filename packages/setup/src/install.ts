@@ -15,12 +15,13 @@ import {
   removeLegacyHookEnv,
   removeServerUrlFile,
 } from './hookFiles.ts';
+import { stabilizeNodePath, type NodeStabilizeOptions } from './nodeRuntime.ts';
 import { installNodeHookScript, readHookConfigToken, removeHookConfig, writeHookConfig } from './hookConfig.ts';
 import { resolveSetupPaths } from './paths.ts';
 import { ensureRunnerConfig, removeRunnerConfig, warnBroadAllowDirs } from './runnerConfig.ts';
 import { installAgents, installSkills, uninstallAgents, uninstallSkills } from './templates.ts';
 import type { InstallResult } from './types.ts';
-import { isValidToken } from './validate.ts';
+import { isValidToken, validateUrl } from './validate.ts';
 
 export interface InstallOptions {
   claudeDir: string;
@@ -41,6 +42,8 @@ export interface InstallOptions {
   hook: HookKind;
   /** The node executable for the node hook (exec form). Default: process.execPath. */
   nodePath?: string;
+  /** Where a copied (stable) node goes, and which dirs count as temporary. Default: the OS data dir; tests override. */
+  nodeStable?: NodeStabilizeOptions;
   /** Write .tagconn/README.md into repos? Resolved lazily so the CLI can prompt at the right point of the output. */
   attribution: boolean | (() => Promise<boolean> | boolean);
   /** Whether configDir is the OS default (the sh hook then needs no TAGCONN_CURL_CONF prefix). */
@@ -93,10 +96,11 @@ export async function promptAttribution(
  * settings.json rolls it back from the backup (SettingsRollbackError); a secret file that cannot be locked
  * down throws SecretFileError before anything depends on it. Returns what changed for the "what changed" summary.
  */
-export async function install(opts: InstallOptions, ctxIn?: SetupContext): Promise<InstallResult> {
+export async function install(optsIn: InstallOptions, ctxIn?: SetupContext): Promise<InstallResult> {
   const ctx = ctxIn ?? createContext();
+  // Validate here, not only in the CLI: the desktop app calls install() directly, and the URL ends up in curl.conf.
+  const opts = { ...optsIn, url: validateUrl(optsIn.url) };
   const settingsPath = join(opts.claudeDir, 'settings.json');
-  const nodePath = opts.nodePath ?? process.execPath;
 
   // Fail before writing anything (secrets included) if settings.json can't be merged into safely,
   // or if a directory we must write into isn't writable: no half-finished installs.
@@ -124,6 +128,9 @@ export async function install(opts: InstallOptions, ctxIn?: SetupContext): Promi
   let readmeFromHookJson: (wants: boolean) => void = () => {};
   if (opts.hook === 'node') {
     const scriptPath = installNodeHookScript(ctx, opts.configDir);
+    // A sandboxed (non-default) config dir keeps its node copy inside it, never in the real data dir.
+    const nodeDir = opts.nodeStable?.nodeDir ?? (opts.isDefaultConfigDir ? undefined : join(opts.configDir, 'node'));
+    const nodePath = stabilizeNodePath(ctx, opts.nodePath ?? process.execPath, { ...opts.nodeStable, nodeDir });
     spec = { kind: 'node', nodePath, scriptPath };
     readmeFromHookJson = (wants) => void writeHookConfig(ctx, opts.configDir, { url: opts.url, token, attributionReadme: wants });
   } else {

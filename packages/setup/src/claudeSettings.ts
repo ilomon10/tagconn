@@ -1,4 +1,4 @@
-import { defaultFs, writeFileAtomic, type FsOps } from './fsutil.ts';
+import { defaultFs, writeFileAtomic, writeTargetOf, type FsOps } from './fsutil.ts';
 import { touch, type SetupContext } from './context.ts';
 
 export const HOOK_EVENTS = [
@@ -366,9 +366,11 @@ function mutateSettings(
     let restored = false;
     try {
       if (backup && existed) {
-        const tmp = `${path}.tagconn-restore-${process.pid}`;
+        const target = writeTargetOf(path, fs);
+        const tmp = `${target}.tagconn-restore-${process.pid}`;
         fs.copyFileSync(backup, tmp);
-        fs.renameSync(tmp, path);
+        if (fs.modeOf && fs.chmodSync && process.platform !== 'win32') fs.chmodSync(tmp, fs.modeOf(target));
+        fs.renameSync(tmp, target);
       } else if (!existed) {
         fs.rmSync(path, { force: true });
       }

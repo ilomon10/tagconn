@@ -1,17 +1,21 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseIcaclsPrincipals, SecretFileError, verifySecretFile, writeSecretFile, type ExecFn } from '../src/index.ts';
+import { parseIcaclsPrincipals, parseWhoamiUser, SecretFileError, systemBin, verifySecretFile, writeSecretFile, type ExecFn } from '../src/index.ts';
 import { tempDir } from './support/sandbox.ts';
 
-const WIN_ENV = { USERDOMAIN: 'DESKTOP-1', USERNAME: 'ilo' };
+const WIN_ENV = { USERDOMAIN: 'DESKTOP-1', USERNAME: 'ilo', SystemRoot: 'C:\\Windows' };
+const SID = 'S-1-5-21-1111111111-2222222222-3333333333-1001';
+const ICACLS = 'C:\\Windows\\System32\\icacls.exe';
+const WHOAMI = 'C:\\Windows\\System32\\whoami.exe';
 
 /** A fake icacls: records calls; `listing` decides what `icacls <file>` prints. */
 function fakeIcacls(listing: (path: string) => string, opts: { grantStatus?: number } = {}) {
   const calls: string[][] = [];
   const exec: ExecFn = (cmd, args) => {
     calls.push([cmd, ...args]);
-    if (cmd !== 'icacls') return { status: 1, stdout: '', stderr: 'unexpected' };
+    if (cmd === WHOAMI) return { status: 0, stdout: `"DESKTOP-1\\ilo","${SID}"\r\n`, stderr: '' };
+    if (cmd !== ICACLS) return { status: 1, stdout: '', stderr: 'unexpected' };
     if (args.includes('/grant:r')) return { status: opts.grantStatus ?? 0, stdout: '', stderr: opts.grantStatus ? 'Access is denied.' : '' };
     return { status: 0, stdout: listing(args[0] as string), stderr: '' };
   };
@@ -47,17 +51,18 @@ describe('writeSecretFile (POSIX)', () => {
 });
 
 describe('writeSecretFile (win32, mocked icacls)', () => {
-  it('runs icacls /inheritance:r /grant:r "DOMAIN\\user:F" as an argv array, then verifies', () => {
+  it('grants by SID (from System32 whoami) with the absolute System32 icacls as an argv array, then verifies', () => {
     const dir = tempDir();
     const path = join(dir, 'hook.json');
     const { exec, calls } = fakeIcacls(onlyUser);
     writeSecretFile(path, '{}', { platform: 'win32', env: WIN_ENV, exec });
     expect(readFileSync(path, 'utf8')).toBe('{}');
     const grant = calls.find((c) => c.includes('/grant:r'));
-    expect(grant?.slice(0, 1)).toEqual(['icacls']);
-    expect(grant?.slice(2)).toEqual(['/inheritance:r', '/grant:r', 'DESKTOP-1\\ilo:F']);
+    expect(grant?.slice(0, 1)).toEqual([ICACLS]);
+    expect(grant?.slice(2)).toEqual(['/inheritance:r', '/grant:r', `*${SID}:F`]);
+    expect(calls.some((c) => c[0] === WHOAMI && c.slice(1).join(' ') === '/user /fo csv /nh')).toBe(true);
     // grant happens on the temp file (before the secret is written), then a verification listing.
-    expect(calls.some((c) => c.length === 2)).toBe(true);
+    expect(calls.some((c) => c[0] === ICACLS && c.length === 2)).toBe(true);
     expect(readdirSync(dir)).toEqual(['hook.json']);
   });
 
@@ -89,8 +94,8 @@ describe('writeSecretFile (win32, mocked icacls)', () => {
   });
 
   it('a failed icacls read counts as a failed verification', () => {
-    const exec: ExecFn = (_cmd, args) =>
-      args.includes('/grant:r') ? { status: 0, stdout: '', stderr: '' } : { status: 1, stdout: '', stderr: '', error: new Error('spawn icacls ENOENT') };
+    const exec: ExecFn = (cmd, args) =>
+      cmd === WHOAMI ? { status: 0, stdout: `"DESKTOP-1\\ilo","${SID}"`, stderr: '' } : args.includes('/grant:r') ? { status: 0, stdout: '', stderr: '' } : { status: 1, stdout: '', stderr: '', error: new Error('spawn icacls ENOENT') };
     const dir = tempDir();
     expect(() => writeSecretFile(join(dir, 'f'), 'x', { platform: 'win32', env: WIN_ENV, exec })).toThrow(SecretFileError);
   });
@@ -104,5 +109,42 @@ describe('writeSecretFile (win32, mocked icacls)', () => {
   it('verifySecretFile accepts a bare-user principal', () => {
     const { exec } = fakeIcacls((p) => `${p} ilo:(F)\r\n`);
     expect(verifySecretFile('C:\\x\\f', { platform: 'win32', env: WIN_ENV, exec })).toEqual({ ok: true });
+  });
+
+  it('fails closed with a hint when whoami cannot give a SID (nothing is granted or written)', () => {
+    const dir = tempDir();
+    const calls: string[] = [];
+    const exec: ExecFn = (cmd) => {
+      calls.push(cmd);
+      return { status: 0, stdout: 'garbage', stderr: '' };
+    };
+    let err: unknown;
+    try {
+      writeSecretFile(join(dir, 'f'), 'x', { platform: 'win32', env: WIN_ENV, exec });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SecretFileError);
+    expect((err as SecretFileError).message).toMatch(/SID/);
+    expect((err as SecretFileError).hint).toContain('whoami');
+    expect(calls).not.toContain(ICACLS);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it('decodes UTF-16-looking (NUL-interleaved) whoami output', () => {
+    const wide = `"DESKTOP-1\\ilo","${SID}"`.split('').join('\u0000');
+    expect(parseWhoamiUser(wide)?.sid).toBe(SID);
+  });
+
+  it('accepts an ACE printed as the raw SID, and rejects SYSTEM/Administrators alongside the user', () => {
+    const only = fakeIcacls((p) => `${p} ${SID}:(F)\r\n`);
+    expect(verifySecretFile('C:\\x\\f', { platform: 'win32', env: WIN_ENV, exec: only.exec })).toEqual({ ok: true });
+    const extra = fakeIcacls((p) => `${p} DESKTOP-1\\ilo:(F)\r\n    NT AUTHORITY\\SYSTEM:(F)\r\n`);
+    expect(verifySecretFile('C:\\x\\f', { platform: 'win32', env: WIN_ENV, exec: extra.exec })).toMatchObject({ ok: false, kind: 'acl' });
+  });
+
+  it('systemBin uses %SystemRoot% and falls back to C:\\Windows', () => {
+    expect(systemBin({ SystemRoot: 'D:\\Win\\' }, 'cmd')).toBe('D:\\Win\\System32\\cmd.exe');
+    expect(systemBin({}, 'where')).toBe('C:\\Windows\\System32\\where.exe');
   });
 });

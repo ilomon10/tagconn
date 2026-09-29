@@ -2,7 +2,7 @@ import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, wri
 import { createServer } from 'node:net';
 import { homedir as osHomedir } from 'node:os';
 import { pathFor } from './paths.ts';
-import { defaultExec, type ExecFn } from './secrets.ts';
+import { defaultExec, type ExecFn, type ExecResult } from './secrets.ts';
 import { HOOK_EVENTS, SettingsParseError, summarizeHooks } from './claudeSettings.ts';
 import type { SetupCheck } from './types.ts';
 
@@ -22,6 +22,8 @@ export interface CheckDeps {
   /** Throws if `path` cannot be opened for writing (a locked settings.json). */
   assertWritable: (path: string) => void;
   readFile: (path: string) => string;
+  /** True if `path` exists and can be executed (win32: exists). Default: exists. */
+  isExecutable?: (path: string) => boolean;
 }
 
 export function defaultCheckDeps(): CheckDeps {
@@ -45,6 +47,14 @@ export function defaultCheckDeps(): CheckDeps {
     },
     assertWritable: (path) => accessSync(path, constants.W_OK),
     readFile: (path) => readFileSync(path, 'utf8'),
+    isExecutable: (path) => {
+      try {
+        accessSync(path, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    },
   };
 }
 
@@ -64,29 +74,87 @@ function firstLine(text: string): string {
   return text.split(/\r?\n/).find((l) => l.trim())?.trim() ?? '';
 }
 
-/** Runs `claude <args>`; a Windows `.cmd`/`.bat` shim can't be spawned directly, so go through cmd.exe. */
-function runClaude(deps: CheckDeps, claudePath: string, args: string[]) {
-  if (deps.platform === 'win32' && /\.(cmd|bat)$/i.test(claudePath)) {
-    return deps.exec('cmd.exe', ['/d', '/c', claudePath, ...args], { timeoutMs: 15_000 });
-  }
-  return deps.exec(claudePath, args, { timeoutMs: 15_000 });
+/**
+ * Absolute entries of PATH, in PATH order (a relative entry, "." or an empty one would search the current
+ * directory, where a planted claude.exe could win, so it is dropped).
+ */
+function pathEntries(deps: CheckDeps): string[] {
+  const p = pathFor(deps.platform);
+  const raw = deps.platform === 'win32' ? (deps.env.Path ?? deps.env.PATH ?? deps.env.path ?? '') : (deps.env.PATH ?? '');
+  const sep = deps.platform === 'win32' ? ';' : ':';
+  return raw
+    .split(sep)
+    .map((e) => (deps.platform === 'win32' ? e.trim().replace(/^"(.*)"$/, '$1') : e))
+    .filter((e) => e !== '' && p.isAbsolute(e));
 }
 
-/** `where.exe claude` / `command -v claude`, then the native install path. */
+/** Windows: every `<name>.exe|.cmd|.bat` on PATH, PATH order (no cwd), so `where.exe` (which searches the cwd first) is not needed. */
+export function findOnWindowsPath(deps: CheckDeps, name: string): string[] {
+  const p = pathFor('win32');
+  const hits: string[] = [];
+  for (const dir of pathEntries(deps)) {
+    for (const ext of ['.exe', '.cmd', '.bat']) {
+      const candidate = p.join(dir, name + ext);
+      if (deps.exists(candidate)) hits.push(candidate);
+    }
+  }
+  return hits;
+}
+
+/**
+ * Reads an npm-generated `.cmd` shim and returns what it launches, without going through cmd.exe: the
+ * target `.exe`, or `node <target.js>` (node from the shim's own dir, else PATH). null if it can't be parsed
+ * or looks unsafe. A duplicate of the parser in apps/runner (setup can't import it).
+ */
+export function parseNpmShim(deps: CheckDeps, shimPath: string): { cmd: string; prefix: string[] } | null {
+  const p = pathFor('win32');
+  let text: string;
+  try {
+    text = deps.readFile(shimPath);
+  } catch {
+    return null;
+  }
+  const dir = p.dirname(shimPath);
+  const re = /"%(?:dp0%|~dp0)[\\/]+([^"%\r\n]+)"/gi;
+  let target: string | null = null;
+  for (const m of text.matchAll(re)) {
+    const rel = m[1] as string;
+    if (/(^|[\\/])node\.exe$/i.test(rel)) continue;
+    target = p.resolve(dir, rel);
+    break;
+  }
+  if (!target) return null;
+  if (/\.exe$/i.test(target)) return { cmd: target, prefix: [] };
+  if (!/\.(c|m)?js$/i.test(target)) return null;
+  const local = p.join(dir, 'node.exe');
+  const node = deps.exists(local) ? local : findOnWindowsPath(deps, 'node').find((c) => /\.exe$/i.test(c));
+  return node ? { cmd: node, prefix: [target] } : null;
+}
+
+/** Runs `claude <args>`; a Windows `.cmd` shim is parsed and its target run directly (never `cmd.exe /c <path>`). */
+export function runClaude(deps: CheckDeps, claudePath: string, args: string[], timeoutMs = 15_000): ExecResult {
+  if (deps.platform === 'win32' && /\.(cmd|bat)$/i.test(claudePath)) {
+    const shim = parseNpmShim(deps, claudePath);
+    if (!shim) {
+      return { status: null, stdout: '', stderr: '', error: new Error(`could not read the npm shim ${claudePath}; reinstall Claude Code with the native installer`) };
+    }
+    return deps.exec(shim.cmd, [...shim.prefix, ...args], { timeoutMs });
+  }
+  return deps.exec(claudePath, args, { timeoutMs });
+}
+
+/** `command -v claude` on POSIX, PATH order (absolute entries only) on win32, then the native install path. */
 export function findClaude(deps: CheckDeps): string | null {
   const p = pathFor(deps.platform);
   if (deps.platform === 'win32') {
-    const res = deps.exec('where.exe', ['claude']);
-    if (!res.error && res.status === 0) {
-      const lines = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-      // Prefer a real .exe over an npm .cmd shim.
-      const found = lines.find((l) => /\.exe$/i.test(l)) ?? lines[0];
-      if (found) return found;
-    }
+    const lines = findOnWindowsPath(deps, 'claude');
+    // Prefer a real .exe over an npm .cmd shim.
+    const found = lines.find((l) => /\.exe$/i.test(l)) ?? lines[0];
+    if (found) return found;
     const native = p.join(deps.env.USERPROFILE || deps.homedir, '.local', 'bin', 'claude.exe');
     return deps.exists(native) ? native : null;
   }
-  const res = deps.exec('sh', ['-c', 'command -v claude']);
+  const res = deps.exec('sh', ['-c', 'command -v claude'], { timeoutMs: 5000 });
   if (!res.error && res.status === 0 && firstLine(res.stdout)) return firstLine(res.stdout);
   const native = p.join(deps.homedir, '.local', 'bin', 'claude');
   return deps.exists(native) ? native : null;
@@ -185,9 +253,9 @@ export function checkGitBash(deps: CheckDeps): SetupCheck | null {
   ].filter((c): c is string => Boolean(c));
   const hit = candidates.find((c) => deps.exists(c));
   if (hit) return { id: 'git_bash', title, status: 'ok', required: false, detail: `Git Bash found at ${hit}` };
-  const where = deps.exec('where.exe', ['git']);
-  if (!where.error && where.status === 0 && firstLine(where.stdout)) {
-    return { id: 'git_bash', title, status: 'ok', required: false, detail: `git found at ${firstLine(where.stdout)}` };
+  const git = findOnWindowsPath(deps, 'git')[0];
+  if (git) {
+    return { id: 'git_bash', title, status: 'ok', required: false, detail: `git found at ${git}` };
   }
   return {
     id: 'git_bash',
@@ -317,6 +385,20 @@ export function checkHooks(deps: CheckDeps, settingsPath: string): SetupCheck {
       detail: `Hooks are only partly installed (${kindLabel} kind, ${sum.events} of ${HOOK_EVENTS.length} events).`,
       fix: installHooks,
     };
+  }
+  if (sum.kind === 'node' && sum.sample?.command) {
+    const node = sum.sample.command;
+    const runnable = deps.isExecutable ? deps.isExecutable(node) : deps.exists(node);
+    if (!runnable) {
+      return {
+        id: 'hooks',
+        title,
+        status: 'fail',
+        required: false,
+        detail: `The hook runs ${node}, which does not exist or is not executable, so no events reach the office. Reinstall the hooks to register a working node.`,
+        fix: installHooks,
+      };
+    }
   }
   return { id: 'hooks', title, status: 'ok', required: false, detail: `Hooks are installed for all ${HOOK_EVENTS.length} events (${kindLabel} kind).` };
 }

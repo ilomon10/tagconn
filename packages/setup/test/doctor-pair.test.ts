@@ -28,12 +28,13 @@ function recorder() {
 }
 
 const WIN_ENV = { USERDOMAIN: 'PC', USERNAME: 'ilo' };
-const aclOk: ExecFn = (_cmd, args) => ({ status: 0, stdout: args.includes('/grant:r') ? '' : `${args[0]} PC\\ilo:(F)\r\n`, stderr: '' });
-const aclOpen: ExecFn = (_cmd, args) => ({
-  status: 0,
-  stdout: args.includes('/grant:r') ? '' : `${args[0]} PC\\ilo:(F)\r\n    BUILTIN\\Users:(I)(RX)\r\n`,
-  stderr: '',
-});
+const whoami = { status: 0, stdout: '"PC\\ilo","S-1-5-21-1-2-3-1001"\r\n', stderr: '' };
+const aclOk: ExecFn = (cmd, args) =>
+  /whoami/.test(cmd) ? whoami : { status: 0, stdout: args.includes('/grant:r') ? '' : `${args[0]} PC\\ilo:(F)\r\n`, stderr: '' };
+const aclOpen: ExecFn = (cmd, args) =>
+  /whoami/.test(cmd)
+    ? whoami
+    : { status: 0, stdout: args.includes('/grant:r') ? '' : `${args[0]} PC\\ilo:(F)\r\n    BUILTIN\\Users:(I)(RX)\r\n`, stderr: '' };
 
 describe('doctor on win32', () => {
   it('reports systemd and bwrap as not applicable, never as warnings or failures', () => {

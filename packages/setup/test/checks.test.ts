@@ -76,17 +76,44 @@ describe('claude_cli / claude_login', () => {
     expect(c.detail).toContain('older than 2.0.0');
   });
 
-  it('win32: where.exe prefers .exe over an npm .cmd shim; a .cmd shim runs through cmd.exe', () => {
-    const win = { platform: 'win32' as const, homedir: 'C:\\Users\\u', env: { USERPROFILE: 'C:\\Users\\u' } };
-    const both = deps({ ...win, table: { 'where.exe claude': { stdout: 'C:\\npm\\claude.cmd\r\nC:\\bin\\claude.exe\r\n' }, 'C:\\bin\\claude.exe --version': { stdout: '2.1.0' } } });
+  const winPath = { platform: 'win32' as const, homedir: 'C:\\Users\\u', env: { USERPROFILE: 'C:\\Users\\u', Path: 'relative\\bin;.;C:\\npm;C:\\bin' } };
+
+  it('win32: searches PATH in order, ignoring relative entries; prefers a real .exe over an npm .cmd shim', () => {
+    const files = { 'C:\\npm\\claude.cmd': '', 'C:\\bin\\claude.exe': '', 'relative\\bin\\claude.exe': '', '.\\claude.exe': '' };
+    const both = deps({ ...winPath, files });
     expect(findClaude(both.d)).toBe('C:\\bin\\claude.exe');
-    const shim = deps({ ...win, table: { 'where.exe claude': { stdout: 'C:\\npm\\claude.cmd\r\n' }, 'cmd.exe /d /c C:\\npm\\claude.cmd --version': { stdout: '2.1.0' } } });
-    expect(checkClaudeCli(shim.d).status).toBe('ok');
+    expect(both.calls).toEqual([]); // no where.exe (it searches the cwd first)
+    const shimOnly = deps({ ...winPath, files: { 'C:\\npm\\claude.cmd': '', 'relative\\bin\\claude.exe': '' } });
+    expect(findClaude(shimOnly.d)).toBe('C:\\npm\\claude.cmd');
   });
 
-  it('win32: falls back to %USERPROFILE%\\.local\\bin\\claude.exe when where.exe finds nothing', () => {
+  it('win32: an npm .cmd shim is parsed and its target run directly, never through cmd.exe', () => {
+    const shim = [
+      '@ECHO off',
+      'IF EXIST "%dp0%\\node.exe" (SET "_prog=%dp0%\\node.exe") ELSE (SET "_prog=node")',
+      'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*',
+    ].join('\r\n');
+    const files = { 'C:\\npm\\claude.cmd': shim, 'C:\\npm\\node.exe': '' };
+    const { d, calls } = deps({
+      ...winPath,
+      files,
+      table: { 'C:\\npm\\node.exe C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js --version': { stdout: '2.1.0' } },
+    });
+    d.env = { ...d.env, Path: 'C:\\npm' };
+    expect(checkClaudeCli(d).status).toBe('ok');
+    expect(calls.some((c) => /cmd\.exe/i.test(c[0]))).toBe(false);
+  });
+
+  it('win32: an unparsable .cmd shim is not run at all', () => {
+    const { d, calls } = deps({ ...winPath, files: { 'C:\\npm\\claude.cmd': 'echo hi & calc.exe' } });
+    d.env = { ...d.env, Path: 'C:\\npm' };
+    expect(checkClaudeCli(d).status).toBe('fail');
+    expect(calls).toEqual([]);
+  });
+
+  it('win32: falls back to %USERPROFILE%\\.local\\bin\\claude.exe when PATH has nothing', () => {
     const native = 'C:\\Users\\u\\.local\\bin\\claude.exe';
-    const { d } = deps({ platform: 'win32', homedir: 'C:\\Users\\u', env: { USERPROFILE: 'C:\\Users\\u' }, files: { [native]: '' }, table: { 'where.exe claude': { status: 1 } } });
+    const { d } = deps({ platform: 'win32', homedir: 'C:\\Users\\u', env: { USERPROFILE: 'C:\\Users\\u' }, files: { [native]: '' } });
     expect(findClaude(d)).toBe(native);
   });
 
@@ -110,7 +137,7 @@ describe('git_bash / runner_platform (win32 only)', () => {
     const win = { platform: 'win32' as const, homedir: 'C:\\Users\\u', env: { ProgramFiles: 'C:\\Program Files' } };
     const ok = checkGitBash(deps({ ...win, files: { 'C:\\Program Files\\Git\\bin\\bash.exe': '' } }).d);
     expect(ok?.status).toBe('ok');
-    const missing = checkGitBash(deps({ ...win, table: { 'where.exe git': { status: 1 } } }).d);
+    const missing = checkGitBash(deps({ ...win }).d);
     expect(missing).toMatchObject({ status: 'warn', required: false, fix: { action: 'open_url' } });
   });
 
@@ -189,12 +216,17 @@ describe('claude_settings / hooks', () => {
     expect(checkHooks(deps().d, path)).toMatchObject({ status: 'warn', fix: { action: 'install_hooks' } });
     const node = {};
     installHooks(node, { kind: 'node', nodePath: '/n', scriptPath: '/cfg/office-hook.mjs' });
-    const c = checkHooks(deps({ files: { [path]: JSON.stringify(node) } }).d, path);
+    const c = checkHooks(deps({ files: { [path]: JSON.stringify(node), '/n': '' }, isExecutable: () => true }).d, path);
     expect(c.status).toBe('ok');
     expect(c.detail).toContain('node kind');
     const sh = {};
     installHooks(sh, { kind: 'sh', scriptPath: '/a/tagconn/office-hook.sh', confPath: '/a/tagconn/curl.conf', isDefaultConfigDir: true });
     expect(checkHooks(deps({ files: { [path]: JSON.stringify(sh) } }).d, path).detail).toContain('sh kind');
+    const gone = checkHooks(deps({ files: { [path]: JSON.stringify(node) }, exists: (p) => p === path }).d, path);
+    expect(gone).toMatchObject({ status: 'fail', fix: { action: 'install_hooks' } });
+    expect(gone.detail).toContain('/n');
+    const noExec = checkHooks(deps({ files: { [path]: JSON.stringify(node), '/n': '' }, isExecutable: () => false }).d, path);
+    expect(noExec.status).toBe('fail');
     const partial = JSON.parse(JSON.stringify(node));
     delete partial.hooks[HOOK_EVENTS[0] as string];
     expect(checkHooks(deps({ files: { [path]: JSON.stringify(partial) } }).d, path)).toMatchObject({ status: 'warn', fix: { action: 'install_hooks' } });
@@ -225,7 +257,7 @@ describe('runSetupChecks', () => {
   });
 
   it('includes git_bash and runner_platform on win32', async () => {
-    const { d } = deps({ platform: 'win32', homedir: 'C:\\Users\\u', table: { 'where.exe claude': { status: 1 }, 'where.exe git': { status: 1 } } });
+    const { d } = deps({ platform: 'win32', homedir: 'C:\\Users\\u', });
     const out = await runSetupChecks({ claudeDir: 'C:\\Users\\u\\.claude', configDir: 'C:\\c', dataDir: 'C:\\d', port: 4317 }, d);
     expect(out.map((c) => c.id)).toEqual(expect.arrayContaining(['git_bash', 'runner_platform']));
   });

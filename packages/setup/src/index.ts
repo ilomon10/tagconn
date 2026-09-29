@@ -10,6 +10,7 @@ export * from './hookConfig.ts';
 export * from './hookFiles.ts';
 export * from './runnerConfig.ts';
 export * from './templates.ts';
+export * from './nodeRuntime.ts';
 export * from './install.ts';
 export * from './checks.ts';
 export * from './doctor.ts';

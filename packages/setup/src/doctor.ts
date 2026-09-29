@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { defaultCheckDeps, findClaude } from './checks.ts';
+import { defaultCheckDeps, findClaude, runClaude } from './checks.ts';
 import {
   HOOK_EVENTS,
   hookKindOf,
@@ -63,14 +63,12 @@ function claudeInvoker(d: DoctorEnv): (args: string[]) => ExecResult {
     const deps = { ...defaultCheckDeps(), platform: d.platform, env: d.env, exec: d.exec };
     const path = findClaude(deps);
     if (!path) return { status: null, stdout: '', stderr: '', error: new Error('claude not found') };
-    return /\.(cmd|bat)$/i.test(path)
-      ? d.exec('cmd.exe', ['/d', '/c', path, ...args], { timeoutMs: 5000 })
-      : d.exec(path, args, { timeoutMs: 5000 });
+    return runClaude(deps, path, args, 5000);
   };
 }
 
 export function checkCurl(d: DoctorEnv): void {
-  const res = d.exec('curl', ['--version']);
+  const res = d.exec('curl', ['--version'], { timeoutMs: 5000 });
   if (res.status === 0) {
     d.ok('curl is installed');
   } else {
@@ -236,7 +234,9 @@ export function checkSettingsHooks(d: DoctorEnv, claudeDir: string): void {
     if (!scriptPath || !existsSync(scriptPath)) {
       d.fail(`hook command points at a script that does not exist (${scriptPath ?? 'unknown'})`, 'Re-run `pnpm office:install --hook node`.');
     } else if (!existsSync(sample.command)) {
-      d.fail(`hook command points at a node executable that does not exist (${sample.command})`, 'Re-run `pnpm office:install --hook node`.');
+      d.fail(`hook command points at a node executable that does not exist (${sample.command})`, 'Re-run `pnpm office:install --hook node` to reinstall the hooks with a working node.');
+    } else if (d.platform !== 'win32' && (statSync(sample.command).mode & 0o111) === 0) {
+      d.fail(`hook command points at a node that is not executable (${sample.command})`, 'Re-run `pnpm office:install --hook node` to reinstall the hooks with a working node.');
     } else {
       d.ok(`hook command points at an existing script (${scriptPath}) and node (${sample.command})`);
     }
@@ -379,7 +379,7 @@ export function checkDockerCompose(d: DoctorEnv): void {
     d.warn('docker-compose.yml not found', 'Optional check skipped.');
     return;
   }
-  const res = d.exec('docker', ['compose', 'ps', '--status', 'running', '--format', 'json'], { cwd: d.repoRoot });
+  const res = d.exec('docker', ['compose', 'ps', '--status', 'running', '--format', 'json'], { cwd: d.repoRoot, timeoutMs: 15_000 });
   if (res.error || res.status !== 0) {
     d.warn('docker compose not running (or docker not installed)', 'Optional: run `pnpm office:up` to start the containers.');
     return;
@@ -478,7 +478,7 @@ export function checkSystemdScope(d: DoctorEnv): void {
     );
     return;
   }
-  const res = d.exec('systemd-run', ['--user', '--scope', '--quiet', '--', 'true']);
+  const res = d.exec('systemd-run', ['--user', '--scope', '--quiet', '--', 'true'], { timeoutMs: 10_000 });
   if (!res.error && res.status === 0) {
     d.ok('systemd-run --user --scope works (quest process containment available)');
   } else {
@@ -495,7 +495,7 @@ export function checkBwrap(d: DoctorEnv): void {
     d.na('bwrap', 'Not applicable on Windows: the Receptionist runs with a read-only tool set and no filesystem sandbox (decision #28).');
     return;
   }
-  const res = d.exec('bwrap', ['--version']);
+  const res = d.exec('bwrap', ['--version'], { timeoutMs: 5000 });
   if (!res.error && res.status === 0) {
     d.ok(`bwrap available (${(res.stdout || '').trim() || 'version unknown'}) - Receptionist sandboxing possible`);
   } else {
