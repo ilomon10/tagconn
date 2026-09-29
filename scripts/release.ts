@@ -61,6 +61,13 @@ function packageJsonPaths(): string[] {
   return paths;
 }
 
+/** Non-package.json files that carry the app version (the desktop app), with how to rewrite each. */
+export const EXTRA_VERSION_FILES: { path: string; bump: (text: string, version: string) => string }[] = [
+  { path: 'apps/desktop/src-tauri/tauri.conf.json', bump: (t, v) => t.replace(/("version"\s*:\s*")[^"]*(")/, `$1${v}$2`) },
+  { path: 'apps/desktop/src-tauri/Cargo.toml', bump: (t, v) => t.replace(/^(version\s*=\s*")[^"]*(")/m, `$1${v}$2`) },
+  { path: 'apps/desktop/src-tauri/Cargo.lock', bump: (t, v) => t.replace(/(name = "tagconn-desktop"\nversion = ")[^"]*(")/, `$1${v}$2`) },
+];
+
 function git(args: string[]): string {
   return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim();
 }
@@ -86,6 +93,7 @@ export function main(argv: string[]): void {
   console.log(`release v${rootPkg.version} -> v${version}${dryRun ? ' (dry run)' : ''}`);
   if (dryRun) {
     files.forEach((f) => console.log(`  would bump ${f.slice(ROOT.length + 1)}`));
+    EXTRA_VERSION_FILES.filter((f) => existsSync(join(ROOT, f.path))).forEach((f) => console.log(`  would bump ${f.path}`));
     return;
   }
 
@@ -93,8 +101,13 @@ export function main(argv: string[]): void {
     const text = readFileSync(file, 'utf8');
     writeFileSync(file, text.replace(/("version"\s*:\s*")[^"]*(")/, `$1${version}$2`));
   }
+  const extra = EXTRA_VERSION_FILES.filter((f) => existsSync(join(ROOT, f.path)));
+  for (const f of extra) {
+    const abs = join(ROOT, f.path);
+    writeFileSync(abs, f.bump(readFileSync(abs, 'utf8'), version));
+  }
   writeFileSync(changelogPath, changelog);
-  git(['add', 'CHANGELOG.md', ...files.map((f) => f.slice(ROOT.length + 1))]);
+  git(['add', 'CHANGELOG.md', ...files.map((f) => f.slice(ROOT.length + 1)), ...extra.map((f) => f.path)]);
   git(['commit', '-m', `chore(release): v${version}`]);
   git(['tag', '-a', `v${version}`, '-m', `v${version}`]);
   console.log(`tagged v${version}. Publish with: git push --follow-tags`);

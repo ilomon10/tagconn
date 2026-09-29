@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cutChangelog, nextVersion } from '../release.ts';
+import { cutChangelog, EXTRA_VERSION_FILES, nextVersion } from '../release.ts';
 
 describe('nextVersion', () => {
   it('bumps patch, minor and major', () => {
@@ -37,3 +37,17 @@ describe('cutChangelog', () => {
     expect(() => cutChangelog(empty, '0.2.0', '2026-02-02', repo)).toThrow(/empty/);
   });
 });
+
+describe('desktop version files', () => {
+  const bump = (path: string, text: string) => EXTRA_VERSION_FILES.find((f) => f.path.endsWith(path))!.bump(text, '1.2.3');
+  it('bumps tauri.conf.json, Cargo.toml [package] and the Cargo.lock entry only', () => {
+    expect(bump('tauri.conf.json', '{\n  "productName": "tagconn",\n  "version": "0.4.1"\n}')).toContain('"version": "1.2.3"');
+    const toml = bump('Cargo.toml', '[package]\nname = "tagconn-desktop"\nversion = "0.4.1"\n\n[dependencies]\nserde = { version = "1" }\n');
+    expect(toml).toContain('version = "1.2.3"');
+    expect(toml).toContain('serde = { version = "1" }');
+    const lock = bump('Cargo.lock', '[[package]]\nname = "serde"\nversion = "1.0.0"\n\n[[package]]\nname = "tagconn-desktop"\nversion = "0.4.1"\n');
+    expect(lock).toContain('name = "serde"\nversion = "1.0.0"');
+    expect(lock).toContain('name = "tagconn-desktop"\nversion = "1.2.3"');
+  });
+});
+
