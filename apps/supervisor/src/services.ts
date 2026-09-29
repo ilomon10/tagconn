@@ -1,0 +1,132 @@
+import { existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { defaultCheckDeps, findNextFreePort, type CheckDeps } from '@tagconn/setup';
+import { corsOriginsFor, officeUrl, readJsonField, type ConfigStore } from './config.ts';
+import { RpcFailure } from './errors.ts';
+import type { LogHub } from './logHub.ts';
+import type { Bundle, Environment } from './paths.ts';
+import type { ServiceDefinition } from './service.ts';
+import type { SetupPaths } from '@tagconn/setup';
+
+export interface DefinitionDeps {
+  env: Environment;
+  paths: SetupPaths;
+  bundle: Bundle;
+  config: ConfigStore;
+  logs: LogHub;
+  checkDeps?: CheckDeps;
+}
+
+/** Env vars the children must not inherit: the server reads OFFICE_*, and no service ever needs an API key. */
+const STRIPPED = /^(OFFICE_|ANTHROPIC_)/;
+
+export function cleanEnv(env: Environment): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) if (v !== undefined && !STRIPPED.test(k)) out[k] = v;
+  return out;
+}
+
+export const dataDirOf = (deps: Pick<DefinitionDeps, 'config' | 'paths'>): string => deps.config.get().dataDir ?? deps.paths.data;
+
+function requireFile(path: string, what: string): void {
+  if (!existsSync(path)) {
+    throw new RpcFailure('spawn_failed', `The ${what} is missing (${path}).`, 'This install looks incomplete or corrupt: reinstall the app.');
+  }
+}
+
+/** The tokens setup wrote (hook.json, runner.json). Both are registered as log secrets. */
+export function readTokens(deps: DefinitionDeps): { hook?: string; runner?: string } {
+  const hook = readJsonField(join(deps.paths.config, 'hook.json'), 'token');
+  const runner = readJsonField(join(deps.paths.config, 'runner.json'), 'token');
+  deps.logs.addSecret(hook);
+  deps.logs.addSecret(runner);
+  return { hook, runner };
+}
+
+/** Env for the native server (design doc: OFFICE_SERVER__PORT, WEB_DIR, STORAGE__DB_PATH, tokens, runner scope). */
+export function serverEnv(deps: DefinitionDeps): NodeJS.ProcessEnv {
+  const cfg = deps.config.get();
+  const tokens = readTokens(deps);
+  const runnerReady = Boolean(tokens.runner);
+  return {
+    ...cleanEnv(deps.env),
+    OFFICE_SERVER__HOST: '127.0.0.1',
+    OFFICE_SERVER__PORT: String(cfg.serverPort),
+    OFFICE_SERVER__CORS_ORIGINS: JSON.stringify(corsOriginsFor(cfg.serverPort)),
+    OFFICE_SERVER__WEB_DIR: deps.bundle.webDir,
+    OFFICE_STORAGE__DB_PATH: join(dataDirOf(deps), 'office.db'),
+    OFFICE_PATHS__CLAUDE_DIR: deps.paths.claudeDir,
+    OFFICE_PATHS__AGENTS_DIR: join(deps.paths.claudeDir, 'agents'),
+    OFFICE_PATHS__PROJECTS_DIR: join(deps.paths.claudeDir, 'projects'),
+    OFFICE_RUNNER__ENABLED: String(runnerReady),
+    OFFICE_RUNNER__ALLOWED_PROJECT_DIRS: JSON.stringify(cfg.allowedProjectDirs),
+    ...(tokens.hook ? { OFFICE_HOOK_TOKEN: tokens.hook } : {}),
+    ...(tokens.runner ? { OFFICE_RUNNER__TOKEN: tokens.runner } : {}),
+  };
+}
+
+export function serverDefinition(deps: DefinitionDeps): ServiceDefinition {
+  const port = () => deps.config.get().serverPort;
+  return {
+    id: 'server',
+    url: () => officeUrl(port()),
+    healthUrl: () => `${officeUrl(port())}/api/health`,
+    crashHint:
+      'If the log mentions better-sqlite3 the install is corrupt: reinstall the app. If it mentions the port, pick another one in Settings.',
+    async prepare() {
+      requireFile(deps.bundle.serverJs, 'server bundle');
+      const cfg = deps.config.get();
+      const checkDeps = deps.checkDeps ?? defaultCheckDeps();
+      const bind = await checkDeps.bindPort(cfg.serverPort);
+      if (!bind.ok) {
+        const next = await findNextFreePort(checkDeps, cfg.serverPort);
+        throw new RpcFailure(
+          'port_in_use',
+          `Port ${cfg.serverPort} is not available (${bind.code}).`,
+          next ? `Close the program using it, or use port ${next} in Settings.` : 'Close the program using it, or pick another port in Settings.',
+        );
+      }
+      const dataDir = dataDirOf(deps);
+      try {
+        mkdirSync(dataDir, { recursive: true });
+      } catch (err) {
+        throw new RpcFailure('spawn_failed', `Cannot create the data folder ${dataDir}: ${(err as Error).message}`, 'Choose another data folder in Settings.');
+      }
+      return { command: process.execPath, args: [deps.bundle.serverJs], env: serverEnv(deps), cwd: dataDir, marker: deps.bundle.serverJs };
+    },
+  };
+}
+
+export function runnerDefinition(deps: DefinitionDeps): ServiceDefinition {
+  return {
+    id: 'runner',
+    crashHint: 'Check that the Claude CLI is installed and logged in (Setup check), then press Start. Watching sessions works without the runner.',
+    async prepare() {
+      requireFile(deps.bundle.runnerJs, 'runner bundle');
+      const runnerJson = join(deps.paths.config, 'runner.json');
+      if (!existsSync(runnerJson)) {
+        throw new RpcFailure('spawn_failed', 'The runner is not configured yet (runner.json is missing).', 'Run the setup wizard and install the hooks first; that creates it.');
+      }
+      readTokens(deps);
+      // The runner has its own env hygiene for the claude child; it only needs the OS env (PATH, HOME, XDG_*).
+      const env = { ...cleanEnv(deps.env) };
+      return { command: process.execPath, args: [deps.bundle.runnerJs, '--config', runnerJson], env, cwd: deps.paths.state, marker: deps.bundle.runnerJs };
+    },
+  };
+}
+
+/** Env for `docker compose` (${...} substitutions in the bundled compose file). */
+export function dockerEnv(deps: DefinitionDeps, version: string): NodeJS.ProcessEnv {
+  const cfg = deps.config.get();
+  const tokens = readTokens(deps);
+  return {
+    OFFICE_PORT: String(cfg.serverPort),
+    TAGCONN_VERSION: version,
+    TAGCONN_CLAUDE_DIR: deps.paths.claudeDir,
+    OFFICE_HOOK_TOKEN: tokens.hook ?? '',
+    OFFICE_RUNNER__TOKEN: tokens.runner ?? '',
+    OFFICE_RUNNER__ENABLED: String(Boolean(tokens.runner)),
+    OFFICE_RUNNER__ALLOWED_PROJECT_DIRS: JSON.stringify(cfg.allowedProjectDirs),
+    OFFICE_SERVER__CORS_ORIGINS: JSON.stringify(corsOriginsFor(cfg.serverPort)),
+  };
+}

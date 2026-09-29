@@ -1,0 +1,23 @@
+{
+  "name": "@tagconn/supervisor",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "description": "Node sidecar of tagconn Desktop: JSON-RPC over stdio, setup, and the server/runner/docker service manager.",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsup",
+    "start": "node dist/supervisor.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tagconn/setup": "workspace:*",
+    "@tagconn/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@tagconn/tsconfig": "workspace:*",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.0"
+  }
+}

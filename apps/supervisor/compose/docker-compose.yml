@@ -1,0 +1,32 @@
+# Docker mode of tagconn Desktop: published images instead of the native server.
+# The supervisor runs `docker compose -p tagconn -f <this file> up -d` with these variables set:
+#   OFFICE_PORT, TAGCONN_VERSION, TAGCONN_CLAUDE_DIR, OFFICE_HOOK_TOKEN, OFFICE_RUNNER__*, OFFICE_SERVER__CORS_ORIGINS
+services:
+  server:
+    image: ghcr.io/ilomon10/tagconn-server:${TAGCONN_VERSION:-latest}
+    environment:
+      # Container-internal bind address only; the published port below stays on 127.0.0.1 of the host.
+      OFFICE_SERVER__HOST: 0.0.0.0
+      OFFICE_PATHS__AGENTS_DIR: /claude/agents
+      OFFICE_PATHS__PROJECTS_DIR: /claude/projects
+      OFFICE_HOOK_TOKEN: ${OFFICE_HOOK_TOKEN:-}
+      OFFICE_RUNNER__ENABLED: ${OFFICE_RUNNER__ENABLED:-false}
+      OFFICE_RUNNER__TOKEN: ${OFFICE_RUNNER__TOKEN:-}
+      OFFICE_RUNNER__ALLOWED_PROJECT_DIRS: ${OFFICE_RUNNER__ALLOWED_PROJECT_DIRS:-[]}
+      OFFICE_SERVER__CORS_ORIGINS: ${OFFICE_SERVER__CORS_ORIGINS:-}
+    volumes:
+      - office-data:/data
+      - ${TAGCONN_CLAUDE_DIR}/agents:/claude/agents
+      - ${TAGCONN_CLAUDE_DIR}/projects:/claude/projects:ro
+    ports:
+      - "127.0.0.1:${OFFICE_PORT:-4317}:4317"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4317/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  office-data:
