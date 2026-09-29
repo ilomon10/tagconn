@@ -43,9 +43,14 @@ describe('N3: PATH entries under the user dirs are edit-denied', () => {
       expect(bare, d).toEqual(expect.arrayContaining(forms('Write', `${HOME}\\${d}\\**`)));
     }
   });
-  it('ignores system, foreign-drive, relative and whole-profile entries', () => {
-    expect(rules.some((r) => r.includes('System32') || r.includes('D:/tools') || r.includes('relative'))).toBe(false);
-    expect(rules).not.toContain('Edit(//C:/Users/Ann/**)');
+  it('L1: denies edits in EVERY absolute PATH entry (machine PATH, other drives), skips relative entries', () => {
+    for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
+      expect(rules, tool).toEqual(expect.arrayContaining(forms(tool, 'C:\\Windows\\System32\\**')));
+      expect(rules, tool).toEqual(expect.arrayContaining([`${tool}(//D:/tools/**)`, `${tool}(D:/tools/**)`]));
+    }
+    expect(rules.some((r) => r.includes('relative'))).toBe(false);
+    // read stays allowed on PATH entries
+    expect(rules).not.toContain('Read(//C:/Windows/System32/**)');
   });
 });
 
@@ -119,12 +124,22 @@ describe('windowsSensitiveDenyRules', () => {
 describe('H1: tagconn own dirs', () => {
   it('derives the config dir, state dir, %LOCALAPPDATA%\\tagconn and %APPDATA%\\tagconn', () => {
     const dirs = tagconnOwnDirs(ENV, HOME, { configPath: 'D:\\cfg\\runner.json', stateDir: 'E:\\state' });
-    expect(dirs).toEqual([`${HOME}\\AppData\\Local\\tagconn`, `${HOME}\\AppData\\Roaming\\tagconn`, 'D:\\cfg', 'E:\\state']);
+    expect(dirs).toEqual([
+      `${HOME}\\AppData\\Local\\tagconn`,
+      `${HOME}\\AppData\\Roaming\\tagconn`,
+      `${HOME}\\AppData\\Local\\io.github.ilomon10.tagconn`,
+      `${HOME}\\AppData\\Roaming\\io.github.ilomon10.tagconn`,
+      'D:\\cfg',
+      'E:\\state',
+    ]);
     const rules = windowsTagconnDirDenyRules(dirs);
     for (const tool of ['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
       expect(rules).toContain(`${tool}(//D:/cfg/**)`);
       expect(rules).toContain(`${tool}(d:/cfg/**)`);
       expect(rules).toContain(`${tool}(C:/Users/Ann/AppData/Local/tagconn/**)`);
+      // L3: the desktop webview profile (EBWebView lives below it)
+      expect(rules).toContain(`${tool}(C:/Users/Ann/AppData/Local/io.github.ilomon10.tagconn/**)`);
+      expect(rules).toContain(`${tool}(C:/Users/Ann/AppData/Roaming/io.github.ilomon10.tagconn/**)`);
     }
   });
 

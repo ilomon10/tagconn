@@ -648,6 +648,12 @@ export interface RunsClientToServerEvents {
  * history/plans concern, not a "quest touching a secret" concern); a host operator who wants those too
  * can add them via `runner.json` `questToolPolicy.alwaysDeny`.
  */
+/**
+ * The desktop app's bundle identifier (apps/desktop/src-tauri/tauri.conf.json `identifier`; a test keeps them equal).
+ * Its webview profile dirs (cookies, local storage) are denied to quests and the Receptionist.
+ */
+export const DESKTOP_APP_IDENTIFIER = 'io.github.ilomon10.tagconn';
+
 export const QUEST_DENY_READ_GLOBS = [
   '~/.ssh/**',
   '~/.gnupg/**',
@@ -664,6 +670,9 @@ export const QUEST_DENY_READ_GLOBS = [
   '~/.config/tagconn/**',
   // N11: the desktop data dir (office.db) and the stable hook node.
   '~/.local/share/tagconn/**',
+  // L3: the desktop app's webview profile dirs (DESKTOP_APP_IDENTIFIER; a literal so the list stays statically typed).
+  '~/.local/share/io.github.ilomon10.tagconn/**',
+  '~/.config/io.github.ilomon10.tagconn/**',
   '~/.claude/.credentials.json',
   '~/.claude.json',
   '**/.env',
@@ -721,6 +730,14 @@ export const DEFAULT_QUEST_ALWAYS_DENY = [
   'Write(~/.local/share/tagconn/**)',
   'MultiEdit(~/.local/share/tagconn/**)',
   'NotebookEdit(~/.local/share/tagconn/**)',
+  'Edit(~/.local/share/io.github.ilomon10.tagconn/**)',
+  'Write(~/.local/share/io.github.ilomon10.tagconn/**)',
+  'MultiEdit(~/.local/share/io.github.ilomon10.tagconn/**)',
+  'NotebookEdit(~/.local/share/io.github.ilomon10.tagconn/**)',
+  'Edit(~/.config/io.github.ilomon10.tagconn/**)',
+  'Write(~/.config/io.github.ilomon10.tagconn/**)',
+  'MultiEdit(~/.config/io.github.ilomon10.tagconn/**)',
+  'NotebookEdit(~/.config/io.github.ilomon10.tagconn/**)',
   'Edit(~/.bashrc)',
   'Write(~/.bashrc)',
   'Edit(~/.zshrc)',

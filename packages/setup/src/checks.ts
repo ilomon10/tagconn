@@ -2,7 +2,7 @@ import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, wri
 import { createServer } from 'node:net';
 import { homedir as osHomedir } from 'node:os';
 import { pathFor } from './paths.ts';
-import { defaultExec, type ExecFn, type ExecResult } from './secrets.ts';
+import { defaultExec, systemRootOf, type ExecFn, type ExecResult } from './secrets.ts';
 import { HOOK_EVENTS, SettingsParseError, summarizeHooks } from './claudeSettings.ts';
 import type { SetupCheck } from './types.ts';
 
@@ -24,6 +24,8 @@ export interface CheckDeps {
   readFile: (path: string) => string;
   /** True if `path` exists and can be executed (win32: exists). Default: exists. */
   isExecutable?: (path: string) => boolean;
+  /** This process's own node (the runner's choice for an npm shim's cli.js). Default: process.execPath. */
+  nodeExecPath?: string;
 }
 
 export function defaultCheckDeps(): CheckDeps {
@@ -47,6 +49,7 @@ export function defaultCheckDeps(): CheckDeps {
     },
     assertWritable: (path) => accessSync(path, constants.W_OK),
     readFile: (path) => readFileSync(path, 'utf8'),
+    nodeExecPath: process.execPath,
     isExecutable: (path) => {
       try {
         accessSync(path, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
@@ -101,10 +104,17 @@ export function findOnWindowsPath(deps: CheckDeps, name: string): string[] {
   return hits;
 }
 
+/** A `%dp0%\...\target` reference inside an npm-generated `.cmd` shim (identical to apps/runner platform.ts SHIM_TARGET_RE). */
+const SHIM_TARGET_RE = /"%dp0%[\\/]+([^"%]+\.(?:exe|js|mjs|cjs))"/gi;
+
+/** The only shim targets accepted, relative to the shim's dir (identical to apps/runner platform.ts SHIM_ALLOWED_REL). */
+const SHIM_ALLOWED_REL = ['node_modules\\@anthropic-ai\\claude-code\\cli.js', 'node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe'];
+
 /**
  * Reads an npm-generated `.cmd` shim and returns what it launches, without going through cmd.exe: the
- * target `.exe`, or `node <target.js>` (node from the shim's own dir, else PATH). null if it can't be parsed
- * or looks unsafe. A duplicate of the parser in apps/runner (setup can't import it).
+ * target `.exe`, or `node <target.js>` (node.exe from the shim's own dir, else this process's own node, like
+ * the runner). null if it can't be parsed or looks unsafe. MUST match parseCmdShim in apps/runner/src/platform.ts
+ * exactly (setup can't import it); test/shimFixtures.ts is checked against both.
  */
 export function parseNpmShim(deps: CheckDeps, shimPath: string): { cmd: string; prefix: string[] } | null {
   const p = pathFor('win32');
@@ -115,27 +125,19 @@ export function parseNpmShim(deps: CheckDeps, shimPath: string): { cmd: string; 
     return null;
   }
   const dir = p.dirname(shimPath);
-  const re = /"%(?:dp0%|~dp0)[\\/]+([^"%\r\n]+)"/gi;
-  let target: string | null = null;
-  for (const m of text.matchAll(re)) {
-    const rel = m[1] as string;
-    if (/(^|[\\/])node\.exe$/i.test(rel)) continue;
-    // Never follow a `..` out of the shim's directory tree.
-    if (rel.split(/[\\/]+/).includes('..')) return null;
-    target = p.resolve(dir, rel);
-    break;
-  }
+  const targets = [...text.matchAll(SHIM_TARGET_RE)].map((m) => m[1] ?? '').filter(Boolean);
+  const target = targets[targets.length - 1];
   if (!target) return null;
-  // The target must stay inside the shim's own dir and be the Claude Code package's cli.js or a binary inside it.
-  const relToDir = p.relative(dir.toLowerCase(), target.toLowerCase());
-  if (relToDir === '' || relToDir.startsWith('..') || p.isAbsolute(relToDir)) return null;
-  const pkg = /(^|[\\/])node_modules[\\/]@anthropic-ai[\\/]claude-code[\\/]/i;
-  if (!pkg.test(relToDir)) return null;
-  if (/\.exe$/i.test(target)) return { cmd: target, prefix: [] };
-  if (!/[\\/]node_modules[\\/]@anthropic-ai[\\/]claude-code[\\/]cli\.js$/i.test(target)) return null;
+  if (target.split(/[\\/]+/).some((seg) => seg === '..' || seg === '.')) return null;
+  const abs = p.resolve(dir, target);
+  const rel = p.relative(dir, abs);
+  if (!rel || rel.startsWith('..') || p.isAbsolute(rel)) return null;
+  const relNorm = rel.toLowerCase().replace(/\//g, '\\');
+  if (!SHIM_ALLOWED_REL.some((a) => relNorm === a)) return null;
+  if (!deps.exists(abs)) return null;
+  if (abs.toLowerCase().endsWith('.exe')) return { cmd: abs, prefix: [] };
   const local = p.join(dir, 'node.exe');
-  const node = deps.exists(local) ? local : findOnWindowsPath(deps, 'node').find((c) => /\.exe$/i.test(c));
-  return node ? { cmd: node, prefix: [target] } : null;
+  return { cmd: deps.exists(local) ? local : (deps.nodeExecPath ?? process.execPath), prefix: [abs] };
 }
 
 /** Runs `claude <args>`; a Windows `.cmd` shim is parsed and its target run directly (never `cmd.exe /c <path>`). */
@@ -413,12 +415,26 @@ export function checkHooks(deps: CheckDeps, settingsPath: string): SetupCheck {
 // docker, runner platform
 // ---------------------------------------------------------------------------
 
+/** First `docker` (win32: `docker.exe`) in the absolute PATH entries, PATH order; never the cwd. */
+export function findDocker(deps: CheckDeps): string | null {
+  const p = pathFor(deps.platform);
+  const name = deps.platform === 'win32' ? 'docker.exe' : 'docker';
+  for (const dir of pathEntries(deps)) {
+    const candidate = p.join(dir, name);
+    if (deps.exists(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function checkDocker(deps: CheckDeps, dockerMode: boolean): SetupCheck {
   const title = 'Docker';
   if (!dockerMode) {
     return { id: 'docker', title, status: 'skip', required: false, detail: 'Skipped: native mode does not use Docker.' };
   }
-  const res = deps.exec('docker', ['info'], { timeoutMs: 15_000 });
+  const docker = findDocker(deps);
+  const res = docker
+    ? deps.exec(docker, ['info'], { timeoutMs: 15_000, cwd: deps.platform === 'win32' ? systemRootOf(deps.env) : '/' })
+    : { status: null, stdout: '', stderr: '', error: Object.assign(new Error('docker not found on PATH'), { code: 'ENOENT' }) };
   if (!res.error && res.status === 0) {
     return { id: 'docker', title, status: 'ok', required: true, detail: 'Docker is running.' };
   }

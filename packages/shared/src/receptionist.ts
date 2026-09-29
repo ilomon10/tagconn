@@ -78,6 +78,9 @@ export const RECEPTIONIST_DISALLOWED_TOOLS = [
 export const RECEPTIONIST_DENY_READ_GLOBS = [
   // tagconn's desktop data dir (SQLite DB, the hook's node) on POSIX.
   '~/.local/share/tagconn/**',
+  // L3: the desktop app's webview profile dirs (DESKTOP_APP_IDENTIFIER).
+  '~/.local/share/io.github.ilomon10.tagconn/**',
+  '~/.config/io.github.ilomon10.tagconn/**',
   '~/.ssh/**',
   '~/.gnupg/**',
   '~/.aws/**',

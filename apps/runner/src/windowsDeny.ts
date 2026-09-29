@@ -4,7 +4,7 @@
 // Paths derive from the env (APPDATA, LOCALAPPDATA, USERPROFILE, OneDrive) with fallbacks under the home dir.
 
 import path from 'node:path';
-import { absoluteRulePathFormsWin32 } from '@tagconn/shared';
+import { absoluteRulePathFormsWin32, DESKTOP_APP_IDENTIFIER } from '@tagconn/shared';
 
 const w = path.win32;
 
@@ -35,27 +35,14 @@ export function windowsBases(env: NodeJS.ProcessEnv, home: string): { appData: s
   };
 }
 
-/** Lower-cased, trailing-slash-free form used to compare Windows paths. */
-function normWin(p: string): string {
-  return w.normalize(p).replace(/[\\/]+$/, '').toLowerCase();
-}
-
-function isUnder(dir: string, base: string): boolean {
-  const d = normWin(dir);
-  const b = normWin(base);
-  return d.startsWith(`${b}\\`);
-}
-
 /**
- * N3: every PATH entry under the user's profile, %LOCALAPPDATA% or %APPDATA% is a place a quest could plant a
- * `claude.cmd`/`claude.exe` (or any tool the user later runs) that the runner or the user would pick up first.
+ * N3/L1: every absolute PATH entry (machine PATH included; quests never need to write there) is a place a quest could
+ * plant a `claude.cmd`/`claude.exe` (or any tool the user later runs) that the runner or the user would pick up first.
  * `%VAR%` references are expanded from `env`; relative entries are ignored.
  */
-export function userPathEntries(env: NodeJS.ProcessEnv, home: string): string[] {
+export function userPathEntries(env: NodeJS.ProcessEnv, _home?: string): string[] {
   const key = Object.keys(env).find((k) => k.toLowerCase() === 'path');
   const raw = key ? (env[key] ?? '') : '';
-  const { appData, localAppData, profile } = windowsBases(env, home);
-  const bases = [profile, localAppData, appData];
   const expand = (e: string) => e.replace(/%([^%]+)%/g, (m, name: string) => {
     const k = Object.keys(env).find((x) => x.toLowerCase() === name.toLowerCase());
     return k ? (env[k] ?? m) : m;
@@ -64,7 +51,7 @@ export function userPathEntries(env: NodeJS.ProcessEnv, home: string): string[] 
     raw
       .split(';')
       .map((e) => expand(e.trim().replace(/^"|"$/g, '')))
-      .filter((e) => e !== '' && !e.includes('%') && w.isAbsolute(e) && bases.some((b) => isUnder(e, b))),
+      .filter((e) => e !== '' && !e.includes('%') && w.isAbsolute(e)),
   );
 }
 
@@ -126,7 +113,13 @@ export function windowsSensitiveDenyRules(env: NodeJS.ProcessEnv, home: string):
  */
 export function tagconnOwnDirs(env: NodeJS.ProcessEnv, home: string, opts: { configPath?: string; stateDir?: string }): string[] {
   const { appData, localAppData } = windowsBases(env, home);
-  const dirs = [w.join(localAppData, 'tagconn'), w.join(appData, 'tagconn')];
+  // L3: the desktop app's webview profile (cookies, local storage, EBWebView) lives under its bundle identifier.
+  const dirs = [
+    w.join(localAppData, 'tagconn'),
+    w.join(appData, 'tagconn'),
+    w.join(localAppData, DESKTOP_APP_IDENTIFIER),
+    w.join(appData, DESKTOP_APP_IDENTIFIER),
+  ];
   if (opts.configPath) dirs.push(w.dirname(opts.configPath));
   if (opts.stateDir) dirs.push(opts.stateDir);
   return dedupe(dirs);

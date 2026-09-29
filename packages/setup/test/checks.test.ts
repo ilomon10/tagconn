@@ -94,7 +94,7 @@ describe('claude_cli / claude_login', () => {
       'IF EXIST "%dp0%\\node.exe" (SET "_prog=%dp0%\\node.exe") ELSE (SET "_prog=node")',
       'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*',
     ].join('\r\n');
-    const files = { 'C:\\npm\\claude.cmd': shim, 'C:\\npm\\node.exe': '' };
+    const files = { 'C:\\npm\\claude.cmd': shim, 'C:\\npm\\node.exe': '', 'C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js': '' };
     const { d, calls } = deps({
       ...winPath,
       files,
@@ -259,8 +259,9 @@ describe('docker', () => {
   });
 
   it('docker mode: ok / not running / not installed', () => {
-    expect(checkDocker(deps({ table: { 'docker info': { status: 0 } } }).d, true).status).toBe('ok');
-    const down = checkDocker(deps({ table: { 'docker info': { status: 1 } } }).d, true);
+    const on = { env: { PATH: '/usr/bin' }, files: { '/usr/bin/docker': '' } };
+    expect(checkDocker(deps({ ...on, table: { '/usr/bin/docker info': { status: 0 } } }).d, true).status).toBe('ok');
+    const down = checkDocker(deps({ ...on, table: { '/usr/bin/docker info': { status: 1 } } }).d, true);
     expect(down).toMatchObject({ status: 'fail', required: true, fix: { action: 'switch_to_native' } });
     expect(down.detail).toContain('not running');
     expect(checkDocker(deps().d, true).detail).toContain('not installed');
@@ -278,5 +279,73 @@ describe('runSetupChecks', () => {
     const { d } = deps({ platform: 'win32', homedir: 'C:\\Users\\u', });
     const out = await runSetupChecks({ claudeDir: 'C:\\Users\\u\\.claude', configDir: 'C:\\c', dataDir: 'C:\\d', port: 4317 }, d);
     expect(out.map((c) => c.id)).toEqual(expect.arrayContaining(['git_bash', 'runner_platform']));
+  });
+});
+
+// Keep in sync with apps/runner/test/unit/l3l4.test.ts (SHIM_CASES): setup's parser must accept exactly what the runner's does.
+describe('N16: parseNpmShim shared fixtures (same table as the runner)', () => {
+  const DIR = 'C:\\npm';
+  const CLI = `${DIR}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`;
+  const EXE = `${DIR}\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`;
+  const own = 'C:\\own\\node.exe';
+  const line = (t: string) => `"%_prog%"  "%dp0%\\${t}" %*`;
+  const CASES: Array<{ name: string; text: string; files: string[]; expected: { cmd: string; prefix: string[] } | null }> = [
+    { name: 'npm cli.js, no local node -> own node', text: line('node_modules\\@anthropic-ai\\claude-code\\cli.js'), files: [CLI], expected: { cmd: own, prefix: [CLI] } },
+    { name: 'local node.exe wins', text: line('node_modules\\@anthropic-ai\\claude-code\\cli.js'), files: [CLI, `${DIR}\\node.exe`], expected: { cmd: `${DIR}\\node.exe`, prefix: [CLI] } },
+    { name: 'native bin exe', text: line('node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe'), files: [EXE], expected: { cmd: EXE, prefix: [] } },
+    { name: 'case-insensitive and forward slashes', text: line('Node_Modules/@Anthropic-AI/Claude-Code/CLI.JS'), files: [`${DIR}\\Node_Modules\\@Anthropic-AI\\Claude-Code\\CLI.JS`], expected: { cmd: own, prefix: [`${DIR}\\Node_Modules\\@Anthropic-AI\\Claude-Code\\CLI.JS`] } },
+    { name: 'the LAST target wins (evil last)', text: `${line('node_modules\\@anthropic-ai\\claude-code\\cli.js')}\r\n${line('evil.exe')}`, files: [CLI, `${DIR}\\evil.exe`], expected: null },
+    { name: 'the LAST target wins (good last)', text: `${line('evil.exe')}\r\n${line('node_modules\\@anthropic-ai\\claude-code\\cli.js')}`, files: [CLI, `${DIR}\\evil.exe`], expected: { cmd: own, prefix: [CLI] } },
+    { name: '%~dp0% form is not accepted', text: '"%~dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js"', files: [CLI], expected: null },
+    { name: 'target file missing', text: line('node_modules\\@anthropic-ai\\claude-code\\cli.js'), files: [], expected: null },
+    { name: 'dotdot', text: line('node_modules\\..\\node_modules\\@anthropic-ai\\claude-code\\cli.js'), files: [CLI], expected: null },
+    { name: 'other package file', text: line('node_modules\\@anthropic-ai\\claude-code\\evil.js'), files: [`${DIR}\\node_modules\\@anthropic-ai\\claude-code\\evil.js`], expected: null },
+    { name: 'nested claude.exe not at the allowed spot', text: line('node_modules\\@anthropic-ai\\claude-code\\x\\claude.exe'), files: [`${DIR}\\node_modules\\@anthropic-ai\\claude-code\\x\\claude.exe`], expected: null },
+    { name: 'no target', text: '@echo hi & calc.exe', files: [], expected: null },
+  ];
+  for (const c of CASES) {
+    it(c.name, () => {
+      const { d } = deps({ platform: 'win32', files: Object.fromEntries(c.files.map((f) => [f, ''])) });
+      d.readFile = () => c.text;
+      d.nodeExecPath = own;
+      expect(parseNpmShim(d, `${DIR}\\claude.cmd`)).toEqual(c.expected);
+    });
+  }
+});
+
+describe('L4: docker resolution', () => {
+  it('runs an absolute docker from an absolute PATH entry with cwd /, never a bare name or relative entry', () => {
+    const calls: Array<{ cmd: string; cwd?: string }> = [];
+    const { d } = deps({
+      env: { PATH: 'bin:/opt/d' },
+      files: { 'bin/docker': '', '/opt/d/docker': '' },
+      exec: (cmd, _a, o) => {
+        calls.push({ cmd, cwd: o?.cwd });
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
+    expect(checkDocker(d, true).status).toBe('ok');
+    expect(calls).toEqual([{ cmd: '/opt/d/docker', cwd: '/' }]);
+  });
+
+  it('win32: docker.exe from an absolute PATH entry with cwd %SystemRoot%; a relative entry is ignored', () => {
+    const calls: Array<{ cmd: string; cwd?: string }> = [];
+    const { d } = deps({
+      platform: 'win32',
+      env: { Path: '.;C:\\Docker\\bin', SystemRoot: 'C:\\Windows' },
+      files: { '.\\docker.exe': '', 'C:\\Docker\\bin\\docker.exe': '' },
+      exec: (cmd, _a, o) => {
+        calls.push({ cmd, cwd: o?.cwd });
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
+    expect(checkDocker(d, true).status).toBe('ok');
+    expect(calls).toEqual([{ cmd: 'C:\\Docker\\bin\\docker.exe', cwd: 'C:\\Windows' }]);
+  });
+
+  it('not on PATH: not installed, nothing executed', () => {
+    const { d, calls } = deps({ env: { PATH: '/usr/bin' } });
+    expect(checkDocker(d, true).detail).toContain('not installed');
+    expect(calls).toEqual([]);
   });
 });

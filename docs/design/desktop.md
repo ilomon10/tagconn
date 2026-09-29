@@ -203,7 +203,9 @@ Use a canary folder (never real dotfiles) and haiku with a small budget.
 12. Office window: `target=_blank` links in WebView2 open no unrestricted popup; they go to the system browser.
 13. The WebView2 profile location, and whether a remembered admin token sits in Local Storage there (quests are
     denied that dir).
-14. `where.exe $PATH:claude` vs setup's PATH walk for .cmd/.bat in the same dir; user-writable machine-PATH
+14. Quests are edit-denied on EVERY absolute PATH entry. If a user's PATH contains their whole profile dir (rare),
+    quests can't edit projects under it: check how common this is, and consider exempting the allowed project dirs.
+    Also: `where.exe $PATH:claude` vs setup's PATH walk for .cmd/.bat in the same dir; user-writable machine-PATH
     dirs (D:\ roots, C:\nvm4w, C:\tools) are write-denied to quests.
 15. Per-machine or custom install dirs are covered by `bundleDir`/`hookNodePath`.
 16. Stale-PID cleanup round-trip (taskkill + CreationDate start time) after the sidecar is killed.
