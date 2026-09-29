@@ -75,7 +75,8 @@ apps/server/test/fixtures/  REAL hook payloads captured from Claude Code; use th
 - **No Claude/AI attribution** in commit messages or PR bodies (the maintainer's explicit rule).
 - Lockstep SemVer across all packages; record user-facing changes under `## [Unreleased]` in `CHANGELOG.md`.
   Release with `pnpm release <patch|minor|major>` (bumps, changelog, commit and tag; it never pushes), then `git push --follow-tags`
-  and `gh release create vX.Y.Z --notes-file <section>`. Planned: M7 Guild Hall → v0.2.0.
+  and publish the notes: the desktop CI (`.github/workflows/desktop.yml`) creates a DRAFT release for the tag and attaches the
+  installers, so use `gh release edit vX.Y.Z --notes-file <section> --draft=false` (or `gh release create` if no draft exists). Planned: M7 Guild Hall → v0.2.0.
 - The PM commits after each verified wave; never commit a tree while subagents are mid-edit.
 
 ## Working style for this repo (virtual software house)

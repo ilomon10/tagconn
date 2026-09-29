@@ -1,0 +1,282 @@
+# tagconn Desktop: builds the Tauri app (Windows NSIS installer, Linux AppImage + .deb), smoke-tests it, publishes it
+# to the GitHub Release of the tag together with latest.json (the updater manifest), and pushes the Docker-mode
+# server image to ghcr.io.
+#
+# Triggers
+#   - push of a tag v*    : build, smoke, publish (a DRAFT release is created if the tag has none yet), push the image
+#   - workflow_dispatch   : build + smoke only, artifacts stay on the run. Set `release_tag` to also attach the builds
+#                           to that existing tag's release (the tag must already exist in the repo).
+#
+# Secrets (Settings > Secrets and variables > Actions > New repository secret)
+#   TAURI_SIGNING_PRIVATE_KEY           the updater signing key (the CONTENT of the generated key file, not its path)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  the password chosen when generating it (empty is allowed if none was set)
+# Generate the pair once, locally:
+#   pnpm --filter @tagconn/desktop tauri signer generate -w ~/.tauri/tagconn.key
+# then (1) store the private key file's content and the password as the two secrets above, and (2) paste the printed
+# PUBLIC key into `plugins.updater.pubkey` of apps/desktop/src-tauri/tauri.bundle.conf.json (and tauri.conf.json).
+# Without the secrets the build still succeeds: updater artifacts (.sig, latest.json) are skipped and the app's
+# "Check for updates" stays disabled. Windows code signing is not configured (SmartScreen shows "unknown publisher").
+# GITHUB_TOKEN is the only other credential used (release upload and ghcr push, scoped per job below).
+name: desktop
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing tag (vX.Y.Z) whose release should receive the builds. Empty = build and smoke only.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 24.21.0
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            sidecar: node-x86_64-pc-windows-msvc.exe
+          - name: linux
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+            sidecar: node-x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-3-dev libssl-dev libxdo-dev \
+            build-essential patchelf file xz-utils
+
+      - uses: pnpm/action-setup@v4 # the version comes from "packageManager" in package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - name: Cache the downloaded node archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/tagconn-desktop-cache/node-v*
+          key: desktop-node-${{ env.NODE_VERSION }}-${{ matrix.target }}
+
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match the app version $version (run pnpm release, then push its tag)"
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Assemble the app resources and the node sidecar
+        shell: bash
+        env:
+          TAGCONN_DESKTOP_CACHE: ${{ runner.temp }}/tagconn-desktop-cache
+          TARGET: ${{ matrix.target }}
+        run: node scripts/build-desktop-resources.ts --target "$TARGET"
+
+      # Pre-build smoke (the W0e spike): the server from the assembled resources, with the DOWNLOADED node, in a
+      # temp data dir on a random port: better-sqlite3 loads, /api/health answers, the web app index is served.
+      - name: Smoke test the assembled resources
+        shell: bash
+        env:
+          SIDECAR: ${{ matrix.sidecar }}
+        run: |
+          node scripts/smoke-desktop.ts server \
+            --resources apps/desktop/src-tauri/resources \
+            --node "apps/desktop/src-tauri/binaries/$SIDECAR"
+
+      - name: Build the installers
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BUNDLES: ${{ matrix.bundles }}
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          args=(--config src-tauri/tauri.bundle.conf.json --bundles "$BUNDLES")
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set: building without updater artifacts (no .sig, no latest.json)."
+            # A file, not inline JSON: quoting inline JSON through pnpm.cmd on Windows is fragile.
+            echo '{"bundle":{"createUpdaterArtifacts":false}}' > apps/desktop/src-tauri/tauri.no-updater.conf.json
+            args+=(--config src-tauri/tauri.no-updater.conf.json)
+          fi
+          pnpm --filter @tagconn/desktop tauri build "${args[@]}"
+
+      # Post-build smoke on Windows: silently install the NSIS setup into a temp dir, then run the INSTALLED node +
+      # supervisor headless with a scripted RPC (app.info, config.set, service.start server, health, service.stop),
+      # and assert nothing of it is left running.
+      - name: Smoke test the installed Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'no NSIS setup .exe was built' }
+          $dir = Join-Path $env:RUNNER_TEMP 'tagconn-installed'
+          Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/S', "/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "the installer exited with code $($p.ExitCode)" }
+          $node = Join-Path $dir 'node.exe'
+          if (-not (Test-Path $node) -or -not (Test-Path (Join-Path $dir 'supervisor/supervisor.js'))) {
+            Get-ChildItem $dir | Format-Table Name
+            throw "the installed app is incomplete (node.exe or supervisor/supervisor.js missing in $dir)"
+          }
+          node scripts/smoke-desktop.ts rpc --resources $dir --node $node
+          if ($LASTEXITCODE -ne 0) { throw 'the installed-app RPC smoke failed' }
+          Start-Sleep -Seconds 2
+          $left = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) }
+          if ($left) { $left | Format-Table Id, Path; throw 'processes of the installed app are still running' }
+
+      # The same idea on Linux: unpack the .deb (no root needed) and drive the packaged node + supervisor.
+      - name: Smoke test the packaged Linux app
+        if: runner.os == 'Linux'
+        run: |
+          deb=$(ls apps/desktop/src-tauri/target/release/bundle/deb/*.deb | head -n 1)
+          dpkg-deb -x "$deb" "$RUNNER_TEMP/tagconn-deb"
+          node scripts/smoke-desktop.ts rpc \
+            --resources "$RUNNER_TEMP/tagconn-deb/usr/lib/tagconn" \
+            --node "$RUNNER_TEMP/tagconn-deb/usr/bin/node"
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage.sig
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb.sig
+
+  publish:
+    name: publish to the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the draft release and upload assets
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create latest.json and upload everything
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$TAG' is not a vX.Y.Z tag"
+            exit 1
+          fi
+          ls -l dist
+          # The updater manifest: only when the builds were signed. Each platform points at its signed installer.
+          node <<'JS'
+          const fs = require('node:fs');
+          const { TAG, REPO } = process.env;
+          const files = fs.readdirSync('dist');
+          const platforms = {};
+          for (const [key, re] of [['windows-x86_64', /-setup\.exe$/], ['linux-x86_64', /\.AppImage$/]]) {
+            const file = files.find((f) => re.test(f));
+            if (!file || !files.includes(`${file}.sig`)) continue;
+            platforms[key] = {
+              signature: fs.readFileSync(`dist/${file}.sig`, 'utf8').trim(),
+              url: `https://github.com/${REPO}/releases/download/${TAG}/${file}`,
+            };
+          }
+          if (Object.keys(platforms).length === 0) {
+            console.log('No .sig files: the builds are unsigned, skipping latest.json.');
+          } else {
+            const manifest = { version: TAG.replace(/^v/, ''), notes: `See https://github.com/${REPO}/releases/tag/${TAG}`, pub_date: new Date().toISOString(), platforms };
+            fs.writeFileSync('dist/latest.json', JSON.stringify(manifest, null, 2) + '\n');
+            console.log(`latest.json for ${Object.keys(platforms).join(', ')}`);
+          }
+          JS
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --draft --verify-tag --title "$TAG" \
+              --notes "Desktop builds attached by CI. Edit the notes, then publish this draft."
+          fi
+          gh release upload "$TAG" dist/* --repo "$REPO" --clobber
+
+  docker-image:
+    name: server image (ghcr.io)
+    # Docker mode of tagconn Desktop runs only this image (the web app is built into it). Tag pushes only.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute the image tags
+        id: tags
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          image=ghcr.io/ilomon10/tagconn-server
+          {
+            echo 'list<<EOF'
+            echo "$image:$version"
+            # A pre-release (1.2.3-rc.1) never becomes :latest.
+            case "$version" in *-*) ;; *) echo "$image:latest" ;; esac
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/server.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

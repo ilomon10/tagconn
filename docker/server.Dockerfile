@@ -5,8 +5,12 @@
 #   deps  -> full workspace install (cached by manifests only)
 #   build -> compile @tagconn/server (tsup) + produce a self-contained prod
 #            deploy dir (dist + prod-only node_modules, native build matches
-#            this image's glibc/arch because it's built here, not on the host)
-#   run   -> slim runtime, non-root, healthcheck
+#            this image's glibc/arch because it's built here, not on the host),
+#            and build the web app
+#   run   -> slim runtime, non-root, healthcheck. The server also serves the
+#            built web app itself (OFFICE_SERVER__WEB_DIR), which is what the
+#            tagconn Desktop Docker mode relies on (it runs only this image);
+#            the repo's compose stack keeps using the nginx web image.
 #
 # Build from the repo root:
 #   docker build -f docker/server.Dockerfile -t tagconn-server .
@@ -49,6 +53,7 @@ WORKDIR /app
 # build step for that package), and roles/skills are plain files.
 COPY . .
 RUN pnpm --filter @tagconn/server build
+RUN pnpm --filter @tagconn/web build
 # Self-contained prod artifact: dist + production-only node_modules with the
 # workspace deps (@tagconn/shared, @tagconn/agent-templates) resolved in.
 # pnpm v10+ requires --legacy for non-injected workspaces (no
@@ -60,10 +65,12 @@ FROM ${NODE_IMAGE} AS run
 ENV NODE_ENV=production
 ENV OFFICE_STORAGE__DB_PATH=/data/office.db
 ENV OFFICE_TEMPLATES_DIR=/app/templates
+ENV OFFICE_SERVER__WEB_DIR=/app/web
 WORKDIR /app
 
 COPY --from=build /out ./
 COPY packages/agent-templates/roles ./templates/roles
+COPY --from=build /app/apps/web/dist ./web
 
 # Writable data dir for SQLite; owned by the default `node` user (uid/gid
 # 1000 in the upstream image) so it also works when docker-compose overrides
