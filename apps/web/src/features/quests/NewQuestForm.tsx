@@ -7,6 +7,7 @@ import { useRunsStore } from '../../stores/runsStore';
 import { useRequireAdmin } from '../auth/useRequireAdmin';
 import { Button, Field, Select, Textarea } from '../../components/ui';
 import { isProjectDirAllowed, questModeOptions } from './modes';
+import { runnerPlatform, isWindowsRunner, WINDOWS_LIMITS_URL } from './platform';
 import { guidanceForError } from './rejectionGuidance';
 
 /**
@@ -58,7 +59,7 @@ export function NewQuestForm({ onClose, onCreated, initialFloor }: { onClose: ()
       onCreated(run);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? guidanceForError(err.message) : String(err));
+      setError(err instanceof Error ? guidanceForError(err.message, runnerPlatform(status)) : String(err));
     } finally {
       setBusy(false);
     }
@@ -125,6 +126,14 @@ export function NewQuestForm({ onClose, onCreated, initialFloor }: { onClose: ()
                 ))}
               </Select>
               <span className="mt-1 block text-[10px] text-ink-400">{modeOptions.find((m) => m.mode === permissionMode)?.reason ?? modeOptions.find((m) => m.mode === permissionMode)?.label}</span>
+              {isWindowsRunner(status) && (
+                <span className="mt-1 block text-[10px] text-ink-300">
+                  Windows caps quests at &apos;accept edits&apos;.{' '}
+                  <a href={WINDOWS_LIMITS_URL} target="_blank" rel="noopener noreferrer" className="underline hover:no-underline">
+                    Windows limits
+                  </a>
+                </span>
+              )}
             </Field>
           </div>
 

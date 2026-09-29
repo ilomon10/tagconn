@@ -26,11 +26,25 @@ const END_REASON_GUIDANCE: Record<RunEndReason, string> = {
   exit: 'The process exited on its own.',
 };
 
+/** Windows replacements (the runner has no systemd scope or bwrap there; quests run at most in
+ *  acceptEdits and never with Bash/PowerShell). See docs/guide/desktop.md#windows-limits. */
+const WINDOWS_END_REASON_GUIDANCE: Partial<Record<RunEndReason, string>> = {
+  isolation_unavailable:
+    "On Windows, quests can't use Bash or PowerShell and run at most in 'accept edits' mode; the Receptionist has no sandbox. Pick 'accept edits' or a mode that can't run commands, and don't ask the quest to run shell commands.",
+  mode_not_allowed: "Windows caps quests at 'accept edits'. Pick 'accept edits' or a lower mode.",
+  tool_not_allowed:
+    "A tool this quest needs isn't allowed. On Windows, quests can't use Bash or PowerShell and run at most in 'accept edits' mode; a bare WebFetch is also never allowed (only WebFetch(domain:x)).",
+};
+
 /** Guidance for a run that ended non-terminally-happy (`status: 'rejected' | 'failed' | 'timeout' | 'stopped' | 'lost'`
  *  with an `endReason`). Returns `undefined` for a run with no `endReason` (a plain success, or one
  *  still in flight) — callers should only show this alongside an actual rejection/failure. */
-export function guidanceForEndReason(reason: RunEndReason | undefined): string | undefined {
+export function guidanceForEndReason(reason: RunEndReason | undefined, platform?: string): string | undefined {
   if (!reason) return undefined;
+  if (platform === 'win32') {
+    const win = WINDOWS_END_REASON_GUIDANCE[reason];
+    if (win) return win;
+  }
   return END_REASON_GUIDANCE[reason];
 }
 
@@ -41,13 +55,13 @@ export function guidanceForEndReason(reason: RunEndReason | undefined): string |
  * `HttpError` messages are already client-safe (never a raw internal error — see `runsAck` on the
  * server), so anything unrecognized here is shown as-is rather than swallowed.
  */
-export function guidanceForError(message: string): string {
+export function guidanceForError(message: string, platform?: string): string {
   const prefixMatch = /^([a-z_]+):\s*/i.exec(message);
   const prefix = prefixMatch?.[1]?.toLowerCase();
   if (prefix === 'runner_disabled') {
     return "The runner isn't enabled. Enable it with OFFICE_RUNNER__ENABLED=true (the installer does this when you pass --allow-dir), then run `pnpm office:runner` on the host.";
   }
-  if (prefix && Object.hasOwn(END_REASON_GUIDANCE, prefix)) return END_REASON_GUIDANCE[prefix as RunEndReason];
+  if (prefix && Object.hasOwn(END_REASON_GUIDANCE, prefix)) return guidanceForEndReason(prefix as RunEndReason, platform)!;
   if (/no verified runner is connected/i.test(message)) return 'No runner is connected to the server yet. Run `pnpm office:runner` on the host.';
   if (/run queue is full/i.test(message)) return 'The quest queue is full right now. Try again once a run finishes.';
   return message;

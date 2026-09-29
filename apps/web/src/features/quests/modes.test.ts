@@ -65,3 +65,14 @@ describe('isProjectDirAllowed', () => {
     expect(isProjectDirAllowed('/home/user/projects-other', ['/home/user/projects'])).toBe(false);
   });
 });
+
+describe('questModeOptions on a Windows runner', () => {
+  const win = (over: Partial<RunnerStatus> = {}) => ({ ...status(over), platform: 'win32' }) as RunnerStatus;
+
+  it("disables modes above acceptEdits with the Windows reason, even if the runner reports a higher cap", () => {
+    const opts = questModeOptions(['plan', 'acceptEdits', 'auto'], win({ maxPermissionMode: 'bypassPermissions' }));
+    expect(opts.map((o) => o.allowed)).toEqual([true, true, false]);
+    expect(opts[2]?.reason).toMatch(/Windows caps quests at 'accept edits'/);
+  });
+});
+

@@ -50,3 +50,25 @@ describe('guidanceForError', () => {
     expect(guidanceForError('Unknown heroId "h-x"')).toBe('Unknown heroId "h-x"');
   });
 });
+
+describe('Windows guidance', () => {
+  it('uses Windows text for isolation_unavailable, mode_not_allowed and tool_not_allowed on win32', () => {
+    expect(guidanceForEndReason('isolation_unavailable', 'win32')).toMatch(/On Windows, quests can't use Bash or PowerShell/);
+    expect(guidanceForEndReason('mode_not_allowed', 'win32')).toMatch(/Windows caps quests at 'accept edits'/);
+    expect(guidanceForEndReason('tool_not_allowed', 'win32')).toMatch(/Bash or PowerShell/);
+  });
+
+  it('keeps the systemd text on linux or unknown platforms', () => {
+    expect(guidanceForEndReason('isolation_unavailable', 'linux')).toMatch(/systemd user scope/);
+    expect(guidanceForEndReason('isolation_unavailable')).toMatch(/systemd user scope/);
+  });
+
+  it('leaves unrelated reasons unchanged on win32', () => {
+    expect(guidanceForEndReason('timeout', 'win32')).toBe(guidanceForEndReason('timeout'));
+  });
+
+  it('applies to prefixed errors too', () => {
+    expect(guidanceForError('mode_not_allowed: auto', 'win32')).toMatch(/Windows caps/);
+    expect(guidanceForError('mode_not_allowed: auto', 'linux')).toMatch(/permission mode/);
+  });
+});

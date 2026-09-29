@@ -5,6 +5,7 @@ import { useOfficeStore } from '../../stores/officeStore';
 import { useRunsStore } from '../../stores/runsStore';
 import { useRequireAdmin } from '../auth/useRequireAdmin';
 import { Badge, Button, Textarea } from '../../components/ui';
+import { runnerPlatform } from './platform';
 import { Transcript } from './Transcript';
 import { guidanceForEndReason, guidanceForError } from './rejectionGuidance';
 
@@ -19,6 +20,7 @@ export function RunDetailPanel({ run, onClose }: { run: Run; onClose: () => void
   const followUp = useRunsStore((s) => s.followUp);
   const stop = useRunsStore((s) => s.stop);
   const selectFloor = useOfficeStore((s) => s.selectProject);
+  const platform = useRunsStore((s) => runnerPlatform(s.runnerStatus));
   const { guard } = useRequireAdmin();
 
   const detailLoading = useRunsStore((s) => s.detailLoading[run.id]);
@@ -35,7 +37,7 @@ export function RunDetailPanel({ run, onClose }: { run: Run; onClose: () => void
     const seq = ++loadSeq.current;
     setLoadError(null);
     loadDetail(run.id).catch((err) => {
-      if (seq === loadSeq.current) setLoadError(err instanceof Error ? guidanceForError(err.message) : String(err));
+      if (seq === loadSeq.current) setLoadError(err instanceof Error ? guidanceForError(err.message, platform) : String(err));
     });
   };
 
@@ -50,7 +52,7 @@ export function RunDetailPanel({ run, onClose }: { run: Run; onClose: () => void
   const terminal = isTerminalRunStatus(run.status);
   const canStop = !terminal;
   const canFollowUp = terminal && run.status === 'succeeded' && !!run.sessionId;
-  const rejectionText = guidanceForEndReason(run.endReason);
+  const rejectionText = guidanceForEndReason(run.endReason, platform);
 
   const doStop = async () => {
     setBusy(true);
@@ -58,7 +60,7 @@ export function RunDetailPanel({ run, onClose }: { run: Run; onClose: () => void
     try {
       await stop(run.id);
     } catch (err) {
-      setError(err instanceof Error ? guidanceForError(err.message) : String(err));
+      setError(err instanceof Error ? guidanceForError(err.message, platform) : String(err));
     } finally {
       setBusy(false);
     }
@@ -72,7 +74,7 @@ export function RunDetailPanel({ run, onClose }: { run: Run; onClose: () => void
       await followUp({ runId: run.id, prompt: followUpText.trim() });
       setFollowUpText('');
     } catch (err) {
-      setError(err instanceof Error ? guidanceForError(err.message) : String(err));
+      setError(err instanceof Error ? guidanceForError(err.message, platform) : String(err));
     } finally {
       setBusy(false);
     }

@@ -3,6 +3,7 @@ import { useOfficeStore } from '../../stores/officeStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useRunsStore } from '../../stores/runsStore';
 import { cx } from '../../components/ui';
+import { isWindowsRunner, WINDOWS_LIMITS_URL, WINDOWS_NOTE } from './platform';
 import { RUNNER_AND_QUESTS_GUIDE_URL, RUNNER_START_COMMAND, runnerBannerState } from './runnerBannerState';
 
 /**
@@ -103,6 +104,14 @@ export function RunnerStatusBanner() {
             Runner connected — {state.activeRuns} active, {state.queuedRuns} queued, up to {state.maxConcurrent} at once.
             {state.noSystemdScope && ' No systemd scope on this host: modes that can run shell commands (auto, bypassPermissions) are refused.'}
           </span>
+          {isWindowsRunner(status) && (
+            <span>
+              {WINDOWS_NOTE}{' '}
+              <a href={WINDOWS_LIMITS_URL} target="_blank" rel="noopener noreferrer" className="underline hover:no-underline">
+                Windows limits
+              </a>
+            </span>
+          )}
         </Banner>
       );
   }

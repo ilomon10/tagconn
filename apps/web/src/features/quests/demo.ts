@@ -55,6 +55,7 @@ export function demoRunnerStatus(): RunnerStatus {
     verified: true,
     runnerId: 'demo-runner',
     hostname: 'demo-host',
+    platform: 'linux',
     version: '0.2.0',
     claudeVersion: '2.1.282',
     capabilities: DEMO_CAPABILITIES,

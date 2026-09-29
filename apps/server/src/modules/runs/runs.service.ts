@@ -269,6 +269,7 @@ export class RunsService implements RunDispatcher, RunLinker {
       verified: true,
       runnerId,
       hostname: hello.hostname,
+      platform: hello.platform,
       version: hello.version,
       claudeVersion: hello.claudeVersion,
       capabilities: hello.capabilities,

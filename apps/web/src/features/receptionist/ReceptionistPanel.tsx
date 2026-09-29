@@ -14,6 +14,7 @@ import { DEMO_CONVERSATION, DEMO_CONVERSATION_ID, DEMO_MESSAGES } from './demoDa
 import { ConversationSidebar } from './ConversationSidebar';
 import { MessageThread } from './MessageThread';
 import { receptionistPanelGate, receptionistSendGate } from './gate';
+import { isWindowsRunner, WINDOWS_LIMITS_URL, WINDOWS_NOTE } from '../quests/platform';
 import { CopyRunnerCommand, GuideLink, RECEPTIONIST_GUIDE_URL, RUNNER_AND_QUESTS_GUIDE_URL } from './guideLinks';
 
 function errorMessage(err: unknown): string {
@@ -234,6 +235,12 @@ export function ReceptionistPanel() {
           </Button>
         </div>
       </header>
+      {isWindowsRunner(runnerStatus) && (
+        <p className="shrink-0 border-b border-ink-700 bg-ink-900 px-3 py-1.5 text-[11px] text-ink-300">
+          {WINDOWS_NOTE}{' '}
+          <GuideLink href={WINDOWS_LIMITS_URL}>Windows limits</GuideLink>
+        </p>
+      )}
 
       {panelGate === 'loading' ? (
         <div className="grid flex-1 place-items-center text-xs text-ink-400">Loading…</div>

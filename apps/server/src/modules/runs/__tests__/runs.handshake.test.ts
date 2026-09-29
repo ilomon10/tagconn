@@ -27,7 +27,7 @@ describe('runs: /runner HMAC handshake (docs/design/runner-and-helpdesk.md §2.2
     app = await buildTestApp({ settings: { runner: { token: TOKEN, enabled: true } } });
     const runner = await connectVerifiedRunner(app, { token: TOKEN });
     const status = app.diContainer.cradle.runsService.getRunnerStatus();
-    expect(status).toMatchObject({ connected: true, verified: true, runnerId: runner.runnerId });
+    expect(status).toMatchObject({ connected: true, verified: true, runnerId: runner.runnerId, platform: 'linux' });
     runner.close();
   });
 

@@ -442,6 +442,8 @@ export interface RunnerStatus {
   verified: boolean;
   runnerId?: string;
   hostname?: string;
+  /** The runner host's `process.platform` (e.g. 'linux', 'win32'); the web shows Windows limits from it. */
+  platform?: string;
   version?: string;
   claudeVersion?: string;
   capabilities?: RunnerCapabilities;

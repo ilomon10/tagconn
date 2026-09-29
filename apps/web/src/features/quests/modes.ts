@@ -1,3 +1,4 @@
+import { isWindowsRunner } from './platform';
 import { permissionModeWithin, type RunPermissionMode, type RunnerStatus } from '@tagconn/shared';
 
 /**
@@ -38,11 +39,13 @@ export interface ModeOption {
  */
 export function questModeOptions(settingsAllowed: readonly RunPermissionMode[], status: RunnerStatus | null): ModeOption[] {
   const caps = status?.capabilities;
-  const maxMode = status?.maxPermissionMode;
+  const windows = isWindowsRunner(status);
+  // Windows quests never exceed acceptEdits, even if the runner reports a higher cap.
+  const maxMode = windows ? 'acceptEdits' : status?.maxPermissionMode;
   return settingsAllowed.map((mode) => {
     const label = MODE_EXPLANATIONS[mode];
     if (maxMode && !permissionModeWithin(mode, maxMode)) {
-      return { mode, label, allowed: false, reason: `Above the host's local mode cap (${maxMode}).` };
+      return { mode, label, allowed: false, reason: windows ? "Windows caps quests at 'accept edits'." : `Above the host's local mode cap (${maxMode}).` };
     }
     if (caps && !caps.permissionModes.includes(mode)) {
       return { mode, label, allowed: false, reason: "This Claude CLI version didn't accept this mode when probed." };
