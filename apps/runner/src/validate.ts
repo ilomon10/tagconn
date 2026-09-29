@@ -37,7 +37,7 @@ export interface QuestValidationFail {
 
 export function validateQuestStart(
   input: QuestValidationInput,
-  cfg: Pick<RunnerLocalConfig, 'allowedProjectDirs' | 'trustOverrideDirs' | 'maxPermissionMode' | 'allowBypassPermissions' | 'questToolPolicy' | 'processIsolation' | 'bundleDir' | 'hookNodePath'> & {
+  cfg: Pick<RunnerLocalConfig, 'allowedProjectDirs' | 'trustOverrideDirs' | 'maxPermissionMode' | 'allowBypassPermissions' | 'questToolPolicy' | 'processIsolation' | 'bundleDir' | 'hookNodePath' | 'dataDir'> & {
     /** SC5 M1: appended as an Edit/Write/MultiEdit/NotebookEdit deny for this exact absolute path,
      *  since it cannot be a static DEFAULT_QUEST_ALWAYS_DENY entry (stateDir is host-configurable and
      *  is not always under $HOME). */
@@ -102,6 +102,8 @@ export function validateQuestStart(
   const bundleDeny = [
     ...(cfg.bundleDir ? editTools.flatMap((t) => formsOf(cfg.bundleDir!.replace(/[\\/]+$/, '')).map((f) => `${t}(${f}/**)`)) : []),
     ...(cfg.hookNodePath ? editTools.flatMap((t) => formsOf(cfg.hookNodePath!).map((f) => `${t}(${f})`)) : []),
+    // A custom desktop data dir (the office DB) is neither readable nor editable.
+    ...(cfg.dataDir ? ['Read', ...editTools].flatMap((t) => formsOf(cfg.dataDir!.replace(/[\\/]+$/, '')).map((f) => `${t}(${f}/**)`)) : []),
   ];
   const disallowedTools = Array.from(new Set([...policy.disallowedTools, ...stateDirDeny, ...ownDirDeny, ...bundleDeny]));
 

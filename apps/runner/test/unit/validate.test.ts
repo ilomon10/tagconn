@@ -86,6 +86,21 @@ describe('validateQuestStart', () => {
     expect(result.disallowedTools).toContain('Read(~/.local/share/tagconn/**)');
   });
 
+  it('a custom desktop dataDir is neither readable nor editable by quests', () => {
+    const { project, claudeJson } = setup();
+    const result = validateQuestStart(
+      { projectDir: project, permissionMode: 'acceptEdits', allowedTools: ['Read'], disallowedTools: [] },
+      { ...cfg, allowedProjectDirs: [project], dataDir: '/srv/tagconn-data/' },
+      caps,
+      claudeJson,
+      new Map(),
+    );
+    if (!result.ok) throw new Error('expected ok');
+    for (const tool of ['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
+      expect(result.disallowedTools).toContain(`${tool}(//srv/tagconn-data/**)`);
+    }
+  });
+
   it('dir_not_allowed for a dir outside allowedProjectDirs', () => {
     const { project, claudeJson } = setup();
     const ledger: Ledger = new Map();

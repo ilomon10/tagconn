@@ -76,6 +76,8 @@ export const RECEPTIONIST_DISALLOWED_TOOLS = [
  * cannot use --restricted) together with bwrap's empty $HOME.
  */
 export const RECEPTIONIST_DENY_READ_GLOBS = [
+  // tagconn's desktop data dir (SQLite DB, the hook's node) on POSIX.
+  '~/.local/share/tagconn/**',
   '~/.ssh/**',
   '~/.gnupg/**',
   '~/.aws/**',

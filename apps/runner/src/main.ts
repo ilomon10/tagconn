@@ -226,6 +226,28 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  // The desktop supervisor passes its pid: if it dies (even by SIGKILL), stop our quests and exit instead of
+  // running on unsupervised. ppid changes on POSIX when the parent dies; signal 0 fails once the pid is gone.
+  const parentPid = Number(process.env.TAGCONN_PARENT_PID);
+  if (Number.isInteger(parentPid) && parentPid > 1) {
+    const startPpid = process.ppid;
+    const parentGone = () => {
+      if (process.platform !== 'win32' && process.ppid !== startPpid) return true;
+      try {
+        process.kill(parentPid, 0);
+        return false;
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code === 'ESRCH';
+      }
+    };
+    setInterval(() => {
+      if (parentGone()) {
+        logger.info('parent supervisor exited');
+        shutdown();
+      }
+    }, 2_000).unref();
+  }
 }
 
 main().catch((err) => {

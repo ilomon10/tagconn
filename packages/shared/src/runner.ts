@@ -847,6 +847,8 @@ export const RunnerLocalConfigSchema = z.object({
   /** N11: the desktop app's bundle dir and stable hook node (set by the supervisor); quests can never edit them. */
   bundleDir: AbsPath.optional(),
   hookNodePath: AbsPath.optional(),
+  /** The desktop app's data dir (SQLite DB) when it's custom; quests and the Receptionist can't read or edit it. */
+  dataDir: AbsPath.optional(),
   receptionistSandbox: z.enum(['auto', 'bwrap', 'none']).default('auto'),
   /**
    * Quest process containment. `auto` = systemd scope when available. Without one, quests that

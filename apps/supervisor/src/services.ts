@@ -159,7 +159,8 @@ export function runnerDefinition(deps: DefinitionDeps): ServiceDefinition {
       readTokens(deps);
       syncRunnerGuards(deps);
       // The runner has its own env hygiene for the claude child; it only needs the OS env (PATH, HOME, XDG_*).
-      const env = { ...cleanEnv(deps.env) };
+      // TAGCONN_PARENT_PID: the runner exits (stopping its quests) if we die, even by SIGKILL.
+      const env = { ...cleanEnv(deps.env), TAGCONN_PARENT_PID: String(process.pid) };
       return { command: process.execPath, args: [deps.bundle.runnerJs, '--config', runnerJson], env, cwd: deps.paths.state, marker: deps.bundle.runnerJs };
     },
   };

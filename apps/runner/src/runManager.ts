@@ -6,6 +6,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  absoluteRulePath,
+  absoluteRulePathFormsWin32,
   type ReceptionistScope,
   type RunEnd,
   type RunEndReason,
@@ -258,7 +260,11 @@ export function createRunManager(deps: RunManagerDeps) {
       sandboxed: sandboxAvailable,
       safeMode: cmd.safeMode,
       addDirDocs: opts.addDirDocs,
-      extraDisallowedTools: cmd.disallowedTools,
+      extraDisallowedTools: [
+        ...cmd.disallowedTools,
+        // A custom desktop data dir (the office DB) is never readable by the Receptionist.
+        ...(deps.cfg.dataDir ? (platform.isWin32 ? absoluteRulePathFormsWin32(deps.cfg.dataDir.replace(/[\\/]+$/, '')) : [absoluteRulePath(deps.cfg.dataDir.replace(/\/+$/, ''))]).map((f) => `Read(${f}/**)`) : []),
+      ],
       stdinPrompt: deps.caps.stdinPrompt,
       prompt: cmd.prompt,
       platform,
