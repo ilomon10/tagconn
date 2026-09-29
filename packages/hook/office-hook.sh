@@ -142,11 +142,14 @@ if [ "$is_session_start" = "1" ] && [ "${TAGCONN_ATTRIBUTION:-}" != "off" ]; the
     if [ -n "$HOME" ] && [ -d "$HOME" ]; then
       rh=$(cd "$HOME" 2>/dev/null && pwd -P) || rh=""
     fi
+    # Fail closed (L5): if $HOME does not resolve we cannot tell whether the
+    # project IS the home dir, so skip attribution entirely.
+    [ -n "$rh" ] || rd=""
 
     # -------------------- README write (opt-in) --------------------
     # Guards: dir must exist, be owned by us, be a git repo, and never be
     # $HOME or /. No mkdir -p: only ever create the single ".tagconn" dir.
-    if [ -n "$rd" ] && [ -O "$rd" ] && [ -e "$rd/.git" ] && [ "$rd" != "$rh" ] && [ "$rd" != "/" ]; then
+    if [ -n "$rd" ] && [ -O "$rd" ] && [ -e "$rd/.git" ] && [ -n "$rh" ] && [ "$rd" != "$rh" ] && [ "$rd" != "/" ]; then
       # Skip if .tagconn already exists as a file or symlink - never touch or
       # follow it. A plain file named .tagconn is how a user opts back out (see
       # the README itself). An existing real, owned .tagconn directory that
@@ -170,6 +173,8 @@ if [ "$is_session_start" = "1" ] && [ "${TAGCONN_ATTRIBUTION:-}" != "off" ]; the
           # .tagconn for a symlink in between. Then `cd` into it and write a
           # relative path: once `cd` resolves, the write targets that exact
           # directory inode even if the path component is later replaced.
+          # (L3: this re-check plus the cd-then-relative-write is the sh
+          # equivalent of the node hook's O_NOFOLLOW + dev/ino comparison.)
           if [ -d "$rd/.tagconn" ] && [ ! -L "$rd/.tagconn" ]; then
             (
               cd "$rd/.tagconn" 2>/dev/null || exit 0

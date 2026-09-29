@@ -2,11 +2,12 @@
 // (always exit 0, never stdout, hard 1 s budget) and the pure path/parse helpers
 // (win32 semantics are unit-tested through path.win32, no Windows needed).
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createHookSandbox,
+  TEST_TOKEN,
   type HookSandbox,
   nodeHookScript,
   runHook,
@@ -131,7 +132,7 @@ describe('node hook robustness', () => {
     for (let i = 0; i < 100 && (sb.server?.requests.length ?? 0) < 2; i++) await new Promise((r) => setTimeout(r, 30));
     const imp = sb.server?.requests.find((r) => r.url === '/api/attribution/import');
     expect(imp?.headers['x-tagconn-session-id']).toBe('abc_1');
-    expect(imp?.headers['x-office-token']).toBe('testtoken');
+    expect(imp?.headers['x-office-token']).toBe(TEST_TOKEN);
   });
 
   it('a session id outside [A-Za-z0-9_-] skips the import', async () => {
@@ -146,18 +147,126 @@ describe('node hook robustness', () => {
 
 describe('node hook pure helpers', () => {
   it('resolveConfigPaths: TAGCONN_HOOK_CONFIG wins, then TAGCONN_CONFIG_DIR, then OS default', () => {
-    expect(hook.resolveConfigPaths({ TAGCONN_HOOK_CONFIG: '/a/b/h.json', TAGCONN_CONFIG_DIR: '/z' }, 'linux', '/home/u')).toEqual({
-      hookJson: '/a/b/h.json',
-      configDir: '/a/b',
+    expect(hook.resolveConfigPaths({ TAGCONN_HOOK_CONFIG: '/home/u/b/h.json', TAGCONN_CONFIG_DIR: '/home/u/z' }, 'linux', '/home/u')).toEqual({
+      hookJson: '/home/u/b/h.json',
+      configDir: '/home/u/b',
     });
-    expect(hook.resolveConfigPaths({ TAGCONN_CONFIG_DIR: '/z' }, 'linux', '/home/u').hookJson).toBe('/z/hook.json');
+    expect(hook.resolveConfigPaths({ TAGCONN_CONFIG_DIR: '/home/u/z' }, 'linux', '/home/u').hookJson).toBe('/home/u/z/hook.json');
     expect(hook.resolveConfigPaths({}, 'linux', '/home/u').configDir).toBe('/home/u/.config/tagconn');
     expect(hook.resolveConfigPaths({ XDG_CONFIG_HOME: '/x' }, 'linux', '/home/u').configDir).toBe('/x/tagconn');
     // Exec-form hooks get no env: a hook.json next to the script wins over the OS default.
     const beside = (f: string) => f === '/opt/cfg/hook.json';
     expect(hook.resolveConfigPaths({}, 'linux', '/home/u', '/opt/cfg', beside).configDir).toBe('/opt/cfg');
     expect(hook.resolveConfigPaths({}, 'linux', '/home/u', '/elsewhere', beside).configDir).toBe('/home/u/.config/tagconn');
-    expect(hook.resolveConfigPaths({ TAGCONN_CONFIG_DIR: '/z' }, 'linux', '/home/u', '/opt/cfg', beside).configDir).toBe('/z');
+    expect(hook.resolveConfigPaths({ TAGCONN_CONFIG_DIR: '/home/u/z' }, 'linux', '/home/u', '/opt/cfg', beside).configDir).toBe('/home/u/z');
+  });
+
+  it('L2: env overrides outside home / OS config dirs are ignored', () => {
+    const r = hook.resolveConfigPaths({ TAGCONN_CONFIG_DIR: '/repo/.tagconn-cfg', TAGCONN_HOOK_CONFIG: '/repo/h.json' }, 'linux', '/home/u');
+    expect(r).toEqual({ hookJson: '/home/u/.config/tagconn/hook.json', configDir: '/home/u/.config/tagconn' });
+    // '..' escapes are resolved before the check
+    expect(hook.resolveConfigPaths({ TAGCONN_CONFIG_DIR: '/home/u/../evil' }, 'linux', '/home/u').configDir).toBe('/home/u/.config/tagconn');
+  });
+
+  it('L2: a repo-relative TAGCONN_CONFIG_DIR is ignored end to end', async () => {
+    const sb = await sandbox();
+    const rel = join(sb.projectDir, 'cfg');
+    mkdirSync(rel);
+    writeFileSync(join(rel, 'hook.json'), JSON.stringify({ version: 1, url: sb.server?.url, token: TEST_TOKEN }));
+    const res = await spawnHook('node', JSON.stringify({ session_id: 's' }), {
+      PATH: process.env.PATH,
+      HOME: sb.home,
+      USERPROFILE: sb.home,
+      XDG_CONFIG_HOME: join(sb.home, 'nothing'),
+      TAGCONN_CONFIG_DIR: rel,
+      CLAUDE_PROJECT_DIR: sb.projectDir,
+    });
+    expect(res.status).toBe(0);
+    expect(sb.server?.requests).toHaveLength(0);
+  });
+
+  it('childEnv drops NODE_OPTIONS and NODE_TLS_REJECT_UNAUTHORIZED', () => {
+    const e = hook.childEnv({ NODE_OPTIONS: '--require x', NODE_TLS_REJECT_UNAUTHORIZED: '0', A: '1' });
+    expect(e).toEqual({ A: '1' });
+  });
+
+  it('L1: token must be 16-128 lowercase hex; header values may not hold CR/LF/NUL', () => {
+    expect(hook.isValidToken('0123456789abcdef')).toBe(true);
+    expect(hook.isValidToken('0123456789abcde')).toBe(false);
+    expect(hook.isValidToken('0123456789ABCDEF0123')).toBe(false);
+    expect(hook.isValidToken('0123456789abcdef\r\nx-evil: 1')).toBe(false);
+    expect(hook.isValidToken('a'.repeat(129))).toBe(false);
+    for (const bad of ['a\r', 'a\n', 'a\0']) expect(hook.hasHeaderBreak(bad)).toBe(true);
+    expect(hook.hasHeaderBreak('abc')).toBe(false);
+  });
+
+  it('L1: a hook.json token with CRLF is a no-op (nothing posted)', async () => {
+    const sb = await sandbox();
+    writeHookJson(sb, { token: `${TEST_TOKEN}\r\nx-evil: 1` });
+    const res = await runHook('', sb, { session_id: 's', hook_event_name: 'Stop' });
+    expect(res.status).toBe(0);
+    expect(sb.server?.requests).toHaveLength(0);
+  });
+
+  it.skipIf(process.platform === 'win32')('L2: a group-writable hook.json is a no-op; 0600 works', async () => {
+    const sb = await sandbox();
+    chmodSync(sb.hookJson, 0o664);
+    await runHook('', sb, { session_id: 's', hook_event_name: 'Stop' });
+    expect(sb.server?.requests).toHaveLength(0);
+    chmodSync(sb.hookJson, 0o600);
+    await runHook('', sb, { session_id: 's', hook_event_name: 'Stop' });
+    expect(sb.server?.requests).toHaveLength(1);
+  });
+
+  it('configFileTrusted: owner and mode rules', () => {
+    expect(hook.configFileTrusted({ uid: 5, mode: 0o100600 }, 5)).toBe(true);
+    expect(hook.configFileTrusted({ uid: 6, mode: 0o100600 }, 5)).toBe(false);
+    expect(hook.configFileTrusted({ uid: 5, mode: 0o100620 }, 5)).toBe(false);
+    expect(hook.configFileTrusted({ uid: 5, mode: 0o100602 }, 5)).toBe(false);
+    expect(hook.configFileTrusted({ uid: 5, mode: 0o100644 }, 5)).toBe(true);
+    expect(hook.configFileTrusted({ uid: 0, mode: 0o100666 }, undefined)).toBe(true);
+  });
+
+  it('L3: sameInode detects a swapped object (dev/ino mismatch)', () => {
+    const a = { dev: 1, ino: 10 };
+    expect(hook.sameInode(a, { dev: 1, ino: 10 })).toBe(true);
+    expect(hook.sameInode(a, { dev: 1, ino: 11 })).toBe(false);
+    expect(hook.sameInode(a, { dev: 2, ino: 10 })).toBe(false);
+    expect(hook.sameInode(a, null)).toBe(false);
+  });
+
+  it('L4: win32 project outside %USERPROFILE% is refused (case-insensitive, canonical)', () => {
+    const up = 'C:\\Users\\Me';
+    expect(hook.winProjectOutsideUserProfile('c:\\users\\me\\code\\repo', up)).toBe(false);
+    expect(hook.winProjectOutsideUserProfile('C:\\Users\\Me', up)).toBe(false);
+    expect(hook.winProjectOutsideUserProfile('D:\\work\\repo', up)).toBe(true);
+    expect(hook.winProjectOutsideUserProfile('C:\\Users\\Meagan\\repo', up)).toBe(true);
+    expect(hook.winProjectOutsideUserProfile('C:\\Users\\Me\\..\\Other', up)).toBe(true);
+    expect(hook.winProjectOutsideUserProfile('C:\\Users\\Me\\repo', '')).toBe(true);
+  });
+
+  it('L5: homeGuard refuses any home match and skips when none resolve', () => {
+    expect(hook.homeGuard('/p', [], 'linux')).toEqual({ skip: true, isHome: false });
+    expect(hook.homeGuard('/p', ['/h1', '/p'], 'linux')).toEqual({ skip: false, isHome: true });
+    expect(hook.homeGuard('/p', ['/h1', '/h2'], 'linux')).toEqual({ skip: false, isHome: false });
+  });
+
+  it('L5: unresolvable HOME/USERPROFILE/homedir skips attribution (no README)', async () => {
+    const sb = await sandbox();
+    writeHookJson(sb, { attributionReadme: true });
+    writeFileSync(join(sb.configDir, 'attribution-README.md'), 'hi');
+    mkdirSync(join(sb.projectDir, '.git'));
+    const res = await spawnHook('node', JSON.stringify({ session_id: 's', hook_event_name: 'SessionStart' }), {
+      PATH: process.env.PATH,
+      HOME: '/nonexistent-home-xyz',
+      USERPROFILE: '/nonexistent-home-xyz',
+      TAGCONN_HOOK_CONFIG: sb.hookJson,
+      XDG_CONFIG_HOME: sb.configDir,
+      CLAUDE_PROJECT_DIR: sb.projectDir,
+    });
+    expect(res.status).toBe(0);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(existsSync(join(sb.projectDir, '.tagconn'))).toBe(false);
   });
 
   it('resolveConfigPaths: win32 uses %APPDATA%\\tagconn and backslashes', () => {
@@ -166,7 +275,7 @@ describe('node hook pure helpers', () => {
       configDir: 'C:\\Users\\me\\AppData\\Roaming\\tagconn',
     });
     expect(hook.resolveConfigPaths({}, 'win32', 'C:\\Users\\me').configDir).toBe('C:\\Users\\me\\AppData\\Roaming\\tagconn');
-    expect(hook.resolveConfigPaths({ TAGCONN_HOOK_CONFIG: 'D:\\cfg\\hook.json' }, 'win32', 'C:\\Users\\me').configDir).toBe('D:\\cfg');
+    expect(hook.resolveConfigPaths({ TAGCONN_HOOK_CONFIG: 'C:\\Users\\me\\cfg\\hook.json' }, 'win32', 'C:\\Users\\me').configDir).toBe('C:\\Users\\me\\cfg');
   });
 
   it('samePath / isFsRoot honour win32 case-insensitivity, drive roots and trailing separators', () => {

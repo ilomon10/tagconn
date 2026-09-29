@@ -15,6 +15,9 @@ import { join } from 'node:path';
 import { expect } from 'vitest';
 import { repoRoot } from './sandbox.ts';
 
+/** Valid for the node hook's token check (16-128 lowercase hex). */
+export const TEST_TOKEN = '0123456789abcdef0123456789abcdef';
+
 export type HookKind = 'sh' | 'node';
 export const HOOK_KINDS: HookKind[] = ['sh', 'node'];
 
@@ -109,7 +112,7 @@ export function writeHookJson(sandbox: HookSandbox, patch: Record<string, unknow
   const cfg = {
     version: 1,
     url: sandbox.server?.url ?? 'http://127.0.0.1:1',
-    token: 'testtoken',
+    token: TEST_TOKEN,
     attributionReadme: false,
     ...patch,
   };
@@ -120,13 +123,13 @@ export function writeHookJson(sandbox: HookSandbox, patch: Record<string, unknow
 export async function createHookSandbox(kind: HookKind = 'sh', serverMode: ServerMode = 'ok'): Promise<HookSandbox> {
   const root = mkdtempSync(join(tmpdir(), 'tagconn-hook-test-'));
   const home = join(root, 'home');
-  const configDir = join(root, 'config');
+  const configDir = join(home, 'config'); // inside home: the node hook only honours env config paths under home/OS config dirs
   const projectDir = join(root, 'project');
   mkdirSync(home, { recursive: true });
   mkdirSync(configDir, { recursive: true });
   mkdirSync(projectDir, { recursive: true });
   const curlConf = join(configDir, 'curl.conf');
-  writeFileSync(curlConf, 'header = "x-office-token: testtoken"\nurl = "http://127.0.0.1:4317/api/hooks"\n', {
+  writeFileSync(curlConf, `header = "x-office-token: ${TEST_TOKEN}"\nurl = "http://127.0.0.1:4317/api/hooks"\n`, {
     mode: 0o600,
   });
   const sandbox: HookSandbox = {

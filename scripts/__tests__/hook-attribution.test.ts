@@ -19,6 +19,7 @@ import {
   makeFakeCurlBin,
   runHook as runHookWith,
   spawnHook,
+  TEST_TOKEN,
   writeHookJson,
 } from './support/hook-harness.ts';
 
@@ -95,7 +96,7 @@ describe('office-hook basics', () => {
     else {
       expect(sandbox.server?.requests).toHaveLength(1);
       expect(sandbox.server?.requests[0]?.url).toBe('/api/hooks');
-      expect(sandbox.server?.requests[0]?.headers['x-office-token']).toBe('testtoken');
+      expect(sandbox.server?.requests[0]?.headers['x-office-token']).toBe(TEST_TOKEN);
       expect(sandbox.server?.requests[0]?.headers['content-type']).toBe('application/json');
     }
     expect(log).toContain('"session_id":"sess-1"');

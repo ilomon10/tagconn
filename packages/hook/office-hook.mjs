@@ -16,7 +16,9 @@
 //   configDir is TAGCONN_CONFIG_DIR, else %APPDATA%\tagconn (win32) or
 //   $XDG_CONFIG_HOME/tagconn or ~/.config/tagconn. The event is POSTed to <url>/api/hooks
 //   with the x-office-token header; the README template is <configDir>/attribution-README.md.
-//   (The sh hook does not check curl.conf's mode, so neither does this.)
+//   The env overrides are honoured only inside the user's home / OS config dir. On POSIX hook.json
+//   must be owned by the user and not group/world-writable; the token must be 16-128 hex chars.
+//   (The sh hook does not check curl.conf's mode.)
 //
 // Attribution (SessionStart only, see office-hook.sh): the .tagconn/README.md write (only
 // when attributionReadme is true) and the .tagconn/office.json import POST (on unless
@@ -26,7 +28,7 @@
 // finishing inline, would add filesystem work plus a second POST (up to a whole second)
 // to the latency Claude Code waits on, while a spawn costs ~1 ms in the parent.
 import { spawn } from 'node:child_process';
-import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { closeSync, constants as fsc, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import net from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -58,16 +60,73 @@ const dbg = (...a) => {
  *  OS default (this is what makes a custom config dir work). */
 export function resolveConfigPaths(env, platform, home, scriptDir, exists) {
   const p = platform === 'win32' ? path.win32 : path.posix;
-  if (env.TAGCONN_HOOK_CONFIG) {
+  // The env overrides are honoured only when they land inside the user's home or the OS config dir:
+  // a project-level env (.env, settings) could otherwise point the hook at a repo-relative config
+  // (token + URL of an attacker's choosing). Otherwise they are ignored and we fall back.
+  const roots = allowedConfigRoots(env, platform, home);
+  const okEnv = (v) => insideAny(p.resolve(v), roots, platform);
+  if (env.TAGCONN_HOOK_CONFIG && okEnv(env.TAGCONN_HOOK_CONFIG)) {
     const hookJson = p.resolve(env.TAGCONN_HOOK_CONFIG);
     return { hookJson, configDir: p.dirname(hookJson) };
   }
   let configDir;
-  if (env.TAGCONN_CONFIG_DIR) configDir = p.resolve(env.TAGCONN_CONFIG_DIR);
+  if (env.TAGCONN_CONFIG_DIR && okEnv(env.TAGCONN_CONFIG_DIR)) configDir = p.resolve(env.TAGCONN_CONFIG_DIR);
   else if (scriptDir && exists && exists(p.join(scriptDir, 'hook.json'))) configDir = scriptDir;
   else if (platform === 'win32') configDir = p.join(env.APPDATA || p.join(home, 'AppData', 'Roaming'), 'tagconn');
   else configDir = p.join(env.XDG_CONFIG_HOME || p.join(home, '.config'), 'tagconn');
   return { hookJson: p.join(configDir, 'hook.json'), configDir };
+}
+
+/** Roots an env-supplied config path may live under: home plus the OS config dirs. */
+export function allowedConfigRoots(env, platform, home) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const roots = [home];
+  if (platform === 'win32') roots.push(env.APPDATA || p.join(home, 'AppData', 'Roaming'));
+  else roots.push(env.XDG_CONFIG_HOME || p.join(home, '.config'));
+  return roots.filter(Boolean).map((r) => p.resolve(r));
+}
+
+/** True when `target` is one of `roots` or below it (case-insensitive on win32). Lexical. */
+export function insideAny(target, roots, platform) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const norm = (x) => (platform === 'win32' ? p.resolve(x).toLowerCase() : p.resolve(x));
+  const t = norm(target);
+  return roots.some((r) => {
+    const rel = p.relative(norm(r), t);
+    return rel === '' || (!rel.startsWith('..') && !p.isAbsolute(rel));
+  });
+}
+
+/** True when a and b are the same filesystem object (dev + ino); the symlink-swap check. */
+export function sameInode(a, b) {
+  return !!a && !!b && a.dev === b.dev && a.ino === b.ino;
+}
+
+/** L4: win32 has no cheap ownership check, so README writes and imports are limited to projects
+ *  under %USERPROFILE% (both canonical paths, compared case-insensitively). */
+export function winProjectOutsideUserProfile(project, userProfile) {
+  if (!userProfile) return true;
+  return !insideAny(project, [userProfile], 'win32');
+}
+
+/** L1: 16-128 lowercase hex chars, and no CR/LF/NUL (header injection) in any header value. */
+export function isValidToken(t) {
+  return typeof t === 'string' && /^[0-9a-f]{16,128}$/.test(t);
+}
+export function hasHeaderBreak(v) {
+  return typeof v === 'string' && /[\r\n\0]/.test(v);
+}
+
+/** L2: a POSIX hook.json must be ours and not group/world-writable. */
+export function configFileTrusted(st, uid) {
+  if (uid === undefined) return true; // win32: no POSIX ownership
+  return st.uid === uid && (st.mode & 0o022) === 0;
+}
+
+/** L5: canonical home candidates; the fail-closed guard needs at least one and refuses all of them. */
+export function homeGuard(project, homes, platform) {
+  if (!homes.length) return { skip: true, isHome: false };
+  return { skip: false, isHome: homes.some((h) => samePath(project, h, platform)) };
 }
 
 /** UUID-shaped, lowercase hex only: the same check as the sh hook's case globs. */
@@ -132,9 +191,20 @@ async function readStdin() {
 
 function loadConfig(hookJson) {
   try {
-    const cfg = JSON.parse(readFileSync(hookJson, 'utf8'));
+    const fd = openSync(hookJson, 'r');
+    let text;
+    try {
+      const st = fstatSync(fd);
+      if (!st.isFile()) return null;
+      if (!configFileTrusted(st, typeof process.getuid === 'function' ? process.getuid() : undefined)) return null;
+      text = readFileSync(fd, 'utf8');
+    } finally {
+      closeSync(fd);
+    }
+    const cfg = JSON.parse(text);
     if (!cfg || typeof cfg !== 'object' || cfg.version !== 1) return null;
-    if (typeof cfg.url !== 'string' || typeof cfg.token !== 'string' || !cfg.token) return null;
+    if (typeof cfg.url !== 'string' || !isValidToken(cfg.token)) return null;
+    if (hasHeaderBreak(cfg.token) || hasHeaderBreak(cfg.url)) return null;
     const u = new URL(cfg.url);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
     return {
@@ -242,12 +312,37 @@ function canonicalDir(dir) {
   }
 }
 
+/** True when .tagconn (opened without following symlinks) is the directory `expected` lstat-ed.
+ *  win32 cannot open a directory, and its ino is not reliable, so it relies on the lstat alone. */
+function sameDirInode(dir, expected) {
+  if (process.platform === 'win32') return true;
+  try {
+    const fd = openSync(dir, fsc.O_RDONLY | (fsc.O_NOFOLLOW ?? 0) | (fsc.O_DIRECTORY ?? 0));
+    try {
+      return sameInode(expected, fstatSync(fd));
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+function writeReadme(dir, data) {
+  writeFileSync(path.join(dir, 'README.md'), data, { flag: fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | (fsc.O_NOFOLLOW ?? 0) });
+}
+
 /** The detached attribution step. Every guard mirrors the sh subshell. */
 async function attribution(cfg, configDir, sid) {
   const platform = process.platform;
   const rd = canonicalDir(process.env.CLAUDE_PROJECT_DIR);
   if (!rd) return;
-  const rh = canonicalDir(process.env.HOME || process.env.USERPROFILE || homedir());
+  // L5: fail closed. Every home candidate that resolves counts; none resolving skips attribution.
+  const homes = [process.env.HOME, process.env.USERPROFILE, homedir()].map(canonicalDir).filter(Boolean);
+  const guard = homeGuard(rd, homes, platform);
+  if (guard.skip) return;
+  // L4: win32 cannot check ownership (owned() is always true there), so limit to %USERPROFILE%.
+  if (platform === 'win32' && winProjectOutsideUserProfile(rd, canonicalDir(process.env.USERPROFILE))) return;
   const tpl = path.join(configDir, 'attribution-README.md');
 
   // README write: git repo we own, never $HOME or a root, never touch an existing .tagconn.
@@ -257,7 +352,7 @@ async function attribution(cfg, configDir, sid) {
       cfg.attributionReadme &&
       owned(rdStat) &&
       existsSync(path.join(rd, '.git')) &&
-      !samePath(rd, rh, platform) &&
+      !guard.isHome &&
       !isFsRoot(rd, platform)
     ) {
       const t = path.join(rd, '.tagconn');
@@ -268,13 +363,13 @@ async function attribution(cfg, configDir, sid) {
           const data = readFileSync(tpl);
           mkdirSync(t); // single level, not recursive: fails if it appeared meanwhile
           const st = lstatOrNull(t);
-          if (st?.isDirectory() && !st.isSymbolicLink()) {
-            writeFileSync(path.join(t, 'README.md'), data, { flag: 'wx' }); // never overwrite
+          if (st?.isDirectory() && !st.isSymbolicLink() && sameDirInode(t, st)) {
+            writeReadme(t, data); // never overwrites
           }
         } else if (existing.isDirectory() && !existing.isSymbolicLink() && owned(existing) && isAgentOnlyDir(t)) {
           // Agents may create .tagconn/work and .gitignore before the hook runs; that is not an
           // opt-out (an opt-out is a plain FILE named .tagconn). Add only README.md, never overwrite.
-          writeFileSync(path.join(t, 'README.md'), readFileSync(tpl), { flag: 'wx' });
+          if (sameDirInode(t, existing)) writeReadme(t, readFileSync(tpl));
         }
       }
     }
@@ -291,10 +386,12 @@ async function attribution(cfg, configDir, sid) {
     const f = path.join(t, 'office.json');
     const fs0 = lstatOrNull(f);
     if (!fs0 || !fs0.isFile() || fs0.isSymbolicLink() || !owned(fs0)) return; // isFile: never open a FIFO
-    const fd = openSync(f, 'r');
+    // O_NOFOLLOW/O_NONBLOCK where defined (not on win32); the fstat must be the object we lstat-ed.
+    const fd = openSync(f, fsc.O_RDONLY | (fsc.O_NOFOLLOW ?? 0) | (fsc.O_NONBLOCK ?? 0));
     let raw;
     try {
-      if (!fstatSync(fd).isFile()) return;
+      const fst = fstatSync(fd);
+      if (!fst.isFile() || !sameInode(fs0, fst)) return;
       const buf = Buffer.alloc(IMPORT_MAX_BYTES + 1);
       const n = readSync(fd, buf, 0, buf.length, 0); // read ONCE (no measure-then-read window)
       if (n <= 0 || n > IMPORT_MAX_BYTES) return;
@@ -341,7 +438,7 @@ async function main() {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
-        env: { ...process.env, TAGCONN_HOOK_SID: sanitizeSessionId(lastStringField(body, 'session_id')) },
+        env: { ...childEnv(process.env), TAGCONN_HOOK_SID: sanitizeSessionId(lastStringField(body, 'session_id')) },
       });
       child.on('error', () => {});
       child.unref();
@@ -350,6 +447,14 @@ async function main() {
     }
   }
   clearTimeout(failsafe);
+}
+
+/** L2: the detached child must not inherit interpreter-altering env. */
+export function childEnv(env) {
+  const e = { ...env };
+  delete e.NODE_OPTIONS;
+  delete e.NODE_TLS_REJECT_UNAUTHORIZED;
+  return e;
 }
 
 const isEntry = (() => {
