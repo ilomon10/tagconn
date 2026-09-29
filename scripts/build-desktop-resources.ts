@@ -294,7 +294,12 @@ function extractArchive(archive: string, ext: NodeDist['ext'], into: string): vo
   mkdirSync(into, { recursive: true });
   const r =
     ext === 'zip' && process.platform === 'win32'
-      ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force', archive, into], { stdio: 'inherit' })
+      ? // -Command doesn't bind extra argv to $args, so the paths travel in env vars (never parsed as code).
+        spawnSync(
+          join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+          ['-NoProfile', '-NonInteractive', '-Command', 'Expand-Archive -LiteralPath $env:TAGCONN_ARCHIVE -DestinationPath $env:TAGCONN_DEST -Force'],
+          { stdio: 'inherit', env: { ...process.env, TAGCONN_ARCHIVE: archive, TAGCONN_DEST: into } },
+        )
       : spawnSync('tar', ['-xf', archive, '-C', into], { stdio: 'inherit' });
   if (r.error) throw new Error(`cannot extract ${basename(archive)}: ${r.error.message} (need ${ext === 'zip' ? 'PowerShell or bsdtar' : 'tar with xz'})`);
   if (r.status !== 0) throw new Error(`extracting ${basename(archive)} failed (exit ${r.status})`);

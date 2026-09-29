@@ -166,10 +166,11 @@ jobs:
           BUNDLES: ${{ matrix.bundles }}
           APPIMAGE_EXTRACT_AND_RUN: '1'
         run: |
-          # A file, not inline JSON: quoting inline JSON through pnpm.cmd on Windows is fragile.
-          echo '{"bundle":{"createUpdaterArtifacts":false}}' > apps/desktop/src-tauri/tauri.no-updater.conf.json
-          pnpm --filter @tagconn/desktop tauri build \
-            --config src-tauri/tauri.bundle.conf.json --config src-tauri/tauri.no-updater.conf.json --bundles "$BUNDLES"
+          # ONE merged config file: a second --config replaces the first instead of merging (that dropped
+          # externalBin, so no tagconn-node was bundled). A file, not inline JSON: quoting through pnpm.cmd on Windows
+          # is fragile.
+          node -e "const f='apps/desktop/src-tauri/';const c=JSON.parse(require('fs').readFileSync(f+'tauri.bundle.conf.json','utf8'));c.bundle.createUpdaterArtifacts=false;require('fs').writeFileSync(f+'tauri.ci.conf.json',JSON.stringify(c,null,2))"
+          pnpm --filter @tagconn/desktop tauri build --config src-tauri/tauri.ci.conf.json --bundles "$BUNDLES"
 
       # Post-build smoke on Windows: silently install the NSIS setup into a temp dir, then run the INSTALLED node +
       # supervisor headless with a scripted RPC (app.info, config.set, service.start server, health, service.stop),
