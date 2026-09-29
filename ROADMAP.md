@@ -195,7 +195,9 @@ default, Docker optional; installer + auto-update. Design: `docs/design/desktop.
   - [x] 11.8 Final-pass fixes: CI/packaging M1–M4, L7, L8 [x]; runner/setup L1, L3, L4, N16 [x]; Tauri L2, L5, L6, M4 rename + QA L, G, Lows + early runner watchdog [x] (cargo check clean)
   - [ ] Security review (node hook, token ACLs, Windows runner policy + deny paths, supervisor args, Tauri capabilities, updater signature)
   - [x] QA: Linux control panel/settings/logs/tray/quit/a11y pass: 3 bugs (A wizard hijacks the panel on a port re-check, B open-office-on-start race, M wizard focus loss) + D–L → 11.6; Linux sandboxed wizard run [x] + AppImage; Windows CI install smoke; manual Windows pass with the user; updater across two pre-releases
-  - [ ] Release v0.5.0
+  - [x] Release: v0.5.0 tagged (its CI packaging failed: merged-config, dpkg path check, Windows unzip), v0.5.1 published with the preview installers (unsigned, updates off) + SHA256SUMS; ghcr.io/ilomon10/tagconn-server:0.5.1 public; Windows CI build + silent install + headless smoke green
+  - [ ] Signed releases: user creates the `release` environment (reviewers, v* tag rule), a v* tag ruleset and the signing key; PM sets the updater pubkey → updates on
+  - [ ] Real-Windows checklist (docs/design/desktop.md, 17 items; N4 path aliases first) → drop the "preview" label
 
 ## Backlog
 
