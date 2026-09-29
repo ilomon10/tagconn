@@ -1,6 +1,9 @@
 # tagconn Desktop
 
-(v0.5.0, in development)
+> **Preview (v0.5.0).** The installers are not code-signed (Windows SmartScreen will warn), in-app updates are
+> switched off until signed releases start (install new versions by hand), and the **Windows build has not been
+> tested on a real machine yet**: treat it as experimental and please report problems at
+> https://github.com/ilomon10/tagconn/issues. The repo/Docker setup (README, Option 2) is the stable path.
 
 tagconn Desktop is a control panel app — like XAMPP — for Windows and Linux. When you open it, a setup
 wizard checks your system, installs the hooks that connect Claude Code to tagconn, starts the

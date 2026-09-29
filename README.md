@@ -13,7 +13,7 @@ handoff report.
 
 Using a running tagconn day to day? Start with the **[user guide](docs/guide/README.md)**:
 
-- **[tagconn Desktop](docs/guide/desktop.md)** — the control panel app for Windows and Linux (coming in v0.5.0).
+- **[tagconn Desktop](docs/guide/desktop.md)** — the control panel app for Windows and Linux (preview since v0.5.0).
 - [Getting started](docs/guide/getting-started.md) — run from source with Docker or dev mode.
 - [Pairing your browser](docs/guide/pairing.md) — why viewing is public but changes need an admin session.
 - [Runner & quests](docs/guide/runner-and-quests.md) — run Claude from the browser on your machine.
@@ -60,7 +60,7 @@ timeout) so it can never slow down or break a Claude Code session, even if the s
 
 ## Quick start
 
-### Option 1: tagconn Desktop (coming in v0.5.0)
+### Option 1: tagconn Desktop (preview)
 
 Download the control panel app from [GitHub Releases](https://github.com/ilomon10/tagconn/releases)
 (Windows or Linux). Run the installer, and the setup wizard checks your system, installs
