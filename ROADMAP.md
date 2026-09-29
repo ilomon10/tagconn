@@ -182,7 +182,7 @@ default, Docker optional; installer + auto-update. Design: `docs/design/desktop.
   - [x] E `apps/supervisor`: stdio JSON-RPC, service manager (backoff, health, logs, tree-kill), setup, Docker mode, auto-pair [Developer]
   - [x] F `apps/desktop` (Tauri 2; wizard + service start + paired office verified on Linux; supervisor orphan-spin found and fixed): sidecar + tray + autostart/updater/single-instance; React wizard + control panel [Developer]
 - Wave 3: packaging + docs
-  - [~] G CI `desktop.yml` (windows + ubuntu matrix, node sidecar, NSIS/AppImage/deb, signed updater, ghcr images) [Developer]
+  - [x] G CI `desktop.yml` (Linux AppImage + .deb built and smoke-tested locally; the Windows job runs on the first tag/dispatch) (windows + ubuntu matrix, node sidecar, NSIS/AppImage/deb, signed updater, ghcr images) [Developer]
   - [x] H Docs: `docs/guide/desktop.md`, README download-first quick start, CLAUDE.md commands [Tech writer]
 - Gates
   - [x] Wave 1 sandboxed e2e QA pass (node hook with 3 real haiku sessions, webDir, uninstall); fixed: settings.json line/column, install preflight
