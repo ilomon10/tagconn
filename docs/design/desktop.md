@@ -198,6 +198,16 @@ Use a canary folder (never real dotfiles) and haiku with a small budget.
    switch the check to well-known SIDs (S-1-5-18, S-1-5-32-544).
 8. Whether `CLAUDE_CONFIG_DIR` is honoured on Windows. Sandboxed Windows tests depend on it.
 9. better-sqlite3 13 loads under the bundled node 24.21 on win-x64.
+11. The Get-Acl/SID ACL checks under PowerShell Constrained Language Mode (AppLocker/WDAC machines). If
+    `.Translate()` is blocked they fail closed and install is refused, so that case needs a documented way out.
+12. Office window: `target=_blank` links in WebView2 open no unrestricted popup; they go to the system browser.
+13. The WebView2 profile location, and whether a remembered admin token sits in Local Storage there (quests are
+    denied that dir).
+14. `where.exe $PATH:claude` vs setup's PATH walk for .cmd/.bat in the same dir; user-writable machine-PATH
+    dirs (D:\ roots, C:\nvm4w, C:\tools) are write-denied to quests.
+15. Per-machine or custom install dirs are covered by `bundleDir`/`hookNodePath`.
+16. Stale-PID cleanup round-trip (taskkill + CreationDate start time) after the sidecar is killed.
+17. Updater: a tampered update is refused; an NSIS passive update across two pre-releases.
 
 **Wave 1 security review (2026-09-29):** 1 High, 4 Medium, 12 Low; fixes are tracked as ROADMAP 11.3.
 Fixes land in S1 (runner/shared: Windows deny lists incl. tagconn's own dirs, PowerShell deny,
@@ -212,6 +222,10 @@ quest planting `claude.cmd` in a user PATH dir, N4 Windows path aliases in deny 
 N5 the pairing code on the browser-opener argv. Fixes are tracked as ROADMAP 11.4. If the N4 canary shows the
 matcher doesn't canonicalise paths, Windows quests must become project-read-only or run under a
 restricted token.
+
+**Final security pass (2026-09-29):** no Critical/High. M1–M4 (release pipeline and packaging) and L1–L8 are
+tracked as ROADMAP 11.8. N4 (path aliases) and N12 (the hook trusting env overrides lexically, an accepted
+risk: a project able to set env can already add hooks) remain.
 
 **Windows follow-ups for the security review.** Consider denying more Windows-specific sensitive
 locations for quests, beyond the `~/` set duplicated in both forms: `AppData\Roaming` credential
