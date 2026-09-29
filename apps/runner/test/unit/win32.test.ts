@@ -51,7 +51,7 @@ export function winWithGoodAcl(file: string): Platform {
     run: (command) => {
       if (command.endsWith('whoami.exe')) return { status: 0, stdout: '"desktop\\ann","S-1-5-21-1-2-3-1001"\r\n' };
       if (command.endsWith('icacls.exe')) return { status: 0, stdout: `${file} DESKTOP\\ann:(F)\r\n       NT AUTHORITY\\SYSTEM:(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n` };
-      return { status: 0, stdout: `01/02/2026  10:00 AM               123 DESKTOP\\ann ${file.split('/').pop()}\r\n` };
+      return { status: 0, stdout: 'DESKTOP\\ann\r\n' };
     },
   });
 }
@@ -144,6 +144,18 @@ describe('win32 claude path resolution', () => {
     expect(resolveClaudeLaunch('claude', win({ files: { [cmd]: SHIM }, where: [cmd] }))).toBeUndefined();
     expect(resolveClaudeLaunch('claude', win({ files: {} }))).toBeUndefined();
     expect(resolveClaudePath('claude', win({ files: {} }))).toBeUndefined();
+  });
+
+  it('N3: rejects a shim whose target escapes its dir, or is not the claude-code layout', () => {
+    const cmd = `${NPM}\\claude.cmd`;
+    const evil = 'C:\\Users\\Ann\\evil.exe';
+    const up = '@ECHO off\r\n"%dp0%\\..\\..\\evil.exe"   %*\r\n';
+    expect(resolveClaudeLaunch('claude', win({ files: { [cmd]: up, [evil]: '' }, where: [cmd] }))).toBeUndefined();
+    const up2 = '@ECHO off\r\n"%dp0%\\node_modules\\..\\..\\..\\evil.exe"   %*\r\n';
+    expect(resolveClaudeLaunch('claude', win({ files: { [cmd]: up2, [evil]: '' }, where: [cmd] }))).toBeUndefined();
+    const other = `${NPM}\\node_modules\\other\\cli.js`;
+    const sh = '@ECHO off\r\n"%dp0%\\node_modules\\other\\cli.js"   %*\r\n';
+    expect(resolveClaudeLaunch('claude', win({ files: { [cmd]: sh, [other]: '' }, where: [cmd] }))).toBeUndefined();
   });
 
   it('an absolute claudePath is used as-is (no where.exe)', () => {

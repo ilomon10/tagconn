@@ -77,6 +77,8 @@ export function loadRunnerConfig(configPath: string, plat: Platform = currentPla
     ...cfg.trustOverrideDirs.map((p): [string, string] => ['trustOverrideDirs', p]),
     ['stateDir', cfg.stateDir],
     ['questMcpConfigPath', cfg.questMcpConfigPath],
+    ['bundleDir', cfg.bundleDir],
+    ['hookNodePath', cfg.hookNodePath],
   ];
   for (const [field, value] of pathFields) {
     if (value !== undefined && !plat.path.isAbsolute(value)) throw new ConfigError(`runner config ${abs}: ${field} entry "${value}" is not an absolute path on this platform`);

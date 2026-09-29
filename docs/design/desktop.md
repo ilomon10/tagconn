@@ -153,7 +153,9 @@ The README template stays `<configDir>/attribution-README.md`. The sh hook keeps
 ### Real Windows machine checklist (collected from Waves 0–1; run with the user)
 Use a canary folder (never real dotfiles) and haiku with a small budget.
 1. The hook in exec form (`command` = node.exe, `args` = [office-hook.mjs]) fires, and an event reaches the office.
-2. `where.exe claude` output for the native, npm (`claude.cmd`) and winget installs. The runner's shim
+2. `where.exe claude` output for the native, npm (`claude.cmd`) and winget installs. The runner and setup now
+   accept an npm shim only if its target is exactly `node_modules\@anthropic-ai\claude-code\cli.js` or
+   `...\bin\claude.exe` inside the shim's dir: confirm the current npm shim matches, or widen the allowed layout. The runner's shim
    parsing launches `node cli.js` the same way the `.cmd` does.
 3. The deny-rule path form: which of `//C:/Users/<u>/...` and `C:/Users/<u>/...` the CLI honours
    (canary write refused). Then drop the other form. Also try the canary through these aliases (each must

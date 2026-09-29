@@ -35,6 +35,39 @@ export function windowsBases(env: NodeJS.ProcessEnv, home: string): { appData: s
   };
 }
 
+/** Lower-cased, trailing-slash-free form used to compare Windows paths. */
+function normWin(p: string): string {
+  return w.normalize(p).replace(/[\\/]+$/, '').toLowerCase();
+}
+
+function isUnder(dir: string, base: string): boolean {
+  const d = normWin(dir);
+  const b = normWin(base);
+  return d.startsWith(`${b}\\`);
+}
+
+/**
+ * N3: every PATH entry under the user's profile, %LOCALAPPDATA% or %APPDATA% is a place a quest could plant a
+ * `claude.cmd`/`claude.exe` (or any tool the user later runs) that the runner or the user would pick up first.
+ * `%VAR%` references are expanded from `env`; relative entries are ignored.
+ */
+export function userPathEntries(env: NodeJS.ProcessEnv, home: string): string[] {
+  const key = Object.keys(env).find((k) => k.toLowerCase() === 'path');
+  const raw = key ? (env[key] ?? '') : '';
+  const { appData, localAppData, profile } = windowsBases(env, home);
+  const bases = [profile, localAppData, appData];
+  const expand = (e: string) => e.replace(/%([^%]+)%/g, (m, name: string) => {
+    const k = Object.keys(env).find((x) => x.toLowerCase() === name.toLowerCase());
+    return k ? (env[k] ?? m) : m;
+  });
+  return dedupe(
+    raw
+      .split(';')
+      .map((e) => expand(e.trim().replace(/^"|"$/g, '')))
+      .filter((e) => e !== '' && !e.includes('%') && w.isAbsolute(e) && bases.some((b) => isUnder(e, b))),
+  );
+}
+
 /**
  * The Windows sensitive-path deny list, as complete `Tool(path)` rules in both absolute forms.
  *  - Read+Edit (credential stores and tokens): read AND write denied.
@@ -67,6 +100,15 @@ export function windowsSensitiveDenyRules(env: NodeJS.ProcessEnv, home: string):
     j(appData, 'npm', '**'),
     j(localAppData, 'pnpm', '**'),
     j(profile, '.local', 'bin', '**'),
+    // N3: well-known user bin dirs (some may not be on PATH yet) plus every PATH entry under the user's dirs.
+    j(localAppData, 'Microsoft', 'WindowsApps', '**'),
+    j(profile, '.cargo', 'bin', '**'),
+    j(profile, 'scoop', 'shims', '**'),
+    j(appData, 'Python', '*', 'Scripts', '**'),
+    j(localAppData, 'Programs', 'Python', '*', 'Scripts', '**'),
+    j(profile, '.bun', 'bin', '**'),
+    j(profile, '.deno', 'bin', '**'),
+    ...userPathEntries(env, home).map((e) => j(e, '**')),
     j(profile, '.local', 'share', 'claude', '**'),
     j(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', '**'),
     ...docsDirs.flatMap((d) => [j(d, 'PowerShell', '*profile.ps1'), j(d, 'WindowsPowerShell', '*profile.ps1')]),

@@ -662,6 +662,8 @@ export const QUEST_DENY_READ_GLOBS = [
   '~/.git-credentials',
   '~/.config/gh/**',
   '~/.config/tagconn/**',
+  // N11: the desktop data dir (office.db) and the stable hook node.
+  '~/.local/share/tagconn/**',
   '~/.claude/.credentials.json',
   '~/.claude.json',
   '**/.env',
@@ -714,6 +716,11 @@ export const DEFAULT_QUEST_ALWAYS_DENY = [
   'Write(~/.config/tagconn/**)',
   'MultiEdit(~/.config/tagconn/**)',
   'NotebookEdit(~/.config/tagconn/**)',
+  // N11: desktop data dir + stable hook node (a planted hook node would run at every Claude Code hook).
+  'Edit(~/.local/share/tagconn/**)',
+  'Write(~/.local/share/tagconn/**)',
+  'MultiEdit(~/.local/share/tagconn/**)',
+  'NotebookEdit(~/.local/share/tagconn/**)',
   'Edit(~/.bashrc)',
   'Write(~/.bashrc)',
   'Edit(~/.zshrc)',
@@ -837,6 +844,9 @@ export const RunnerLocalConfigSchema = z.object({
   claudePath: z.string().min(1).default('claude'),
   /** Default: $XDG_STATE_HOME/tagconn or ~/.local/state/tagconn (neutral dir, docs copy, ledger, per-run copies). */
   stateDir: AbsPath.optional(),
+  /** N11: the desktop app's bundle dir and stable hook node (set by the supervisor); quests can never edit them. */
+  bundleDir: AbsPath.optional(),
+  hookNodePath: AbsPath.optional(),
   receptionistSandbox: z.enum(['auto', 'bwrap', 'none']).default('auto'),
   /**
    * Quest process containment. `auto` = systemd scope when available. Without one, quests that

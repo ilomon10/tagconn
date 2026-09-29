@@ -38,6 +38,8 @@ export interface Platform {
 export interface RunOptions {
   timeoutMs?: number;
   cwd?: string;
+  /** Extra environment variables for the child (merged over the platform env); for values that must not be on argv. */
+  env?: Record<string, string>;
 }
 
 const DEFAULT_RUN_TIMEOUT_MS = 10_000;
@@ -75,7 +77,7 @@ export function makePlatform(overrides: Partial<Platform>): Platform {
     run: (command, args, opts) => {
       const env = overrides.env ?? process.env;
       const cwd = opts?.cwd ?? (isWin32 ? systemRoot(env) : '/');
-      const r = spawnSync(command, args, { encoding: 'utf8', windowsHide: true, timeout: opts?.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, cwd });
+      const r = spawnSync(command, args, { encoding: 'utf8', windowsHide: true, timeout: opts?.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, cwd, ...(opts?.env ? { env: { ...env, ...opts.env } } : {}) });
       return { status: r.status, stdout: r.stdout ?? '' };
     },
     kill: (pid, signal) => process.kill(pid, signal),
@@ -108,6 +110,9 @@ export interface ClaudeLaunch {
 /** A `%dp0%\...\target` reference inside an npm-generated `.cmd` shim. */
 const SHIM_TARGET_RE = /"%dp0%[\\/]+([^"%]+\.(?:exe|js|mjs|cjs))"/gi;
 
+/** The only shim targets accepted (relative to the shim's dir): npm's cli.js, or the native binary its postinstall drops. */
+const SHIM_ALLOWED_REL = ['node_modules\\@anthropic-ai\\claude-code\\cli.js', 'node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe'];
+
 /** Parses an npm `.cmd` shim into a real launch target; undefined when it calls nothing we recognise. */
 export function parseCmdShim(shimPath: string, platform: Platform): ClaudeLaunch | undefined {
   let text: string;
@@ -120,7 +125,13 @@ export function parseCmdShim(shimPath: string, platform: Platform): ClaudeLaunch
   const targets = [...text.matchAll(SHIM_TARGET_RE)].map((m) => m[1] ?? '').filter(Boolean);
   const target = targets[targets.length - 1];
   if (!target) return undefined;
+  // N3: fail closed unless the target is the known claude-code layout INSIDE the shim's own dir tree.
+  if (target.split(/[\\/]+/).some((seg) => seg === '..' || seg === '.')) return undefined;
   const abs = platform.path.resolve(dir, target);
+  const rel = platform.path.relative(dir, abs);
+  if (!rel || rel.startsWith('..') || platform.path.isAbsolute(rel)) return undefined;
+  const relNorm = rel.toLowerCase().replace(/\//g, '\\');
+  if (!SHIM_ALLOWED_REL.some((a) => relNorm === a)) return undefined;
   if (!platform.exists(abs)) return undefined;
   if (abs.toLowerCase().endsWith('.exe')) return { command: safeRealpath(abs, platform), args: [] };
   const localNode = platform.path.join(dir, 'node.exe');

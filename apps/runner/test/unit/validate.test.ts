@@ -68,6 +68,24 @@ describe('validateQuestStart', () => {
     }
   });
 
+  it('N11: bundleDir and hookNodePath are edit-denied; the tagconn data dir is edit- and read-denied by default', () => {
+    const { project, claudeJson } = setup();
+    const result = validateQuestStart(
+      { projectDir: project, permissionMode: 'acceptEdits', allowedTools: ['Read'], disallowedTools: [] },
+      { ...cfg, allowedProjectDirs: [project], bundleDir: '/opt/tagconn/', hookNodePath: '/home/u/.local/share/tagconn/node' },
+      caps,
+      claudeJson,
+      new Map(),
+    );
+    if (!result.ok) throw new Error('expected ok');
+    for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
+      expect(result.disallowedTools).toContain(`${tool}(//opt/tagconn/**)`);
+      expect(result.disallowedTools).toContain(`${tool}(//home/u/.local/share/tagconn/node)`);
+      expect(result.disallowedTools).toContain(`${tool}(~/.local/share/tagconn/**)`);
+    }
+    expect(result.disallowedTools).toContain('Read(~/.local/share/tagconn/**)');
+  });
+
   it('dir_not_allowed for a dir outside allowedProjectDirs', () => {
     const { project, claudeJson } = setup();
     const ledger: Ledger = new Map();

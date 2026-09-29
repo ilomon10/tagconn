@@ -31,6 +31,24 @@ const forms = (tool: string, winPath: string) => {
   return [`${tool}(//C:${rest})`, `${tool}(C:${rest})`, `${tool}(//c:${rest})`, `${tool}(c:${rest})`];
 };
 
+describe('N3: PATH entries under the user dirs are edit-denied', () => {
+  const env = { ...ENV, Path: `C:\\Windows\\System32;${HOME}\\AppData\\Local\\Microsoft\\WindowsApps;D:\\tools;%USERPROFILE%\\mybin;${HOME}\\AppData\\Roaming\\Foo\\;relative\\dir;${HOME}` };
+  const rules = windowsSensitiveDenyRules(env, HOME);
+  it('emits both forms for every tool for each user PATH entry, and the well-known bin dirs', () => {
+    for (const d of [`${HOME}\\AppData\\Local\\Microsoft\\WindowsApps`, `${HOME}\\mybin`, `${HOME}\\AppData\\Roaming\\Foo`]) {
+      for (const tool of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) expect(rules, `${tool} ${d}`).toEqual(expect.arrayContaining(forms(tool, `${d}\\**`)));
+    }
+    const bare = windowsSensitiveDenyRules(ENV, HOME);
+    for (const d of ['.cargo\\bin', 'scoop\\shims', '.bun\\bin', '.deno\\bin', 'AppData\\Local\\Microsoft\\WindowsApps', 'AppData\\Roaming\\Python\\*\\Scripts', 'AppData\\Local\\Programs\\Python\\*\\Scripts']) {
+      expect(bare, d).toEqual(expect.arrayContaining(forms('Write', `${HOME}\\${d}\\**`)));
+    }
+  });
+  it('ignores system, foreign-drive, relative and whole-profile entries', () => {
+    expect(rules.some((r) => r.includes('System32') || r.includes('D:/tools') || r.includes('relative'))).toBe(false);
+    expect(rules).not.toContain('Edit(//C:/Users/Ann/**)');
+  });
+});
+
 describe('windowsSensitiveDenyRules', () => {
   const rules = windowsSensitiveDenyRules(ENV, HOME);
 
@@ -192,16 +210,18 @@ describe('M3: runner.json ACL on win32', () => {
   const FILE = 'C:\\Users\\Ann\\AppData\\Roaming\\tagconn\\runner.json';
   const WHOAMI = '"desktop\\ann","S-1-5-21-1-2-3-1001"\r\n';
   const ICACLS = (aces: string[]) => `${FILE} ${aces[0]}\r\n${aces.slice(1).map((a) => `                                                  ${a}`).join('\r\n')}\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n`;
-  const DIR = (owner: string) => ` Volume in drive C has no label.\r\n\r\n05/06/2026  10:00 AM               123 ${owner} runner.json\r\n`;
+  const DIR = (owner: string) => `${owner}\r\n`;
   const plat = (o: { whoami?: string; icacls?: string; dir?: string; icaclsStatus?: number }) => {
     const calls: string[] = [];
-    const p = win((command) => {
+    const runs: Array<[string, string[], Record<string, string> | undefined]> = [];
+    const p = win((command, args, opts) => {
       calls.push(command);
+      runs.push([command, args, opts?.env]);
       if (command.endsWith('whoami.exe')) return { status: o.whoami === undefined ? 1 : 0, stdout: o.whoami ?? '' };
       if (command.endsWith('icacls.exe')) return { status: o.icaclsStatus ?? 0, stdout: o.icacls ?? '' };
       return { status: 0, stdout: o.dir ?? '' };
     });
-    return { p, calls };
+    return { p, calls, runs };
   };
   const good = { whoami: WHOAMI, icacls: ICACLS(['DESKTOP\\ann:(F)', 'NT AUTHORITY\\SYSTEM:(F)', 'BUILTIN\\Administrators:(F)']), dir: DIR('DESKTOP\\ann') };
 
@@ -226,6 +246,39 @@ describe('M3: runner.json ACL on win32', () => {
   it('allows other principals that only read', () => {
     const { p } = plat({ ...good, icacls: ICACLS(['DESKTOP\\ann:(F)', 'BUILTIN\\Users:(R)', 'Everyone:(RX)']) });
     expect(verifyWindowsConfigAcl(FILE, p)).toBeUndefined();
+  });
+
+  it('N10: any right outside the read-only allow-list from a non-owner is a write', () => {
+    for (const ace of ['BUILTIN\\Users:(RX,WA)', 'Everyone:(CI)(DE)', 'BUILTIN\\Users:(X,GW)', 'Everyone:(NEWTOKEN)', 'BUILTIN\\Users:(RC,WDAC)']) {
+      const { p } = plat({ ...good, icacls: ICACLS(['DESKTOP\\ann:(F)', ace]) });
+      expect(verifyWindowsConfigAcl(FILE, p), ace).toMatch(/write access/);
+    }
+    const ok = plat({ ...good, icacls: ICACLS(['DESKTOP\\ann:(F)', 'BUILTIN\\Users:(I)(OI)(CI)(IO)(NP)(RX,GR,GE,S,RD,REA,RA,RC)']) });
+    expect(verifyWindowsConfigAcl(FILE, ok.p)).toBeUndefined();
+  });
+
+  it('N10: reads the owner via powershell with the path in the env (not argv) and no cmd.exe', () => {
+    const { p, runs } = plat(good);
+    expect(verifyWindowsConfigAcl(FILE, p)).toBeUndefined();
+    const ps = runs.find(([c]) => c.endsWith('powershell.exe'));
+    expect(ps?.[0]).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    expect(ps?.[2]).toEqual({ TAGCONN_ACL_PATH: FILE });
+    expect(ps?.[1].join(' ')).not.toContain(FILE);
+    expect(runs.some(([c]) => c.endsWith('cmd.exe'))).toBe(false);
+  });
+
+  it('N10: strips NUL/BOM from helper output, and fails closed on a truncated or multi-line owner', () => {
+    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: '\uFEFF' + 'DESKTOP\\ann'.split('').join('\u0000') + '\r\n' }).p)).toBeUndefined();
+    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: 'DESKTOP\\an\r\n' }).p)).toMatch(/owner is "DESKTOP\\an"/);
+    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: 'DESKTOP\\ann\r\nWARNING\r\n' }).p)).toMatch(/file owner/);
+    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: '' }).p)).toMatch(/file owner/);
+  });
+
+  it('N10: a localised current-user name matches (whoami is the same locale); a localised Administrators name is not trusted by name', () => {
+    const who = '"büro\\änne","S-1-5-21-1-2-3-1001"\r\n';
+    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, whoami: who, icacls: ICACLS(['BÜRO\\ÄNNE:(F)', '*S-1-5-18:(F)', '*S-1-5-32-544:(F)']), dir: DIR('BÜRO\\ÄNNE') }).p)).toBeUndefined();
+    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: DIR('VORDEFINIERT\\Administratoren') }).p)).toMatch(/owner is/);
+    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: DIR('*S-1-5-32-544') }).p)).toBeUndefined();
   });
 
   it('refuses a file owned by someone else', () => {
