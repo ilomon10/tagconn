@@ -43,6 +43,7 @@ describe('server env', () => {
       OFFICE_SERVER__PORT: '4555',
       OFFICE_SERVER__CORS_ORIGINS: JSON.stringify(['http://127.0.0.1:4555', 'http://localhost:4555']),
       OFFICE_SERVER__WEB_DIR: bundle.webDir,
+      OFFICE_SERVER__ALLOWED_HOSTS: JSON.stringify(['localhost', '127.0.0.1', '[::1]']),
       OFFICE_STORAGE__DB_PATH: join(root, 'data', 'tagconn', 'office.db'),
       OFFICE_HOOK_TOKEN: 'h'.repeat(32),
       OFFICE_RUNNER__TOKEN: 'r'.repeat(64),

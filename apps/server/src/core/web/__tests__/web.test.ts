@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ASSET_CACHE_CONTROL, INDEX_CACHE_CONTROL, SECURITY_HEADERS } from '@tagconn/shared';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -102,6 +102,24 @@ describe('web plugin', () => {
       expect(res.statusCode, url).toBe(403);
       expect(res.body).not.toContain('<title>');
     }
+  });
+
+  it('refuses symlinks that leave the web dir but serves ones inside it', async () => {
+    const dir = makeTempDir('tagconn-web-link-');
+    const outside = makeTempDir('tagconn-web-outside-');
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>tagconn</title>');
+    writeFileSync(join(dir, 'real.txt'), 'inside');
+    writeFileSync(join(outside, 'secret.txt'), 'SECRET');
+    symlinkSync(join(outside, 'secret.txt'), join(dir, 'leak.txt'));
+    symlinkSync(outside, join(dir, 'leakdir'));
+    symlinkSync(join(dir, 'real.txt'), join(dir, 'ok.txt'));
+    await build({ server: { webDir: dir } });
+    for (const url of ['/leak.txt', '/leakdir/secret.txt']) {
+      const res = await app!.inject({ url });
+      expect(res.statusCode, url).toBe(404);
+      expect(res.body).not.toContain('SECRET');
+    }
+    expect((await app!.inject({ url: '/ok.txt' })).body).toBe('inside');
   });
 
   it('does not serve when webDir has no index.html', async () => {

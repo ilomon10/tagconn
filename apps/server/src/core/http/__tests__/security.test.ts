@@ -310,7 +310,9 @@ describe('request gating (DNS rebinding / CSRF)', () => {
     const res = await app.inject({ url: '/api/auth/status' });
     expect(res.headers['cache-control']).toBe('no-store');
     // Sanity: an ordinary public route is unaffected.
-    expect((await app.inject({ url: '/api/health' })).headers['cache-control']).toBeUndefined();
+    const health = await app.inject({ url: '/api/health' });
+    expect(health.headers['cache-control']).toBe('no-store');
+    expect(health.headers['x-content-type-options']).toBe('nosniff');
   });
 });
 

@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import { ASSET_CACHE_CONTROL, INDEX_CACHE_CONTROL, SECURITY_HEADERS } from '@tagconn/shared';
 import fp from 'fastify-plugin';
@@ -21,7 +21,7 @@ function isTraversal(pathname: string): boolean {
 }
 
 /**
- * Serves the built web app (`apps/web/dist`) itself when `settings.server.webDir` is set (restart-required;
+ * Serves the built web app (`apps/web/dist`) itself when `settings.server.webDir` is set (restart-required; desktop mode = webDir set + host 127.0.0.1, where the supervisor passes OFFICE_SERVER__ALLOWED_HOSTS='["localhost","127.0.0.1","[::1]"]', i.e. without the Docker-only `server`;
  * unset under Docker/nginx and Vite dev). Same behaviour as `docker/nginx.conf`: `/assets/*` immutable, index.html
  * `no-store`, SPA fallback to index.html for unknown GET paths, and the shared security headers on every web response.
  * `/api` and `/socket.io` are left alone (the Host allowlist in core/http still runs first for every route, web included;
@@ -36,6 +36,20 @@ export const webPlugin = fp(
       app.log.warn({ webDir: root }, 'server.webDir has no index.html; not serving the web app');
       return;
     }
+
+    // @fastify/static follows symlinks; refuse any existing file whose realpath leaves the web dir.
+    const realRoot = realpathSync(root);
+    app.addHook('onRequest', async (req, reply) => {
+      const path = pathnameOf(req.url);
+      if ((req.method !== 'GET' && req.method !== 'HEAD') || isBackendPath(path) || isTraversal(path)) return;
+      let real: string;
+      try {
+        real = realpathSync(join(root, decodeURIComponent(path)));
+      } catch {
+        return; // does not exist: static/SPA fallback handles it
+      }
+      if (real !== realRoot && !real.startsWith(realRoot + sep)) return reply.code(404).send({ error: 'Not Found', statusCode: 404 });
+    });
 
     await app.register(fastifyStatic, { root, wildcard: true, index: 'index.html', dotfiles: 'ignore', cacheControl: false });
 

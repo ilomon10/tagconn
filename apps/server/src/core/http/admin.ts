@@ -54,7 +54,8 @@ declare module '@fastify/awilix' {
  *   `x-office-token` check). `runner` routes refuse any `Origin` header and need no admin token.
  *   `admin-write` needs a token only when `settings.auth.protect === 'all-writes'` (the default);
  *   `admin` always needs one.
- * - `onSend`: `Cache-Control: no-store` on every `/api/auth/*` response (tokens must never be cached).
+ * - `onSend`: `Cache-Control: no-store` on every `/api/auth/*` response (tokens must never be cached); every other
+ *   `/api` response gets `no-store` unless the route set its own, and all `/api` responses get `X-Content-Type-Options: nosniff`.
  *
  * Call this from `core/http/index.ts`'s `httpPlugin`, after its own onRequest hook (Host/Origin/
  * content-type), so those checks still run first regardless of the access level.
@@ -92,7 +93,12 @@ export function registerAdminAccess(app: FastifyInstance): void {
   });
 
   app.addHook('onSend', async (req, reply, payload) => {
-    if (req.url.startsWith('/api/auth/')) reply.header('cache-control', 'no-store');
+    const path = req.url.split('?', 1)[0] ?? '';
+    if (path === '/api' || path.startsWith('/api/')) {
+      // The web origin serves JSON too: never sniffed, never cached (a route may set its own Cache-Control).
+      reply.header('x-content-type-options', 'nosniff');
+      if (path.startsWith('/api/auth/') || !reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store');
+    }
     return payload;
   });
 }

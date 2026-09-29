@@ -54,6 +54,8 @@ export function serverEnv(deps: DefinitionDeps): NodeJS.ProcessEnv {
     OFFICE_SERVER__PORT: String(cfg.serverPort),
     OFFICE_SERVER__CORS_ORIGINS: JSON.stringify(corsOriginsFor(cfg.serverPort)),
     OFFICE_SERVER__WEB_DIR: deps.bundle.webDir,
+    // Desktop mode: no Docker service name, so only the loopback hosts are accepted.
+    OFFICE_SERVER__ALLOWED_HOSTS: JSON.stringify(['localhost', '127.0.0.1', '[::1]']),
     OFFICE_STORAGE__DB_PATH: join(dataDirOf(deps), 'office.db'),
     OFFICE_PATHS__CLAUDE_DIR: deps.paths.claudeDir,
     OFFICE_PATHS__AGENTS_DIR: join(deps.paths.claudeDir, 'agents'),
