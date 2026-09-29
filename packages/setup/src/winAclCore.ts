@@ -1,16 +1,7 @@
-// win32 runner.json verification (M11 Wave 1 review M3, decision #28; locale-independent since 11.5). Windows has no
-// mode bits, so the runner reads the ACL with PowerShell (absolute %SystemRoot%\\System32 path, fixed cwd, 10 s timeout):
-// `Get-Acl -LiteralPath $env:TAGCONN_ACL_PATH` (the path travels in the env, never on a command line, no cmd.exe) prints
-// the owner and every ACE as SIDs (IdentityReference.Translate), so SYSTEM/Administrators are matched by SID and a
-// non-English Windows works. Rules:
-//  - every ALLOW ACE granting a write-class right (rights bit mask) must belong to the current user, SYSTEM or
-//    Administrators; other principals may read; DENY ACEs only restrict and are ignored;
-//  - the current user must have an ALLOW ACE, and the owner must be the current user or Administrators.
-// It fails closed: a PowerShell failure, timeout or unparseable output is an error with a hint, never a pass.
+// Locale-independent Windows ACL reading (M11 11.5): ACEs and owner as SIDs from PowerShell Get-Acl, classified by rights mask.
+// Pure (no process spawning). A copy of this code lives in apps/runner/src/winAcl.ts (the runner cannot import setup);
+// packages/setup/test/winAclCore.test.ts checks the two stay identical.
 
-import { type Platform, systemRoot } from './platform.js';
-
-// ---- ACL core (locale-independent SID reading). Keep IDENTICAL to packages/setup/src/winAclCore.ts (tests check it).
 export const SID_SYSTEM = 'S-1-5-18';
 export const SID_ADMINISTRATORS = 'S-1-5-32-544';
 export const SID_TRUSTED_INSTALLER = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464';
@@ -122,36 +113,4 @@ export function parseAclJson(stdout: string): AclInfo | string {
     aces.push({ sid: a.sid.trim(), rights, type, inherited: a.inherited === true, inheritanceFlags: parseFlag(a.inheritanceFlags), propagationFlags: parseFlag(a.propagationFlags) });
   }
   return { owner: typeof r.owner === 'string' && r.owner.trim() !== '' ? r.owner.trim() : null, user: r.user, aces };
-}
-// ---- end ACL core
-
-const HINT = 'fix it with: icacls <runner.json> /inheritance:r /grant:r "*<your SID>:(F)" (re-run `pnpm office:install`), or check that powershell.exe is in %SystemRoot%\\System32\\WindowsPowerShell\\v1.0';
-
-/** Returns undefined when `file` is private to the current user, else a human-readable problem with a hint. */
-export function verifyWindowsConfigAcl(file: string, plat: Platform): string | undefined {
-  const root = systemRoot(plat.env);
-  const ps = plat.path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const r = plat.run(ps, ['-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-Command', ACL_SCRIPT], {
-    timeoutMs: 10_000,
-    cwd: root,
-    env: { TAGCONN_ACL_PATH: file },
-  });
-  if (r.status !== 0) return `PowerShell could not read the ACL (fail closed); ${HINT}`;
-  const acl = parseAclJson(r.stdout);
-  if (typeof acl === 'string') return `${acl} (fail closed); ${HINT}`;
-
-  const allow = acl.aces.filter((a) => a.type === 'Allow');
-  if (allow.length === 0) return `the ACL has no access entries (fail closed); ${HINT}`;
-  for (const ace of allow) {
-    if (isTrustedSid(ace.sid, acl.user)) continue;
-    if (isWriteClass(ace)) return `"${ace.sid}" has write access; ${HINT}`;
-  }
-  if (!allow.some((a) => a.sid.toUpperCase() === acl.user.toUpperCase())) {
-    // Only SYSTEM/Administrators listed: the runner could not even read it as the current user.
-    return `the current user is not in the ACL; ${HINT}`;
-  }
-  if (!acl.owner) return `could not determine the file owner (fail closed); ${HINT}`;
-  const owner = acl.owner.toUpperCase();
-  if (owner !== acl.user.toUpperCase() && owner !== SID_ADMINISTRATORS) return `owner is "${acl.owner}", not the current user; ${HINT}`;
-  return undefined;
 }

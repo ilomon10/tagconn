@@ -63,41 +63,77 @@ describe('transientNodeReason', () => {
   });
 });
 
-describe('nodeWritableReason (win32, mocked icacls)', () => {
-  const SID = 'S-1-5-21-1-2-3-1001';
+describe('nodeWritableReason (win32, mocked PowerShell Get-Acl)', () => {
+  const ME = 'S-1-5-21-1-2-3-1001';
+  const SYSTEM = 'S-1-5-18';
+  const ADMINS = 'S-1-5-32-544';
+  const TI = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464';
+  const USERS = 'S-1-5-32-545';
+  const AUTH = 'S-1-5-11';
+  const FULL = 2032127;
+  const MODIFY = 1245631;
+  const WRITE_DATA = 0x2;
+  const READ_EXEC = 1179817;
   const node = 'C:\\Program Files\\nodejs\\node.exe';
-  function winCtx(acls: Record<string, string[]>) {
-    const exec: ExecFn = (cmd, args) => {
-      if (/whoami/i.test(cmd)) return { status: 0, stdout: `"PC\\u","${SID}"`, stderr: '' };
-      const path = args[0] as string;
-      const aces = acls[path] ?? ['NT AUTHORITY\\SYSTEM:(F)'];
-      return { status: 0, stdout: `${path} ${aces[0]}\n${aces.slice(1).map((a) => `        ${a}`).join('\n')}\n\nSuccessfully processed 1 files; Failed processing 0 files\n`, stderr: '' };
+  type A = { sid: string; rights: number; type?: string; inherited?: boolean; prop?: number };
+  const json = (aces: A[]) =>
+    JSON.stringify({ owner: SYSTEM, user: ME, aces: aces.map((a) => ({ sid: a.sid, rights: a.rights, type: a.type ?? 'Allow', inherited: a.inherited ?? false, inheritanceFlags: 3, propagationFlags: a.prop ?? 0 })) });
+  function winCtx(acls: Record<string, A[]>, opts: { psStatus?: number; stdout?: string } = {}) {
+    const envs: Array<Record<string, string> | undefined> = [];
+    const exec: ExecFn = (cmd, args, o) => {
+      envs.push(o?.env);
+      if (!/powershell\.exe$/i.test(cmd)) return { status: 1, stdout: '', stderr: 'unexpected' };
+      const path = o?.env?.TAGCONN_ACL_PATH as string;
+      return { status: opts.psStatus ?? 0, stdout: opts.stdout ?? json(acls[path] ?? [{ sid: SYSTEM, rights: FULL }]), stderr: '' };
     };
-    return quietContext({ platform: 'win32', exec, env: { SystemRoot: 'C:\\Windows' } }).ctx;
+    return { ctx: quietContext({ platform: 'win32', exec, env: { SystemRoot: 'C:\\Windows' } }).ctx, envs };
   }
-  const safe = ['NT AUTHORITY\\SYSTEM:(I)(F)', 'BUILTIN\\Administrators:(I)(F)', 'BUILTIN\\Users:(I)(RX)', 'NT AUTHORITY\\Authenticated Users:(I)(RX)'];
+  // A German Windows prints different names, but the SIDs are the same: this ACL is the same on any locale.
+  const safe: A[] = [
+    { sid: SYSTEM, rights: FULL, inherited: true },
+    { sid: ADMINS, rights: FULL, inherited: true },
+    { sid: TI, rights: FULL, inherited: true },
+    { sid: USERS, rights: READ_EXEC, inherited: true },
+    { sid: AUTH, rights: READ_EXEC, inherited: true },
+  ];
 
-  it('a Program Files style ACL (read-only for Users) is fine, inherit-only and DENY entries are ignored', () => {
-    const acls = { [node]: safe, 'C:\\Program Files\\nodejs': safe, 'C:\\': ['NT AUTHORITY\\Authenticated Users:(OI)(CI)(IO)(M)', 'NT AUTHORITY\\Authenticated Users:(AD)', 'Everyone:(DENY)(F)', ...safe] };
-    expect(nodeWritableReason(winCtx(acls), node)).toBeNull();
+  it('a Program Files style ACL (read-only for Users) is fine, inherit-only and DENY entries are ignored; the path travels in the env', () => {
+    const acls = {
+      [node]: safe,
+      'C:\\Program Files\\nodejs': safe,
+      'C:\\': [{ sid: AUTH, rights: MODIFY, prop: 2 }, { sid: AUTH, rights: WRITE_DATA }, { sid: 'S-1-1-0', rights: FULL, type: 'Deny' }, ...safe],
+    };
+    const { ctx, envs } = winCtx(acls);
+    expect(nodeWritableReason(ctx, node)).toBeNull();
+    expect(envs.map((e) => e?.TAGCONN_ACL_PATH)).toEqual([node, 'C:\\Program Files\\nodejs', 'C:\\Program Files', 'C:\\']);
   });
 
   it.each([
-    ['C:\\Program Files\\nodejs', 'BUILTIN\\Users:(I)(OI)(CI)(M)', /nodejs is writable by BUILTIN\\Users/],
-    ['C:\\Program Files\\nodejs', 'NT AUTHORITY\\Authenticated Users:(OI)(CI)(WD,AD)', /Authenticated Users/],
-    ['C:\\Program Files', 'Everyone:(F)', /Everyone/],
-    ['C:\\', 'BUILTIN\\Users:(OI)(CI)(M)', /BUILTIN\\Users/],
-    [node, '*S-1-5-21-9-9-9-1234:(F)', /S-1-5-21-9-9-9-1234/],
-  ])('%s: %s is unsafe', (path, ace, re) => {
+    ['C:\\Program Files\\nodejs', { sid: USERS, rights: MODIFY, inherited: true }, /nodejs is writable by S-1-5-32-545/],
+    ['C:\\Program Files\\nodejs', { sid: AUTH, rights: WRITE_DATA }, /S-1-5-11/],
+    ['C:\\Program Files', { sid: 'S-1-1-0', rights: FULL }, /S-1-1-0/],
+    ['C:\\', { sid: USERS, rights: MODIFY }, /S-1-5-32-545/],
+    [node, { sid: 'S-1-5-21-9-9-9-1234', rights: FULL }, /S-1-5-21-9-9-9-1234/],
+  ])('%s: %j is unsafe', (path, ace, re) => {
     const acls = { [node]: safe, 'C:\\Program Files\\nodejs': safe, 'C:\\Program Files': safe, 'C:\\': safe, [path]: [ace, ...safe] };
-    expect(nodeWritableReason(winCtx(acls), node)).toMatch(re);
+    expect(nodeWritableReason(winCtx(acls).ctx, node)).toMatch(re);
   });
 
-  it('fails closed when icacls or whoami fails', () => {
-    const noIcacls: ExecFn = (cmd) => (/whoami/i.test(cmd) ? { status: 0, stdout: `"PC\\u","${SID}"`, stderr: '' } : { status: 1, stdout: '', stderr: 'nope' });
-    expect(nodeWritableReason(quietContext({ platform: 'win32', exec: noIcacls }).ctx, node)).toMatch(/could not be read/);
-    const noWhoami: ExecFn = () => ({ status: 1, stdout: '', stderr: '' });
-    expect(nodeWritableReason(quietContext({ platform: 'win32', exec: noWhoami }).ctx, node)).toMatch(/could not be determined/);
+  it('a plain write right only matters on the binary and its folder, not further up', () => {
+    const acls = { [node]: safe, 'C:\\Program Files\\nodejs': safe, 'C:\\Program Files': [{ sid: USERS, rights: WRITE_DATA }, ...safe], 'C:\\': safe };
+    expect(nodeWritableReason(winCtx(acls).ctx, node)).toBeNull();
+  });
+
+  it('trusts the current user, SYSTEM, Administrators and TrustedInstaller by SID', () => {
+    const acls = { [node]: [{ sid: ME, rights: FULL }, { sid: SYSTEM, rights: FULL }, { sid: ADMINS, rights: FULL }, { sid: TI, rights: FULL }] };
+    expect(nodeWritableReason(winCtx(acls).ctx, node)).toBeNull();
+  });
+
+  it('fails closed when PowerShell fails or prints something unparseable', () => {
+    expect(nodeWritableReason(winCtx({}, { psStatus: 1 }).ctx, node)).toMatch(/could not be read/);
+    expect(nodeWritableReason(winCtx({}, { stdout: 'oops' }).ctx, node)).toMatch(/could not be read/);
+    const noPs: ExecFn = () => ({ status: null, stdout: '', stderr: '', error: new Error('ETIMEDOUT') });
+    expect(nodeWritableReason(quietContext({ platform: 'win32', exec: noPs }).ctx, node)).toMatch(/could not be read/);
   });
 });
 

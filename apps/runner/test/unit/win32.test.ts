@@ -44,15 +44,13 @@ function win(fs: FakeFs, env: NodeJS.ProcessEnv = { USERPROFILE: HOME, LOCALAPPD
   });
 }
 
-/** A win32 Platform whose whoami/icacls/dir answers say `file` is private to Ann. */
-export function winWithGoodAcl(file: string): Platform {
+/** A win32 Platform whose PowerShell Get-Acl answer (SIDs) says a file is private to Ann. */
+export function winWithGoodAcl(_file: string): Platform {
+  const me = 'S-1-5-21-1-2-3-1001';
+  const ace = (sid: string) => ({ sid, rights: 2032127, type: 'Allow', inherited: false, inheritanceFlags: 0, propagationFlags: 0 });
   return makePlatform({
     ...win({ files: {} }),
-    run: (command) => {
-      if (command.endsWith('whoami.exe')) return { status: 0, stdout: '"desktop\\ann","S-1-5-21-1-2-3-1001"\r\n' };
-      if (command.endsWith('icacls.exe')) return { status: 0, stdout: `${file} DESKTOP\\ann:(F)\r\n       NT AUTHORITY\\SYSTEM:(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n` };
-      return { status: 0, stdout: 'DESKTOP\\ann\r\n' };
-    },
+    run: () => ({ status: 0, stdout: JSON.stringify({ owner: me, user: me, aces: [ace(me), ace('S-1-5-18')] }) }),
   });
 }
 
@@ -218,7 +216,7 @@ describe('win32 state dir and config', () => {
     expect(defaultStateDir(posix({}))).toBe('/home/u/.local/state/tagconn');
   });
 
-  it('skips the POSIX 0600 mode check on win32 (the ACL is verified through icacls instead, see win32Hardening.test.ts)', () => {
+  it('skips the POSIX 0600 mode check on win32 (the ACL is verified through PowerShell Get-Acl instead, see win32Hardening.test.ts)', () => {
     const root = mkSandbox();
     try {
       const path = join(root, 'runner.json');

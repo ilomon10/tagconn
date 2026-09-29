@@ -2,7 +2,8 @@ import { chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, open
 import { tmpdir } from 'node:os';
 import { pathFor, resolveSetupPaths } from './paths.ts';
 import { touch, type SetupContext } from './context.ts';
-import { currentWindowsUser, isCurrentUser, parseIcaclsAces, systemBin, type WindowsUser } from './secrets.ts';
+import { currentWindowsUser, readWindowsAcl, systemBin } from './secrets.ts';
+import { isInheritOnly, isTrustedSid, isWriteClass, SWAP_MASK, WRITE_MASK } from './winAclCore.ts';
 
 // The node hook is registered in exec form with an absolute node path (M1 of the wave 1 review). That path
 // must outlive the shell that started the installer and must not be replaceable by another user, so a node
@@ -55,17 +56,12 @@ export function transientNodeReason(ctx: SetupContext, nodePath: string, opts: N
   return null;
 }
 
-const SWAP_RIGHTS = new Set(['F', 'M', 'DC', 'DE', 'WDAC', 'WO', 'GA', 'GW']);
-// On the binary and its own folder even a plain write (replace the file, plant a DLL next to it) is enough.
-const LEAF_RIGHTS = new Set([...SWAP_RIGHTS, 'W', 'WD', 'AD', 'WA', 'WEA']);
-const ACE_NOISE = new Set(['I', 'OI', 'CI', 'IO', 'NP', 'DENY']);
-// English names and SIDs of the principals that may write to a system folder. An unresolvable principal
-// (or a localized name we do not know) fails closed, and the error points at tagconn's bundled node.
-const TRUSTED_WINDOWS = /^(?:nt authority\\system|system|builtin\\administrators|administrators|nt service\\trustedinstaller|s-1-5-18|s-1-5-32-544|s-1-5-80-\d+(?:-\d+)*)$/i;
+// On the binary and its own folder even a plain write (replace the file, plant a DLL next to it) is enough (WRITE_MASK);
+// further up only rights that can swap a whole folder count (SWAP_MASK). ACEs are read as SIDs, so this works on any
+// Windows language. Trusted: the current user, SYSTEM, Administrators, TrustedInstaller. An untranslatable principal is
+// just an unknown SID and is not trusted, so it fails closed and the error points at tagconn's bundled node.
 
 function windowsWritableReason(ctx: SetupContext, nodePath: string): string | null {
-  const user: WindowsUser | null = currentWindowsUser(ctx.env, ctx.exec);
-  if (!user) return 'the current Windows user could not be determined, so the folder permissions of the node cannot be verified';
   const p = pathFor('win32');
   const chain = [nodePath];
   for (let cur = p.dirname(nodePath); ; cur = p.dirname(cur)) {
@@ -73,14 +69,13 @@ function windowsWritableReason(ctx: SetupContext, nodePath: string): string | nu
     if (p.dirname(cur) === cur) break;
   }
   for (const [i, cur] of chain.entries()) {
-    const res = ctx.exec(systemBin(ctx.env, 'icacls'), [cur], { timeoutMs: 15_000 });
-    if (res.error || res.status !== 0) return `the permissions of ${cur} could not be read (icacls failed), so the node cannot be verified`;
-    const rights = i <= 1 ? LEAF_RIGHTS : SWAP_RIGHTS;
-    for (const ace of parseIcaclsAces(res.stdout, cur)) {
-      const flags = ace.flags.map((f) => f.toUpperCase());
-      if (flags.includes('DENY') || (i > 0 && flags.includes('IO'))) continue; // inherit-only ACEs do not apply to the folder itself
-      if (isCurrentUser(ace.principal, user) || TRUSTED_WINDOWS.test(ace.principal.replace(/^\*/, ''))) continue;
-      if (flags.some((f) => !ACE_NOISE.has(f) && rights.has(f))) return `${cur} is writable by ${ace.principal}`;
+    const acl = readWindowsAcl(cur, ctx.env, ctx.exec);
+    if (typeof acl === 'string') return `the permissions of ${cur} could not be read (${acl}), so the node cannot be verified`;
+    const mask = i <= 1 ? WRITE_MASK : SWAP_MASK;
+    for (const ace of acl.aces) {
+      if (i > 0 && isInheritOnly(ace)) continue; // inherit-only ACEs do not apply to the folder itself
+      if (!isWriteClass(ace, mask) || isTrustedSid(ace.sid, acl.user, { trustedInstaller: true })) continue;
+      return `${cur} is writable by ${ace.sid}`;
     }
   }
   return null;
@@ -90,7 +85,7 @@ function windowsWritableReason(ctx: SetupContext, nodePath: string): string | nu
  * Why another user could swap this node binary (null: nobody else can). POSIX: the file and every component of its
  * real path must be owned by root or the current user and not group/world-writable; a sticky world-writable dir
  * (like /tmp) is tolerated only when root or the current user owns it. win32: the ACL of the binary and of every
- * parent folder up to the drive root (`icacls`) may grant write access to the current user, SYSTEM,
+ * parent folder up to the drive root (PowerShell `Get-Acl`, by SID) may grant write access to the current user, SYSTEM,
  * Administrators and TrustedInstaller only.
  */
 export function nodeWritableReason(ctx: SetupContext, nodePath: string, opts: NodeStabilizeOptions = {}): string | null {

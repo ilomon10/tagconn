@@ -3,6 +3,7 @@ import { chmodSync, closeSync, mkdirSync, openSync, renameSync, rmSync, statSync
 import { userInfo } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
+import { ACL_SCRIPT, parseAclJson, type AclInfo } from './winAclCore.ts';
 
 export interface ExecResult {
   status: number | null;
@@ -12,13 +13,14 @@ export interface ExecResult {
 }
 
 /** Runs a program with an argv array (never a shell). Injectable so tests can mock icacls, claude, docker... */
-export type ExecFn = (cmd: string, args: string[], opts?: { timeoutMs?: number; cwd?: string }) => ExecResult;
+export type ExecFn = (cmd: string, args: string[], opts?: { timeoutMs?: number; cwd?: string; env?: Record<string, string> }) => ExecResult;
 
 export const defaultExec: ExecFn = (cmd, args, opts) => {
   const res = spawnSync(cmd, args, {
     encoding: 'utf8',
     timeout: opts?.timeoutMs ?? 10_000,
     cwd: opts?.cwd,
+    ...(opts?.env ? { env: { ...process.env, ...opts.env } } : {}),
     windowsHide: true,
     shell: false,
   });
@@ -51,8 +53,13 @@ export class SecretFileError extends Error {
 
 /** `%SystemRoot%\System32\<name>.exe`: an absolute system binary, so a hostile cwd or PATH entry can't stand in for it. */
 export function systemBin(env: Record<string, string | undefined>, name: string): string {
+  return `${systemRootOf(env)}\\System32\\${name}.exe`;
+}
+
+/** `%SystemRoot%` without a trailing slash, falling back to C:\\Windows. */
+export function systemRootOf(env: Record<string, string | undefined>): string {
   const root = env.SystemRoot || env.SYSTEMROOT || env.windir || 'C:\\Windows';
-  return `${root.replace(/[\\/]+$/, '')}\\System32\\${name}.exe`;
+  return root.replace(/[\\/]+$/, '');
 }
 
 /** `DOMAIN\user` (display only; the grant and the check go by SID, see `currentWindowsUser`). */
@@ -99,42 +106,21 @@ function icaclsHint(path: string, sid: string | null, env: Record<string, string
 const WHOAMI_FAIL = (env: Record<string, string | undefined>) =>
   `could not determine your Windows user SID (${systemBin(env, 'whoami')} /user failed)`;
 
-export interface IcaclsAce {
-  principal: string;
-  /** Every token inside the `(...)` groups after the principal: inheritance flags, DENY, and rights (F, M, W, WD, ...), upper-cased. */
-  flags: string[];
-}
-
-/** The ACEs of `icacls <path>` output. The first line also carries the path. */
-export function parseIcaclsAces(output: string, path: string): IcaclsAce[] {
-  const out: IcaclsAce[] = [];
-  for (const raw of tolerantText(output).split(/\r?\n/)) {
-    if (/^\s*Successfully processed/i.test(raw)) break;
-    let line = raw.trim();
-    if (!line) continue;
-    if (line.startsWith(path)) line = line.slice(path.length).trim();
-    const idx = line.indexOf(':(');
-    if (idx <= 0) continue;
-    const flags = [...line.slice(idx + 1).matchAll(/\(([^)]*)\)/g)].flatMap((m) => (m[1] ?? '').split(',').map((t) => t.trim().toUpperCase()).filter(Boolean));
-    out.push({ principal: line.slice(0, idx).trim(), flags });
+/**
+ * The ACL of `path` as SIDs (locale-independent), read with the absolute System32 powershell.exe. The path travels in
+ * TAGCONN_ACL_PATH, never on the command line. A string result is why it could not be read (callers fail closed).
+ */
+export function readWindowsAcl(path: string, env: Record<string, string | undefined>, exec: ExecFn): AclInfo | string {
+  const ps = `${systemRootOf(env)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  const res = exec(ps, ['-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-Command', ACL_SCRIPT], {
+    timeoutMs: 10_000,
+    cwd: systemRootOf(env),
+    env: { TAGCONN_ACL_PATH: path },
+  });
+  if (res.error || res.status !== 0) {
+    return `PowerShell could not read the ACL of ${path} (${res.error?.message ?? (res.stderr.trim() || `exit ${res.status}`)}); check that ${ps} exists`;
   }
-  return out;
-}
-
-/** Principals (left of `:(`) of the ACEs in `icacls <file>` output. */
-export function parseIcaclsPrincipals(output: string, path: string): string[] {
-  return parseIcaclsAces(output, path).map((a) => a.principal);
-}
-
-/** An ACE is ours if it is the user's SID text, or the account name whoami reported (case-insensitive). */
-export function isCurrentUser(ace: string, user: WindowsUser): boolean {
-  const a = ace.replace(/^\*/, '').toLowerCase();
-  if (a === user.sid.toLowerCase()) return true;
-  const n = user.name.toLowerCase();
-  if (!n) return false;
-  if (a === n) return true;
-  // icacls may print the bare user name where whoami says DOMAIN\user.
-  return !a.includes('\\') && a === (n.split('\\').pop() ?? '');
+  return parseAclJson(res.stdout);
 }
 
 export type SecretVerification =
@@ -143,11 +129,11 @@ export type SecretVerification =
   | { ok: false; kind: 'acl'; detail: string; hint: string };
 
 /**
- * POSIX: the mode must be exactly 600. win32: `icacls` (absolute System32 path) must list only the current
- * user, identified by the SID from whoami (no inherited ACEs, no Everyone/Users). Decision: SYSTEM and
- * Administrators are NOT tolerated. We never grant them (`/inheritance:r /grant:r` leaves the user alone),
- * and matching their localized names is unreliable, so an ACL that lists anyone else fails closed.
- * A failure to run whoami or icacls counts as a failed verification.
+ * POSIX: the mode must be exactly 600. win32: the ACL (read as SIDs through PowerShell, so it works on any Windows
+ * language) must grant access to the current user only: no inherited or extra allow entries (Everyone, Users, SYSTEM,
+ * Administrators...). Decision: SYSTEM and Administrators are NOT tolerated. We never grant them
+ * (`/inheritance:r /grant:r` leaves the user alone). DENY entries only restrict and are ignored.
+ * A failure to run PowerShell (or a timeout or unparseable output) counts as a failed verification.
  */
 export function verifySecretFile(path: string, opts: SecretOptions = {}): SecretVerification {
   const platform = opts.platform ?? process.platform;
@@ -157,21 +143,13 @@ export function verifySecretFile(path: string, opts: SecretOptions = {}): Secret
   }
   const env = opts.env ?? process.env;
   const exec = opts.exec ?? defaultExec;
-  const user = currentWindowsUser(env, exec);
-  const hint = icaclsHint(path, user?.sid ?? null, env);
-  if (!user) return { ok: false, kind: 'acl', detail: WHOAMI_FAIL(env), hint };
-  const res = exec(systemBin(env, 'icacls'), [path], { timeoutMs: 15_000 });
-  if (res.error || res.status !== 0) {
-    return { ok: false, kind: 'acl', detail: `icacls could not read the ACL (${res.error?.message ?? (res.stderr.trim() || `exit ${res.status}`)})`, hint };
-  }
-  const principals = parseIcaclsPrincipals(res.stdout, path);
-  if (principals.length === 0) {
-    return { ok: false, kind: 'acl', detail: 'icacls output had no access entries', hint };
-  }
-  const others = principals.filter((p) => !isCurrentUser(p, user));
-  if (others.length > 0) {
-    return { ok: false, kind: 'acl', detail: `also accessible by ${others.join(', ')}`, hint };
-  }
+  const acl = readWindowsAcl(path, env, exec);
+  if (typeof acl === 'string') return { ok: false, kind: 'acl', detail: acl, hint: icaclsHint(path, null, env) };
+  const hint = icaclsHint(path, acl.user, env);
+  const allow = acl.aces.filter((a) => a.type === 'Allow');
+  if (allow.length === 0) return { ok: false, kind: 'acl', detail: 'the ACL had no access entries', hint };
+  const others = [...new Set(allow.filter((a) => a.sid.toUpperCase() !== acl.user.toUpperCase()).map((a) => a.sid))];
+  if (others.length > 0) return { ok: false, kind: 'acl', detail: `also accessible by ${others.join(', ')}`, hint };
   return { ok: true };
 }
 

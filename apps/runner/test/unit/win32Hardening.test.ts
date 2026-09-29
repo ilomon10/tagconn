@@ -206,96 +206,89 @@ describe('M4: PowerShell', () => {
   });
 });
 
-describe('M3: runner.json ACL on win32', () => {
+// ---- shared ACL fixtures (identical in apps/runner/test/unit/win32Hardening.test.ts and packages/setup/test/winAclCore.test.ts)
+const ME = 'S-1-5-21-1-2-3-1001';
+const ace = (sid: string, rights: number, o: { type?: string; inherited?: boolean; inh?: number; prop?: number } = {}) => ({
+  sid, rights, type: o.type ?? 'Allow', inherited: o.inherited ?? false, inheritanceFlags: o.inh ?? 0, propagationFlags: o.prop ?? 0,
+});
+const FULL = 2032127; // FileSystemRights.FullControl
+const MODIFY = 1245631;
+const READ_EXEC = 1179817;
+const aclJson = (aces: unknown[], owner: string | null = ME) => JSON.stringify({ owner, user: ME, aces });
+/** English and German Windows print different names, but the SIDs (all this code sees) are the same. */
+const ENGLISH = aclJson([ace(ME, FULL), ace('S-1-5-18', FULL), ace('S-1-5-32-544', FULL), ace('S-1-5-32-545', READ_EXEC, { inherited: true, inh: 3 })]);
+const GERMAN = ENGLISH;
+const UNTRANSLATABLE = aclJson([ace(ME, FULL), ace('S-1-5-21-9-9-9-1234', MODIFY)]);
+const AUTH_USERS_WRITE = aclJson([ace(ME, FULL), ace('S-1-5-11', MODIFY, { inh: 3 })]);
+const DENY_ONLY_OTHERS = aclJson([ace(ME, FULL), ace('S-1-1-0', FULL, { type: 'Deny' }), ace('S-1-5-11', READ_EXEC)]);
+const INHERITED_WRITE = aclJson([ace(ME, FULL), ace('S-1-5-32-545', MODIFY, { inherited: true, inh: 3 })]);
+const INHERIT_ONLY_WRITE = aclJson([ace(ME, FULL), ace('S-1-5-11', MODIFY, { inherited: true, inh: 3, prop: 2 })]);
+const OWNED_BY_OTHER = aclJson([ace(ME, FULL)], 'S-1-5-21-1-2-3-1002');
+// ---- end shared ACL fixtures
+
+describe('M3: runner.json ACL on win32 (11.5: read as SIDs through PowerShell)', () => {
   const FILE = 'C:\\Users\\Ann\\AppData\\Roaming\\tagconn\\runner.json';
-  const WHOAMI = '"desktop\\ann","S-1-5-21-1-2-3-1001"\r\n';
-  const ICACLS = (aces: string[]) => `${FILE} ${aces[0]}\r\n${aces.slice(1).map((a) => `                                                  ${a}`).join('\r\n')}\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n`;
-  const DIR = (owner: string) => `${owner}\r\n`;
-  const plat = (o: { whoami?: string; icacls?: string; dir?: string; icaclsStatus?: number }) => {
-    const calls: string[] = [];
-    const runs: Array<[string, string[], Record<string, string> | undefined]> = [];
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const plat = (o: { json?: string; status?: number }) => {
+    const runs: Array<{ command: string; args: string[]; env?: Record<string, string>; timeoutMs?: number }> = [];
     const p = win((command, args, opts) => {
-      calls.push(command);
-      runs.push([command, args, opts?.env]);
-      if (command.endsWith('whoami.exe')) return { status: o.whoami === undefined ? 1 : 0, stdout: o.whoami ?? '' };
-      if (command.endsWith('icacls.exe')) return { status: o.icaclsStatus ?? 0, stdout: o.icacls ?? '' };
-      return { status: 0, stdout: o.dir ?? '' };
+      runs.push({ command, args, env: opts?.env, timeoutMs: opts?.timeoutMs });
+      return { status: 'status' in o ? (o.status as number) : 0, stdout: o.json ?? ENGLISH };
     });
-    return { p, calls, runs };
+    return { p, runs };
   };
-  const good = { whoami: WHOAMI, icacls: ICACLS(['DESKTOP\\ann:(F)', 'NT AUTHORITY\\SYSTEM:(F)', 'BUILTIN\\Administrators:(F)']), dir: DIR('DESKTOP\\ann') };
+  const check = (json: string) => verifyWindowsConfigAcl(FILE, plat({ json }).p);
 
-  it('accepts a file private to the current user, SYSTEM and Administrators, using absolute System32 binaries', () => {
-    const { p, calls } = plat(good);
+  it('accepts a file private to the current user, SYSTEM and Administrators; English and German print the same SIDs', () => {
+    expect(check(ENGLISH)).toBeUndefined();
+    expect(check(GERMAN)).toBeUndefined();
+  });
+
+  it('reads the ACL with the absolute System32 powershell, the path in the env (not argv), a 10 s timeout and no cmd.exe', () => {
+    const { p, runs } = plat({});
     expect(verifyWindowsConfigAcl(FILE, p)).toBeUndefined();
-    expect(calls.every((c) => c.startsWith('C:\\Windows\\System32\\'))).toBe(true);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.command).toBe(PS);
+    expect(runs[0]?.env).toEqual({ TAGCONN_ACL_PATH: FILE });
+    expect(runs[0]?.timeoutMs).toBe(10_000);
+    expect(runs[0]?.args.slice(0, 4)).toEqual(['-NoProfile', '-NonInteractive', '-OutputFormat', 'Text']);
+    expect(runs[0]?.args.join(' ')).not.toContain(FILE);
+    expect(runs[0]?.args.join(' ')).toContain('Get-Acl -LiteralPath $env:TAGCONN_ACL_PATH');
   });
 
-  it('matches the current user by SID as well as by name', () => {
-    const { p } = plat({ ...good, icacls: ICACLS(['*S-1-5-21-1-2-3-1001:(F)', 'NT AUTHORITY\\SYSTEM:(F)']) });
-    expect(verifyWindowsConfigAcl(FILE, p)).toBeUndefined();
+  it('refuses when another principal can write, and names its SID', () => {
+    expect(check(AUTH_USERS_WRITE)).toMatch(/"S-1-5-11" has write access/);
+    expect(check(UNTRANSLATABLE)).toMatch(/"S-1-5-21-9-9-9-1234" has write access/);
+    expect(check(INHERITED_WRITE)).toMatch(/"S-1-5-32-545" has write access/);
+    expect(check(INHERIT_ONLY_WRITE)).toMatch(/write access/);
+    expect(check(aclJson([ace(ME, FULL), ace('S-1-1-0', 0x2)]))).toMatch(/S-1-1-0/);
+    expect(check(aclJson([ace(ME, FULL), ace('S-1-5-32-545', 0x40000)]))).toMatch(/write access/); // ChangePermissions
   });
 
-  it('refuses when another principal can write, and names it', () => {
-    for (const ace of ['BUILTIN\\Users:(M)', 'Everyone:(F)', 'DESKTOP\\bob:(I)(W)', 'BUILTIN\\Users:(OI)(CI)(WD,AD)']) {
-      const { p } = plat({ ...good, icacls: ICACLS(['DESKTOP\\ann:(F)', ace]) });
-      expect(verifyWindowsConfigAcl(FILE, p), ace).toMatch(/write access/);
-    }
+  it('allows other principals that only read, and ignores DENY ACEs', () => {
+    expect(check(aclJson([ace(ME, FULL), ace('S-1-5-32-545', READ_EXEC), ace('S-1-1-0', 0x1)]))).toBeUndefined();
+    expect(check(DENY_ONLY_OTHERS)).toBeUndefined();
+    expect(check(aclJson([ace(ME, FULL), ace('S-1-1-0', FULL, { type: 'Deny' })]))).toBeUndefined();
   });
 
-  it('allows other principals that only read', () => {
-    const { p } = plat({ ...good, icacls: ICACLS(['DESKTOP\\ann:(F)', 'BUILTIN\\Users:(R)', 'Everyone:(RX)']) });
-    expect(verifyWindowsConfigAcl(FILE, p)).toBeUndefined();
+  it('a localised SYSTEM/Administrators name no longer matters; TrustedInstaller is not trusted here', () => {
+    expect(check(aclJson([ace(ME, FULL), ace('S-1-5-18', FULL), ace('S-1-5-32-544', FULL)]))).toBeUndefined();
+    expect(check(aclJson([ace(ME, FULL), ace('S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464', FULL)]))).toMatch(/write access/);
   });
 
-  it('N10: any right outside the read-only allow-list from a non-owner is a write', () => {
-    for (const ace of ['BUILTIN\\Users:(RX,WA)', 'Everyone:(CI)(DE)', 'BUILTIN\\Users:(X,GW)', 'Everyone:(NEWTOKEN)', 'BUILTIN\\Users:(RC,WDAC)']) {
-      const { p } = plat({ ...good, icacls: ICACLS(['DESKTOP\\ann:(F)', ace]) });
-      expect(verifyWindowsConfigAcl(FILE, p), ace).toMatch(/write access/);
-    }
-    const ok = plat({ ...good, icacls: ICACLS(['DESKTOP\\ann:(F)', 'BUILTIN\\Users:(I)(OI)(CI)(IO)(NP)(RX,GR,GE,S,RD,REA,RA,RC)']) });
-    expect(verifyWindowsConfigAcl(FILE, ok.p)).toBeUndefined();
+  it('requires the current user in the ACL, and an owner that is the current user or Administrators', () => {
+    expect(check(aclJson([ace('S-1-5-18', FULL)]))).toMatch(/current user/);
+    expect(check(aclJson([ace('S-1-1-0', FULL, { type: 'Deny' })]))).toMatch(/no access entries/);
+    expect(check(OWNED_BY_OTHER)).toMatch(/owner is "S-1-5-21-1-2-3-1002"/);
+    expect(check(aclJson([ace(ME, FULL)], 'S-1-5-32-544'))).toBeUndefined();
+    expect(check(aclJson([ace(ME, FULL)], null))).toMatch(/file owner/);
   });
 
-  it('N10: reads the owner via powershell with the path in the env (not argv) and no cmd.exe', () => {
-    const { p, runs } = plat(good);
-    expect(verifyWindowsConfigAcl(FILE, p)).toBeUndefined();
-    const ps = runs.find(([c]) => c.endsWith('powershell.exe'));
-    expect(ps?.[0]).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-    expect(ps?.[2]).toEqual({ TAGCONN_ACL_PATH: FILE });
-    expect(ps?.[1].join(' ')).not.toContain(FILE);
-    expect(runs.some(([c]) => c.endsWith('cmd.exe'))).toBe(false);
-  });
-
-  it('N10: strips NUL/BOM from helper output, and fails closed on a truncated or multi-line owner', () => {
-    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: '\uFEFF' + 'DESKTOP\\ann'.split('').join('\u0000') + '\r\n' }).p)).toBeUndefined();
-    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: 'DESKTOP\\an\r\n' }).p)).toMatch(/owner is "DESKTOP\\an"/);
-    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: 'DESKTOP\\ann\r\nWARNING\r\n' }).p)).toMatch(/file owner/);
-    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: '' }).p)).toMatch(/file owner/);
-  });
-
-  it('N10: a localised current-user name matches (whoami is the same locale); a localised Administrators name is not trusted by name', () => {
-    const who = '"büro\\änne","S-1-5-21-1-2-3-1001"\r\n';
-    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, whoami: who, icacls: ICACLS(['BÜRO\\ÄNNE:(F)', '*S-1-5-18:(F)', '*S-1-5-32-544:(F)']), dir: DIR('BÜRO\\ÄNNE') }).p)).toBeUndefined();
-    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: DIR('VORDEFINIERT\\Administratoren') }).p)).toMatch(/owner is/);
-    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: DIR('*S-1-5-32-544') }).p)).toBeUndefined();
-  });
-
-  it('refuses a file owned by someone else', () => {
-    const { p } = plat({ ...good, dir: DIR('DESKTOP\\bob') });
-    expect(verifyWindowsConfigAcl(FILE, p)).toMatch(/owner is "DESKTOP\\bob"/);
-    expect(verifyWindowsConfigAcl(FILE, plat({ ...good, dir: DIR('BUILTIN\\Administrators') }).p)).toBeUndefined();
-  });
-
-  it('fails closed on unparseable or failing helper output, with a hint', () => {
-    for (const o of [
-      { ...good, whoami: undefined },
-      { ...good, icacls: 'garbage' },
-      { ...good, icaclsStatus: 5 },
-      { ...good, dir: 'nothing here' },
-      { ...good, icacls: ICACLS(['NT AUTHORITY\\SYSTEM:(F)']) },
-    ]) {
-      expect(verifyWindowsConfigAcl(FILE, plat(o).p)).toMatch(/icacls|whoami|owner|current user/);
+  it('fails closed on a PowerShell failure, a timeout (status null) or unparseable output, with a hint', () => {
+    for (const o of [{ status: 1 }, { status: null as unknown as number }, { json: 'garbage' }, { json: '' }, { json: aclJson([]) }]) {
+      const r = verifyWindowsConfigAcl(FILE, plat(o).p);
+      expect(r, JSON.stringify(o)).toMatch(/fail closed/);
+      expect(r).toContain('icacls');
     }
   });
 
@@ -304,7 +297,7 @@ describe('M3: runner.json ACL on win32', () => {
     try {
       const path = join(root, 'runner.json');
       writeFileSync(path, JSON.stringify({ token: 'a'.repeat(32), stateDir: join(root, 'state') }), { mode: 0o600 });
-      expect(() => loadRunnerConfig(path, plat({ whoami: undefined }).p)).toThrow(ConfigError);
+      expect(() => loadRunnerConfig(path, plat({ status: 1 }).p)).toThrow(ConfigError);
     } finally {
       rmSandbox(root);
     }

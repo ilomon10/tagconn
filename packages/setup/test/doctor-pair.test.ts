@@ -29,12 +29,14 @@ function recorder() {
 
 const WIN_ENV = { USERDOMAIN: 'PC', USERNAME: 'ilo' };
 const whoami = { status: 0, stdout: '"PC\\ilo","S-1-5-21-1-2-3-1001"\r\n', stderr: '' };
-const aclOk: ExecFn = (cmd, args) =>
-  /whoami/.test(cmd) ? whoami : { status: 0, stdout: args.includes('/grant:r') ? '' : `${args[0]} PC\\ilo:(F)\r\n`, stderr: '' };
-const aclOpen: ExecFn = (cmd, args) =>
+const psAcl = (aces: Array<{ sid: string; rights: number }>): ExecFn => (cmd) =>
   /whoami/.test(cmd)
     ? whoami
-    : { status: 0, stdout: args.includes('/grant:r') ? '' : `${args[0]} PC\\ilo:(F)\r\n    BUILTIN\\Users:(I)(RX)\r\n`, stderr: '' };
+    : /powershell/i.test(cmd)
+      ? { status: 0, stdout: JSON.stringify({ owner: 'S-1-5-21-1-2-3-1001', user: 'S-1-5-21-1-2-3-1001', aces: aces.map((a) => ({ ...a, type: 'Allow', inherited: false, inheritanceFlags: 0, propagationFlags: 0 })) }), stderr: '' }
+      : { status: 0, stdout: '', stderr: '' };
+const aclOk = psAcl([{ sid: 'S-1-5-21-1-2-3-1001', rights: 2032127 }]);
+const aclOpen = psAcl([{ sid: 'S-1-5-21-1-2-3-1001', rights: 2032127 }, { sid: 'S-1-5-32-545', rights: 1179817 }]);
 
 describe('doctor on win32', () => {
   it('reports systemd and bwrap as not applicable, never as warnings or failures', () => {

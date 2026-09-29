@@ -1,28 +1,49 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseIcaclsPrincipals, parseWhoamiUser, SecretFileError, systemBin, verifySecretFile, writeSecretFile, type ExecFn } from '../src/index.ts';
+import { parseWhoamiUser, SecretFileError, systemBin, verifySecretFile, writeSecretFile, type ExecFn } from '../src/index.ts';
 import { tempDir } from './support/sandbox.ts';
 
 const WIN_ENV = { USERDOMAIN: 'DESKTOP-1', USERNAME: 'ilo', SystemRoot: 'C:\\Windows' };
-const SID = 'S-1-5-21-1111111111-2222222222-3333333333-1001';
+const SID = 'S-1-5-21-1-2-3-1001'; // = ME in the shared fixtures below
 const ICACLS = 'C:\\Windows\\System32\\icacls.exe';
 const WHOAMI = 'C:\\Windows\\System32\\whoami.exe';
 
-/** A fake icacls: records calls; `listing` decides what `icacls <file>` prints. */
-function fakeIcacls(listing: (path: string) => string, opts: { grantStatus?: number } = {}) {
-  const calls: string[][] = [];
-  const exec: ExecFn = (cmd, args) => {
-    calls.push([cmd, ...args]);
+// ---- shared ACL fixtures (identical in apps/runner/test/unit/win32Hardening.test.ts and packages/setup/test/winAclCore.test.ts)
+const ME = 'S-1-5-21-1-2-3-1001';
+const ace = (sid: string, rights: number, o: { type?: string; inherited?: boolean; inh?: number; prop?: number } = {}) => ({
+  sid, rights, type: o.type ?? 'Allow', inherited: o.inherited ?? false, inheritanceFlags: o.inh ?? 0, propagationFlags: o.prop ?? 0,
+});
+const FULL = 2032127; // FileSystemRights.FullControl
+const MODIFY = 1245631;
+const READ_EXEC = 1179817;
+const aclJson = (aces: unknown[], owner: string | null = ME) => JSON.stringify({ owner, user: ME, aces });
+/** English and German Windows print different names, but the SIDs (all this code sees) are the same. */
+const ENGLISH = aclJson([ace(ME, FULL), ace('S-1-5-18', FULL), ace('S-1-5-32-544', FULL), ace('S-1-5-32-545', READ_EXEC, { inherited: true, inh: 3 })]);
+const GERMAN = ENGLISH;
+const UNTRANSLATABLE = aclJson([ace(ME, FULL), ace('S-1-5-21-9-9-9-1234', MODIFY)]);
+const AUTH_USERS_WRITE = aclJson([ace(ME, FULL), ace('S-1-5-11', MODIFY, { inh: 3 })]);
+const DENY_ONLY_OTHERS = aclJson([ace(ME, FULL), ace('S-1-1-0', FULL, { type: 'Deny' }), ace('S-1-5-11', READ_EXEC)]);
+const INHERITED_WRITE = aclJson([ace(ME, FULL), ace('S-1-5-32-545', MODIFY, { inherited: true, inh: 3 })]);
+const INHERIT_ONLY_WRITE = aclJson([ace(ME, FULL), ace('S-1-5-11', MODIFY, { inherited: true, inh: 3, prop: 2 })]);
+const OWNED_BY_OTHER = aclJson([ace(ME, FULL)], 'S-1-5-21-1-2-3-1002');
+// ---- end shared ACL fixtures
+
+const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+/** A fake PowerShell + icacls + whoami: records calls (with env); `acl` decides the JSON `Get-Acl` prints for a path. */
+function fakeWin(acl: (path: string) => string, opts: { grantStatus?: number; psStatus?: number; psError?: Error } = {}) {
+  const calls: Array<{ cmd: string; args: string[]; env?: Record<string, string> }> = [];
+  const exec: ExecFn = (cmd, args, o) => {
+    calls.push({ cmd, args, env: o?.env });
     if (cmd === WHOAMI) return { status: 0, stdout: `"DESKTOP-1\\ilo","${SID}"\r\n`, stderr: '' };
+    if (cmd === PS) return { status: opts.psStatus ?? 0, stdout: acl(o?.env?.TAGCONN_ACL_PATH ?? ''), stderr: '', error: opts.psError };
     if (cmd !== ICACLS) return { status: 1, stdout: '', stderr: 'unexpected' };
-    if (args.includes('/grant:r')) return { status: opts.grantStatus ?? 0, stdout: '', stderr: opts.grantStatus ? 'Access is denied.' : '' };
-    return { status: 0, stdout: listing(args[0] as string), stderr: '' };
+    return { status: opts.grantStatus ?? 0, stdout: '', stderr: opts.grantStatus ? 'Access is denied.' : '' };
   };
   return { exec, calls };
 }
 
-const onlyUser = (path: string) => `${path} DESKTOP-1\\ilo:(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n`;
+const onlyUser = () => aclJson([ace(ME, FULL)]);
 
 describe('writeSecretFile (POSIX)', () => {
   it('writes with mode 600 atomically and leaves no temp file', () => {
@@ -50,26 +71,28 @@ describe('writeSecretFile (POSIX)', () => {
   });
 });
 
-describe('writeSecretFile (win32, mocked icacls)', () => {
-  it('grants by SID (from System32 whoami) with the absolute System32 icacls as an argv array, then verifies', () => {
+describe('writeSecretFile (win32, mocked PowerShell + icacls)', () => {
+  it('grants by SID with the absolute System32 icacls as an argv array, then verifies via PowerShell with the path in the env', () => {
     const dir = tempDir();
     const path = join(dir, 'hook.json');
-    const { exec, calls } = fakeIcacls(onlyUser);
+    const { exec, calls } = fakeWin(onlyUser);
     writeSecretFile(path, '{}', { platform: 'win32', env: WIN_ENV, exec });
     expect(readFileSync(path, 'utf8')).toBe('{}');
-    const grant = calls.find((c) => c.includes('/grant:r'));
-    expect(grant?.slice(0, 1)).toEqual([ICACLS]);
-    expect(grant?.slice(2)).toEqual(['/inheritance:r', '/grant:r', `*${SID}:F`]);
-    expect(calls.some((c) => c[0] === WHOAMI && c.slice(1).join(' ') === '/user /fo csv /nh')).toBe(true);
-    // grant happens on the temp file (before the secret is written), then a verification listing.
-    expect(calls.some((c) => c[0] === ICACLS && c.length === 2)).toBe(true);
+    const grant = calls.find((c) => c.args.includes('/grant:r'));
+    expect(grant?.cmd).toBe(ICACLS);
+    expect(grant?.args.slice(1)).toEqual(['/inheritance:r', '/grant:r', `*${SID}:F`]);
+    expect(calls.some((c) => c.cmd === WHOAMI && c.args.join(' ') === '/user /fo csv /nh')).toBe(true);
+    const ps = calls.find((c) => c.cmd === PS);
+    expect(ps?.env).toMatchObject({ TAGCONN_ACL_PATH: expect.stringContaining('hook.json') });
+    expect(ps?.args.slice(0, 4)).toEqual(['-NoProfile', '-NonInteractive', '-OutputFormat', 'Text']);
+    expect(ps?.args.join(' ')).not.toContain('hook.json');
     expect(readdirSync(dir)).toEqual(['hook.json']);
   });
 
   it('throws SecretFileError with a fix hint when icacls fails, and writes nothing', () => {
     const dir = tempDir();
     const path = join(dir, 'hook.json');
-    const { exec } = fakeIcacls(onlyUser, { grantStatus: 5 });
+    const { exec } = fakeWin(onlyUser, { grantStatus: 5 });
     let err: unknown;
     try {
       writeSecretFile(path, 'secret', { platform: 'win32', env: WIN_ENV, exec });
@@ -83,32 +106,36 @@ describe('writeSecretFile (win32, mocked icacls)', () => {
     expect(readdirSync(dir)).toEqual([]);
   });
 
-  it('throws when verification finds another principal (e.g. inherited Users), and does not publish the file', () => {
+  it.each([
+    ['inherited Users', INHERITED_WRITE, /S-1-5-32-545/],
+    ['Authenticated Users', AUTH_USERS_WRITE, /S-1-5-11/],
+    ['an untranslatable SID', UNTRANSLATABLE, /S-1-5-21-9-9-9-1234/],
+    ['a read-only other', DENY_ONLY_OTHERS, /S-1-5-11/],
+    ['SYSTEM and Administrators (not tolerated for secrets)', ENGLISH, /S-1-5-18/],
+  ])('refuses when another principal is listed: %s, and does not publish the file', (_n, json, re) => {
     const dir = tempDir();
-    const path = join(dir, 'hook.json');
-    const { exec } = fakeIcacls(
-      (p) => `${p} DESKTOP-1\\ilo:(F)\r\n    BUILTIN\\Users:(I)(RX)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n`,
-    );
-    expect(() => writeSecretFile(path, 'secret', { platform: 'win32', env: WIN_ENV, exec })).toThrow(/BUILTIN\\Users/);
+    const { exec } = fakeWin(() => json);
+    expect(() => writeSecretFile(join(dir, 'hook.json'), 'secret', { platform: 'win32', env: WIN_ENV, exec })).toThrow(re);
     expect(readdirSync(dir)).toEqual([]);
   });
 
-  it('a failed icacls read counts as a failed verification', () => {
-    const exec: ExecFn = (cmd, args) =>
-      cmd === WHOAMI ? { status: 0, stdout: `"DESKTOP-1\\ilo","${SID}"`, stderr: '' } : args.includes('/grant:r') ? { status: 0, stdout: '', stderr: '' } : { status: 1, stdout: '', stderr: '', error: new Error('spawn icacls ENOENT') };
+  it('ignores DENY entries, but needs at least one allow entry', () => {
+    const denyPlus = fakeWin(() => aclJson([ace(ME, FULL), ace('S-1-1-0', FULL, { type: 'Deny' })]));
+    expect(verifySecretFile('C:\\x\\f', { platform: 'win32', env: WIN_ENV, exec: denyPlus.exec })).toEqual({ ok: true });
+    const denyOnly = fakeWin(() => aclJson([ace('S-1-1-0', FULL, { type: 'Deny' })]));
+    expect(verifySecretFile('C:\\x\\f', { platform: 'win32', env: WIN_ENV, exec: denyOnly.exec })).toMatchObject({ ok: false, kind: 'acl' });
+  });
+
+  it('fails closed with a hint on a PowerShell failure, an error, or unparseable output', () => {
+    for (const w of [fakeWin(onlyUser, { psStatus: 1 }), fakeWin(onlyUser, { psError: new Error('ETIMEDOUT') }), fakeWin(() => 'not json'), fakeWin(() => '')]) {
+      const r = verifySecretFile('C:\\x\\f', { platform: 'win32', env: WIN_ENV, exec: w.exec });
+      expect(r).toMatchObject({ ok: false, kind: 'acl' });
+      expect((r as { hint: string }).hint).toContain('icacls');
+    }
     const dir = tempDir();
+    const { exec } = fakeWin(onlyUser, { psStatus: 1 });
     expect(() => writeSecretFile(join(dir, 'f'), 'x', { platform: 'win32', env: WIN_ENV, exec })).toThrow(SecretFileError);
-  });
-
-  it('parseIcaclsPrincipals handles paths with spaces and the trailer', () => {
-    const path = 'C:\\Users\\Ilo M\\AppData\\Roaming\\tagconn\\hook.json';
-    const out = `${path} NT AUTHORITY\\SYSTEM:(I)(F)\r\n    BUILTIN\\Administrators:(I)(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n`;
-    expect(parseIcaclsPrincipals(out, path)).toEqual(['NT AUTHORITY\\SYSTEM', 'BUILTIN\\Administrators']);
-  });
-
-  it('verifySecretFile accepts a bare-user principal', () => {
-    const { exec } = fakeIcacls((p) => `${p} ilo:(F)\r\n`);
-    expect(verifySecretFile('C:\\x\\f', { platform: 'win32', env: WIN_ENV, exec })).toEqual({ ok: true });
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   it('fails closed with a hint when whoami cannot give a SID (nothing is granted or written)', () => {
@@ -134,13 +161,6 @@ describe('writeSecretFile (win32, mocked icacls)', () => {
   it('decodes UTF-16-looking (NUL-interleaved) whoami output', () => {
     const wide = `"DESKTOP-1\\ilo","${SID}"`.split('').join('\u0000');
     expect(parseWhoamiUser(wide)?.sid).toBe(SID);
-  });
-
-  it('accepts an ACE printed as the raw SID, and rejects SYSTEM/Administrators alongside the user', () => {
-    const only = fakeIcacls((p) => `${p} ${SID}:(F)\r\n`);
-    expect(verifySecretFile('C:\\x\\f', { platform: 'win32', env: WIN_ENV, exec: only.exec })).toEqual({ ok: true });
-    const extra = fakeIcacls((p) => `${p} DESKTOP-1\\ilo:(F)\r\n    NT AUTHORITY\\SYSTEM:(F)\r\n`);
-    expect(verifySecretFile('C:\\x\\f', { platform: 'win32', env: WIN_ENV, exec: extra.exec })).toMatchObject({ ok: false, kind: 'acl' });
   });
 
   it('systemBin uses %SystemRoot% and falls back to C:\\Windows', () => {
