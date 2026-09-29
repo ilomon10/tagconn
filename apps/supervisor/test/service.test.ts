@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RpcFailure } from '../src/errors.ts';
 import { LogHub } from '../src/logHub.ts';
-import { cleanStalePid, taskkillArgs, writePidFile, type ProcOps } from '../src/proc.ts';
+import { cleanStalePid, killTree, parseProcStatStartTime, powershellBin, taskkillArgs, taskkillBin, writePidFile, type ProcOps } from '../src/proc.ts';
 import { ManagedService, type LaunchSpec, type ServiceDefinition, type SpawnFn, type Timing } from '../src/service.ts';
 import { FAKE_CHILD, fakeChildProcess, isAlive, recorder, tempDir, waitFor } from './helpers.ts';
 import { spawn as realSpawn } from 'node:child_process';
@@ -112,12 +112,53 @@ describe('ManagedService', () => {
   });
 
   it('a service that never becomes healthy is only counted as hung after the start grace', async () => {
-    const { svc, spawnTimes } = make(['hang'], { definition: { healthUrl: () => 'http://127.0.0.1:1/x' }, health: async () => false, timing: { startGraceMs: 200 } });
-    await svc.start();
+    const { svc, spawnTimes } = make(['hang'], { definition: { healthUrl: () => 'http://127.0.0.1:1/x' }, health: async () => false, timing: { startGraceMs: 200, startTimeoutMs: 60_000 } });
+    void svc.start().catch(() => {});
     await new Promise((r) => setTimeout(r, 120));
     expect(spawnTimes).toHaveLength(1);
     expect(svc.status().state).toBe('starting');
     await waitFor(() => spawnTimes.length >= 2, 4000, 'a restart after the grace');
+  });
+
+  it('QA B: start() resolves only once running (first health OK), not when merely spawned', async () => {
+    let healthy = false;
+    const { svc } = make(['hang'], { definition: { healthUrl: () => 'http://127.0.0.1:1/x' }, health: async () => healthy });
+    let resolved = false;
+    const p = svc.start().then((s) => {
+      resolved = true;
+      return s;
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(resolved).toBe(false);
+    expect(svc.status().state).toBe('starting');
+    healthy = true;
+    expect((await p).state).toBe('running');
+  });
+
+  it('QA B: start() rejects with a clear error when it is not running in time', async () => {
+    const { svc } = make(['hang'], { definition: { healthUrl: () => 'http://127.0.0.1:1/x' }, health: async () => false, timing: { startTimeoutMs: 150, startGraceMs: 60_000 } });
+    await expect(svc.start()).rejects.toMatchObject({ code: 'spawn_failed', message: expect.stringContaining('did not become ready') });
+  });
+
+  it('QA B: start() rejects when the service gives up (crashed) before it is ready', async () => {
+    const { svc } = make(['exit', '1'], { definition: { healthUrl: () => 'http://127.0.0.1:1/x' }, health: async () => false, timing: { maxCrashes: 2 } });
+    await expect(svc.start()).rejects.toMatchObject({ code: 'spawn_failed', message: expect.stringContaining('crashed 2 times') });
+    expect(svc.status().state).toBe('crashed');
+  });
+
+  it('a signal exit is not blamed on better-sqlite3 or the port', async () => {
+    const child = fakeChildProcess(4243);
+    const { svc } = make(['hang'], {
+      definition: { crashHint: 'If the log mentions better-sqlite3 the install is corrupt.' },
+      timing: { maxCrashes: 1 },
+      spawn: (() => child) as unknown as SpawnFn,
+    });
+    await svc.start();
+    child.die(null, 'SIGKILL');
+    const st = await waitFor(() => (svc.status().state === 'crashed' ? svc.status() : undefined), 2000, 'crashed');
+    expect(st.lastError).toContain('killed by a signal (SIGKILL)');
+    expect(st.lastError).toContain('out-of-memory');
+    expect(st.lastError).not.toContain('better-sqlite3');
   });
 
   it('SIGTERM first; a child that ignores it gets a tree kill after the timeout', async () => {
@@ -143,11 +184,32 @@ describe('ManagedService', () => {
     await waitFor(() => !isAlive(gpid), 2000, 'the grandchild to die');
   });
 
-  it('a crash also reaps leftover group members (nothing keeps the port)', async () => {
-    const { svc } = make(['exit', '1'], { timing: { maxCrashes: 1 } });
+  it('N7: once the child has ended nothing is signalled (its pid may belong to someone else now)', async () => {
+    const child = fakeChildProcess(4244);
+    const signalled: number[] = [];
+    const ops: ProcOps = { platform: 'linux', kill: (pid) => void signalled.push(pid), run: () => ({ status: 0, stdout: '' }), isAlive: () => false, readCmdline: () => null };
+    const { svc } = make(['hang'], { timing: { maxCrashes: 1 }, spawn: (() => child) as unknown as SpawnFn, ops });
     await svc.start();
+    child.die(1, null);
     await waitFor(() => svc.status().state === 'crashed', 3000, 'crashed');
+    expect(signalled).toEqual([]);
     expect(svc.status().pid).toBeUndefined();
+  });
+
+  it('killTree does not fall back to a single-pid kill when the group kill fails', () => {
+    const calls: number[] = [];
+    const ops: ProcOps = {
+      platform: 'linux',
+      kill: (pid) => {
+        calls.push(pid);
+        throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+      },
+      run: () => ({ status: 0, stdout: '' }),
+      isAlive: () => false,
+      readCmdline: () => null,
+    };
+    killTree(4245, 'SIGKILL', ops);
+    expect(calls).toEqual([-4245]);
   });
 
   it('win32: spawns without a process group and stops with `taskkill /PID <pid> /T /F` (mocked)', async () => {
@@ -161,7 +223,7 @@ describe('ManagedService', () => {
       },
       run: (cmd, args) => {
         ran.push([cmd, args]);
-        if (cmd === 'taskkill') queueMicrotask(() => child.die(1, null));
+        if (cmd.toLowerCase().endsWith('\\taskkill.exe')) queueMicrotask(() => child.die(1, null));
         return { status: 0, stdout: '' };
       },
       isAlive: () => false,
@@ -178,37 +240,61 @@ describe('ManagedService', () => {
     await svc.start();
     expect(spawnOpts).toMatchObject({ detached: false, windowsHide: true });
     await svc.stop();
-    expect(ran).toEqual([['taskkill', ['/PID', '4242', '/T', '/F']]]);
+    // N1: the absolute %SystemRoot%\System32 binary, never the bare name.
+    expect(ran).toEqual([[taskkillBin(process.env), ['/PID', '4242', '/T', '/F']]]);
+    expect(taskkillBin({ SystemRoot: 'D:\\Win\\' })).toBe('D:\\Win\\System32\\taskkill.exe');
+    expect(powershellBin({ SystemRoot: 'D:\\Win' })).toBe('D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
     expect(taskkillArgs(7)).toEqual(['/PID', '7', '/T', '/F']);
     expect(svc.status().state).toBe('stopped');
   });
 });
 
 describe('stale PID files', () => {
+  const MARKER = '/opt/tagconn/server/main.js';
   const ops = (over: Partial<ProcOps> & { killed?: number[] }): ProcOps => ({
     platform: 'linux',
     kill: (pid, sig) => void over.killed?.push(pid * 1000 + (sig === 'SIGKILL' ? 9 : 0)),
     run: () => ({ status: 0, stdout: '' }),
     isAlive: () => true,
     readCmdline: () => null,
+    startTime: () => '555',
     ...over,
   });
+  const rec = { pid: 4321, marker: MARKER, startedAt: 1, startTime: '555' };
 
-  it('kills a leftover process only if its command line contains our bundle path', () => {
+  it('kills a leftover process only if its start time matches and its command line has the CURRENT bundle path', () => {
     const dir = tempDir();
     const killed: number[] = [];
-    writePidFile(dir, 'server', { pid: 4321, marker: '/opt/tagconn/server/main.js', startedAt: 1 });
-    const res = cleanStalePid(dir, 'server', ops({ killed, readCmdline: () => 'node /opt/tagconn/server/main.js' }));
+    writePidFile(dir, 'server', rec);
+    const res = cleanStalePid(dir, 'server', ops({ killed, readCmdline: () => `node ${MARKER}` }), MARKER);
     expect(res).toBe('killed');
     expect(killed).toEqual([-4321 * 1000 + 9]);
     expect(existsSync(join(dir, 'server.pid'))).toBe(false);
   });
 
+  it('N7: a PID file cannot choose what gets killed: the marker comes from the current bundle, not the file', () => {
+    const dir = tempDir();
+    const killed: number[] = [];
+    writePidFile(dir, 'server', { ...rec, marker: '/usr/bin/firefox' });
+    expect(cleanStalePid(dir, 'server', ops({ killed, readCmdline: () => '/usr/bin/firefox --new-window' }), MARKER)).toBe('foreign');
+    expect(killed).toEqual([]);
+  });
+
+  it('N7: a recycled PID (different start time, or none recorded) is never killed even if the cmdline matches', () => {
+    const dir = tempDir();
+    const killed: number[] = [];
+    writePidFile(dir, 'server', rec);
+    expect(cleanStalePid(dir, 'server', ops({ killed, readCmdline: () => `node ${MARKER}`, startTime: () => '999' }), MARKER)).toBe('foreign');
+    writePidFile(dir, 'server', { pid: 4321, marker: MARKER, startedAt: 1 });
+    expect(cleanStalePid(dir, 'server', ops({ killed, readCmdline: () => `node ${MARKER}` }), MARKER)).toBe('foreign');
+    expect(killed).toEqual([]);
+  });
+
   it('never kills a recycled PID that now runs something else', () => {
     const dir = tempDir();
     const killed: number[] = [];
-    writePidFile(dir, 'server', { pid: 4321, marker: '/opt/tagconn/server/main.js', startedAt: 1 });
-    expect(cleanStalePid(dir, 'server', ops({ killed, readCmdline: () => '/usr/bin/firefox --new-window' }))).toBe('foreign');
+    writePidFile(dir, 'server', rec);
+    expect(cleanStalePid(dir, 'server', ops({ killed, readCmdline: () => '/usr/bin/firefox --new-window' }), MARKER)).toBe('foreign');
     expect(killed).toEqual([]);
     expect(existsSync(join(dir, 'server.pid'))).toBe(false);
   });
@@ -216,12 +302,31 @@ describe('stale PID files', () => {
   it('does not kill when the process is gone, when the cmdline is unreadable, or the file is corrupt', () => {
     const dir = tempDir();
     const killed: number[] = [];
-    writePidFile(dir, 'runner', { pid: 99, marker: 'm', startedAt: 1 });
-    expect(cleanStalePid(dir, 'runner', ops({ killed, isAlive: () => false }))).toBe('stale');
-    writePidFile(dir, 'runner', { pid: 99, marker: 'm', startedAt: 1 });
-    expect(cleanStalePid(dir, 'runner', ops({ killed, readCmdline: () => null }))).toBe('foreign');
-    expect(cleanStalePid(dir, 'runner', ops({ killed }))).toBe('none');
+    writePidFile(dir, 'runner', { ...rec, pid: 99 });
+    expect(cleanStalePid(dir, 'runner', ops({ killed, isAlive: () => false }), MARKER)).toBe('stale');
+    writePidFile(dir, 'runner', { ...rec, pid: 99 });
+    expect(cleanStalePid(dir, 'runner', ops({ killed, readCmdline: () => null }), MARKER)).toBe('foreign');
+    expect(cleanStalePid(dir, 'runner', ops({ killed }), MARKER)).toBe('none');
     expect(killed).toEqual([]);
+  });
+
+  it('parses field 22 of /proc/<pid>/stat even when comm has spaces and parentheses', () => {
+    const stat = '1234 (my (weird) app) S 1 1234 1234 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 100 18446744073709551615';
+    expect(parseProcStatStartTime(stat)).toBe('987654');
+    expect(parseProcStatStartTime('garbage')).toBeNull();
+  });
+
+  it.skipIf(process.platform !== 'linux')('records the real start time in the PID file and a stale kill of the real child works end to end', async () => {
+    const { svc, pidDir } = make(['hang']);
+    await svc.start();
+    const recorded = JSON.parse((await import('node:fs')).readFileSync(join(pidDir, 'server.pid'), 'utf8'));
+    expect(recorded.startTime).toMatch(/^\d+$/);
+    const pid = svc.status().pid!;
+    // Simulate a supervisor that died: keep the file, forget the service, clean with a fresh one.
+    const { realProcOps } = await import('../src/proc.ts');
+    writePidFile(pidDir, 'server', recorded);
+    expect(cleanStalePid(pidDir, 'server', realProcOps(), FAKE_CHILD)).toBe('killed');
+    await waitFor(() => !isAlive(pid), 2000, 'the stale child to die');
   });
 
   it('start() cleans a stale PID first', async () => {
@@ -229,7 +334,7 @@ describe('stale PID files', () => {
     // A dead pid: nothing to kill, file replaced by the new child's.
     writePidFile(pidDir, 'server', { pid: 2 ** 22 + 7, marker: FAKE_CHILD, startedAt: 1 });
     await svc.start();
-    const rec = JSON.parse((await import('node:fs')).readFileSync(join(pidDir, 'server.pid'), 'utf8'));
-    expect(rec.pid).toBe(svc.status().pid);
+    const rec2 = JSON.parse((await import('node:fs')).readFileSync(join(pidDir, 'server.pid'), 'utf8'));
+    expect(rec2.pid).toBe(svc.status().pid);
   });
 });

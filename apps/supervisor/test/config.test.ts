@@ -80,3 +80,29 @@ describe('resolvePaths', () => {
     expect(resolvePaths({ TAGCONN_CONFIG_DIR: '/sandbox/cfg' }, 'linux').config).toBe('/sandbox/cfg');
   });
 });
+
+describe('ensureDataDir (N8)', () => {
+  it('win32: a folder it creates gets a user-only ACL via the absolute icacls and SID grant', async () => {
+    const { ensureDataDir } = await import('../src/dataDir.ts');
+    const calls: [string, string[]][] = [];
+    const dir = join(tempDir(), 'data');
+    const exec = (cmd: string, args: string[]) => {
+      calls.push([cmd, args]);
+      return { status: 0, stdout: cmd.endsWith('whoami.exe') ? '"PC\\me","S-1-5-21-1-2-3-1001"\n' : '', stderr: '' };
+    };
+    ensureDataDir(dir, { platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, exec });
+    const icacls = calls.find(([c]) => c.endsWith('icacls.exe'))!;
+    expect(icacls[0]).toBe('C:\\Windows\\System32\\icacls.exe');
+    expect(icacls[1]).toEqual([dir, '/inheritance:r', '/grant:r', '*S-1-5-21-1-2-3-1001:(OI)(CI)F']);
+    // An existing folder is left alone.
+    calls.length = 0;
+    ensureDataDir(dir, { platform: 'win32', env: {}, exec });
+    expect(calls).toEqual([]);
+  });
+
+  it('a failing icacls makes it throw instead of leaving a world-readable data folder unnoticed', async () => {
+    const { ensureDataDir } = await import('../src/dataDir.ts');
+    const exec = (cmd: string) => ({ status: cmd.endsWith('icacls.exe') ? 5 : 0, stdout: '"PC\\me","S-1-5-21-1-2-3-1001"', stderr: 'Access is denied' });
+    expect(() => ensureDataDir(join(tempDir(), 'd2'), { platform: 'win32', env: {}, exec })).toThrow(/Could not restrict/);
+  });
+});

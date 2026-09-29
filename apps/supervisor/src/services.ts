@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createContext, defaultCheckDeps, findNextFreePort, stabilizeNodePath, type CheckDeps } from '@tagconn/setup';
 import { ensureDataDir } from './dataDir.ts';
@@ -52,6 +52,7 @@ export function readTokens(deps: DefinitionDeps): { hook?: string; runner?: stri
 export function ensureOfficeConfig(deps: Pick<DefinitionDeps, 'paths' | 'logs'>): string {
   const file = join(deps.paths.config, 'office.yaml');
   try {
+    mkdirSync(deps.paths.config, { recursive: true, mode: 0o700 });
     if (!existsSync(file)) writeFileSync(file, '# tagconn desktop: optional server settings (see config/office.yaml in the repo for the keys)\n', { flag: 'wx', mode: 0o600 });
     return file;
   } catch {

@@ -32,7 +32,7 @@ import { isSandboxedConfig, resolveBundle, resolvePaths, type Bundle, type Envir
 import type { ProcOps } from './proc.ts';
 import { redact } from './redact.ts';
 import { ManagedService, type HealthFn, type ServiceController, type SpawnFn, type Timing } from './service.ts';
-import { dataDirOf, dockerEnv, runnerDefinition, serverDefinition, type DefinitionDeps } from './services.ts';
+import { dataDirOf, dockerEnv, runnerDefinition, serverDefinition, syncRunnerGuards, type DefinitionDeps } from './services.ts';
 
 type ParamsOf<M extends DesktopMethod> = ReturnType<(typeof DESKTOP_METHODS)[M]['params']['parse']>;
 export type Handlers = { [M in DesktopMethod]: (params: ParamsOf<M>) => Promise<DesktopResult<M>> | DesktopResult<M> };
@@ -80,7 +80,7 @@ export function createSupervisor(opts: SupervisorOptions = {}): Supervisor {
   });
   const supLog = (msg: string) => logs.push('supervisor', 'supervisor', msg);
   const config = new ConfigStore({ configDir: paths.config, env, platform, warn: supLog });
-  const defDeps: DefinitionDeps = { env, paths, bundle, config, logs, checkDeps: opts.checkDeps };
+  const defDeps: DefinitionDeps = { env, paths, bundle, config, logs, checkDeps: opts.checkDeps, platform };
   const onChange = (status: ServiceStatus) => notify('service.changed', status);
   const pidDir = `${paths.state}${platform === 'win32' ? '\\' : '/'}pids`;
   const shared = { logs, pidDir, onChange, ops: opts.ops, spawn: opts.spawn, health: opts.health, timing: opts.timing };
@@ -155,6 +155,20 @@ export function createSupervisor(opts: SupervisorOptions = {}): Supervisor {
     );
   }
 
+  /**
+   * QA D: a port change restarts whatever is up on the old one (server, docker stack, runner: its url was rewritten),
+   * as a user-initiated stop and start, so the health checks never probe a port nobody listens on and count a crash.
+   */
+  function restartForNewPort(): void {
+    for (const id of SERVICE_IDS) {
+      const svc = serviceOf(id);
+      const state = svc.status().state;
+      if (state !== 'running' && state !== 'starting') continue;
+      supLog(`[${id}] the port changed: restarting`);
+      svc.restart().catch((err: Error) => supLog(`[${id}] restart after a port change failed: ${err.message}`));
+    }
+  }
+
   const handlers: Handlers = {
     'app.info': appInfo,
     'setup.check': runChecks,
@@ -163,7 +177,7 @@ export function createSupervisor(opts: SupervisorOptions = {}): Supervisor {
         const cfg = config.get();
         const sandboxed = isSandboxedConfig(env, platform);
         try {
-          return await install(
+          const result = await install(
             {
               claudeDir: paths.claudeDir,
               configDir: paths.config,
@@ -181,6 +195,8 @@ export function createSupervisor(opts: SupervisorOptions = {}): Supervisor {
             },
             setupContext(),
           );
+          syncRunnerGuards(defDeps); // N8: the data dir, bundle dir and hook node the runner must deny to quests
+          return result;
         } catch (err) {
           return asInstallFailure(err);
         }
@@ -194,7 +210,13 @@ export function createSupervisor(opts: SupervisorOptions = {}): Supervisor {
         }
       }),
     'config.get': () => config.get(),
-    'config.set': (patch) => config.set(patch),
+    'config.set': (patch) => {
+      const before = config.get();
+      const after = config.set(patch);
+      if (after.dataDir !== before.dataDir) syncRunnerGuards(defDeps);
+      if (after.serverPort !== before.serverPort) restartForNewPort();
+      return after;
+    },
     'service.status': () => SERVICE_IDS.map((id) => serviceOf(id).status()),
     'service.start': ({ id }) => serviceOf(id).start(),
     'service.stop': ({ id }) => serviceOf(id).stop(),
