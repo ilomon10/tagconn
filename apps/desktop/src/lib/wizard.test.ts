@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SetupCheck, SetupFix } from '@tagconn/shared';
-import { blockingChecks, canAdvance, needsWizard, nextStep, prevStep, summarizeChecks, type WizardGate } from './wizard';
+import { bannerChecks, blockingChecks, canAdvance, needsWizard, ownServerRunning, nextStep, prevStep, summarizeChecks, type WizardGate } from './wizard';
 import { runFix, type FixEnv } from './fixes';
 import { addFolder, removeFolder } from './paths';
 
@@ -37,12 +37,32 @@ describe('wizard gating', () => {
     expect(prevStep('hooks')).toBe('folders');
   });
 
-  it('shows the wizard on first run or a required failure', () => {
-    expect(needsWizard(false, [])).toBe(true);
-    expect(needsWizard(true, [chk({})])).toBe(false);
-    expect(needsWizard(true, [chk({ status: 'fail' })])).toBe(true);
+  it('shows the wizard only until setup completed once', () => {
+    expect(needsWizard(false)).toBe(true);
+    expect(needsWizard(true)).toBe(false);
     expect(blockingChecks(null)).toEqual([]);
     expect(summarizeChecks([chk({}), chk({ status: 'warn' }), chk({ status: 'fail' })])).toEqual({ ok: 1, warn: 1, fail: 1 });
+  });
+});
+
+describe('own server port', () => {
+  const running = { id: 'server', state: 'running', since: 1, restarts: 0 } as const;
+  const portFail = chk({ id: 'server_port', status: 'fail' });
+
+  it('does not block on server_port while our server runs', () => {
+    expect(blockingChecks([portFail])).toHaveLength(1);
+    expect(blockingChecks([portFail], true)).toHaveLength(0);
+    expect(blockingChecks([portFail, chk({ id: 'claude_cli', status: 'fail' })], true)).toHaveLength(1);
+    expect(ownServerRunning({ server: running })).toBe(true);
+    expect(ownServerRunning({ server: { ...running, state: 'stopped' } })).toBe(false);
+    expect(canAdvance('check', gate({ checks: [portFail], services: { server: running } }))).toBe(true);
+    expect(canAdvance('check', gate({ checks: [portFail] }))).toBe(false);
+  });
+
+  it('lists banner checks only after setup, never counting our own port', () => {
+    expect(bannerChecks(false, [portFail], {})).toEqual([]);
+    expect(bannerChecks(true, [portFail], {})).toEqual([portFail]);
+    expect(bannerChecks(true, [portFail], { server: running })).toEqual([]);
   });
 });
 

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { visibleServices } from '../lib/state';
+import { bannerChecks } from '../lib/wizard';
 import { native, rpc, type UpdateInfo } from '../lib/tauri';
 import type { Desktop } from '../lib/useDesktop';
 import { LogsDrawer } from './LogsDrawer';
 import { ServiceRow } from './ServiceRow';
 import { SettingsDialog } from './SettingsDialog';
-import { Button, Dialog } from './ui';
+import { Button, CheckIcon, Dialog } from './ui';
 
 type Modal = null | 'logs' | 'settings' | 'uninstall' | 'update' | { copy: string };
 
@@ -19,6 +20,7 @@ export function Panel({ d, onOpenSetup }: { d: Desktop; onOpenSetup: () => void 
   const close = () => setModal(null);
   const config = d.config;
   const runMode = config?.runMode ?? 'native';
+  const failed = bannerChecks(d.setupDone, d.checks, d.state.services);
 
   /** Clipboard needs a user gesture in WebKit; if it still fails, show the text to select by hand. */
   const copy = async (text: string, what: string) => {
@@ -64,6 +66,33 @@ export function Panel({ d, onOpenSetup }: { d: Desktop; onOpenSetup: () => void 
         </div>
       </header>
 
+      {failed.length > 0 && (
+        <section aria-labelledby="checks-title" className="space-y-2 rounded-lg border border-red-500/60 bg-red-950 p-3 text-red-50">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 id="checks-title" className="text-sm font-semibold">
+              Setup problems
+            </h2>
+            <Button onClick={onOpenSetup}>Run setup again</Button>
+          </div>
+          <ul className="space-y-2">
+            {failed.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-start gap-3 text-sm">
+                <CheckIcon status={c.status} />
+                <div className="min-w-48 flex-1">
+                  <p className="font-medium">{c.title}</p>
+                  <p className="whitespace-pre-wrap text-xs opacity-90">{c.detail}</p>
+                </div>
+                {c.fix && (
+                  <Button disabled={d.busy.has(`fix:${c.fix.action}`)} onClick={() => void d.applyFix(c.fix!, onOpenSetup)}>
+                    {c.fix.label}
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section aria-labelledby="services-title" className="space-y-2">
         <div className="flex items-center justify-between">
           <h2 id="services-title" className="text-sm font-semibold">
@@ -90,7 +119,7 @@ export function Panel({ d, onOpenSetup }: { d: Desktop; onOpenSetup: () => void 
           <Button onClick={() => setModal('settings')} disabled={!config}>
             Settings
           </Button>
-          <Button onClick={onOpenSetup}>Setup and checks</Button>
+          <Button onClick={onOpenSetup}>Run setup again</Button>
           <Button onClick={() => void diagnostics()} disabled={d.busy.has('diagnostics')}>
             Copy diagnostics
           </Button>
@@ -105,7 +134,7 @@ export function Panel({ d, onOpenSetup }: { d: Desktop; onOpenSetup: () => void 
       </section>
 
       {modal === 'logs' && <LogsDrawer logs={d.state.logs} onLoad={() => void d.loadLogs()} onCopy={(t) => void copy(t, 'Logs')} onClose={close} />}
-      {modal === 'settings' && config && <SettingsDialog config={config} onSave={d.saveConfig} onError={d.fail} onClose={close} />}
+      {modal === 'settings' && config && <SettingsDialog config={config} services={d.state.services} onChangeRunMode={d.changeRunMode} onSave={d.saveConfig} onError={d.fail} onClose={close} />}
       {modal === 'uninstall' && (
         <Dialog title="Uninstall hooks" onClose={close}>
           <p className="text-sm">This removes the tagconn hook entries from your Claude Code settings.json (a backup is made first) and the tagconn staff roles and skills. Your other settings are not touched.</p>

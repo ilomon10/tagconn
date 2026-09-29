@@ -5,7 +5,7 @@ use crate::sidecar::SharedSidecar;
 use serde_json::{json, Value};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -50,15 +50,20 @@ pub fn build(app: &AppHandle, sc: &SharedSidecar) -> tauri::Result<()> {
                     tauri::async_runtime::spawn(async move {
                         if let Err(e) = do_open_office(&app, &sc, false).await {
                             eprintln!("open office: {}", e.message);
-                            show_main(&app); // the panel explains what is wrong (e.g. the server is stopped)
+                            // The main window shows the error banner (e.g. the server is stopped).
+                            show_main(&app);
+                            let _ = app.emit("desktop://notice", json!({ "message": e.message, "hint": e.hint }));
                         }
                     });
                 }
                 "panel" => show_main(&app),
                 "start_all" | "stop_all" => {
-                    let method = if event.id.as_ref() == "start_all" { "service.start" } else { "service.stop" };
+                    let start = event.id.as_ref() == "start_all";
+                    let method = if start { "service.start" } else { "service.stop" };
                     std::thread::spawn(move || {
-                        for id in all_ids(&sc) {
+                        // Stop all stops every service regardless of run mode; start follows the mode.
+                        let ids = if start { all_ids(&sc) } else { vec!["server", "runner", "docker"] };
+                        for id in ids {
                             if let Err(e) = sc.call_blocking(method, json!({ "id": id })) {
                                 eprintln!("{method} {id}: {}", e.message);
                             }

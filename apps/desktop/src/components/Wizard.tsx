@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SetupCheck } from '@tagconn/shared';
 import { addFolder, removeFolder } from '../lib/paths';
 import { visibleServices } from '../lib/state';
 import type { Desktop } from '../lib/useDesktop';
-import { STEP_TITLES, WIZARD_STEPS, blockingChecks, canAdvance, nextStep, prevStep, summarizeChecks, type WizardStep } from '../lib/wizard';
+import { STEP_TITLES, WIZARD_STEPS, blockingChecks, canAdvance, ownServerRunning, nextStep, prevStep, summarizeChecks, type WizardStep } from '../lib/wizard';
 import { SERVICE_LABELS, ServiceRow } from './ServiceRow';
 import { Button, CheckIcon, Toggle } from './ui';
 
@@ -27,8 +27,15 @@ function CheckRow({ check, d, gotoHooks }: { check: SetupCheck; d: Desktop; goto
   );
 }
 
-export function Wizard({ d, onFinish }: { d: Desktop; onFinish: () => void }) {
+export function Wizard({ d, onFinish, onExit }: { d: Desktop; onFinish: () => void; onExit?: () => void }) {
   const [step, setStep] = useState<WizardStep>('welcome');
+  const heading = useRef<HTMLHeadingElement>(null);
+  const first = useRef(true);
+  // The focused Next button is disabled or replaced on a step change, which drops focus to <body>: move it to the heading.
+  useEffect(() => {
+    if (first.current) first.current = false;
+    else heading.current?.focus();
+  }, [step]);
   const gate = { checks: d.checks, checking: d.checking, installResult: d.installResult, services: d.state.services };
   const ok = canAdvance(step, gate);
   const idx = WIZARD_STEPS.indexOf(step);
@@ -59,7 +66,7 @@ export function Wizard({ d, onFinish }: { d: Desktop; onFinish: () => void }) {
       </nav>
 
       <section aria-labelledby="step-title" className="min-h-0 flex-1 space-y-3 overflow-auto">
-        <h1 id="step-title" tabIndex={-1} className="text-xl font-semibold">
+        <h1 id="step-title" ref={heading} tabIndex={-1} className="text-xl font-semibold outline-none">
           {STEP_TITLES[step]}
         </h1>
 
@@ -83,7 +90,7 @@ export function Wizard({ d, onFinish }: { d: Desktop; onFinish: () => void }) {
                     const s = summarizeChecks(d.checks);
                     return `${s.ok} ok, ${s.warn} warning${s.warn === 1 ? '' : 's'}, ${s.fail} failed.`;
                   })()}
-                  {blockingChecks(d.checks).length > 0 && ' Fix the required failures to continue.'}
+                  {blockingChecks(d.checks, ownServerRunning(d.state.services)).length > 0 && ' Fix the required failures to continue.'}
                 </p>
                 <ul className="space-y-2">
                   {d.checks.map((c) => (
@@ -182,7 +189,7 @@ export function Wizard({ d, onFinish }: { d: Desktop; onFinish: () => void }) {
 
         {step === 'done' && (
           <div className="space-y-3 text-sm">
-            <p>The server is running. The office opens in its own window, already paired with this app.</p>
+            <p>The server is running. Open office starts the office in its own window with a pairing code ready: click Pair there to connect. Open in browser shows the code here for you to type in.</p>
             <div className="flex gap-2">
               <Button variant="primary" data-autofocus onClick={() => void d.openOffice(false)} disabled={d.busy.has('office')}>
                 Open office
@@ -194,9 +201,16 @@ export function Wizard({ d, onFinish }: { d: Desktop; onFinish: () => void }) {
       </section>
 
       <footer className="flex items-center justify-between border-t border-ink-700 pt-3">
-        <Button variant="ghost" onClick={() => setStep(prevStep(step))} disabled={idx === 0 || step === 'done'}>
-          Back
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={() => setStep(prevStep(step))} disabled={idx === 0 || step === 'done'}>
+            Back
+          </Button>
+          {onExit && (
+            <Button variant="ghost" onClick={onExit}>
+              Back to control panel
+            </Button>
+          )}
+        </div>
         {step === 'done' ? (
           <Button variant="primary" onClick={onFinish}>
             Go to control panel

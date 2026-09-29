@@ -1,4 +1,4 @@
-import { DESKTOP_NOTIFICATIONS, type LogLine, type ServiceId, type ServiceStatus } from '@tagconn/shared';
+import { DESKTOP_NOTIFICATIONS, SERVICE_IDS, type LogLine, type ServiceId, type ServiceStatus } from '@tagconn/shared';
 
 export const MAX_LOG_LINES = 1000;
 
@@ -79,4 +79,20 @@ export function lightFor(state: ServiceStatus['state'] | undefined): Light {
     default:
       return 'grey';
   }
+}
+
+/** Stop all / Quit stop every service regardless of run mode, so nothing keeps holding a port uncontrolled. */
+export function idsToStop(services: Partial<Record<ServiceId, ServiceStatus>>): ServiceId[] {
+  return SERVICE_IDS.filter((id) => {
+    const st = services[id]?.state;
+    return st !== 'stopped' && st !== 'unavailable';
+  });
+}
+
+/** Services of `runMode` that are up or coming up (a mode switch must stop them first). */
+export function activeIn(runMode: 'native' | 'docker', services: Partial<Record<ServiceId, ServiceStatus>>): ServiceId[] {
+  return visibleServices(runMode).filter((id) => {
+    const st = services[id]?.state;
+    return st === 'running' || st === 'starting' || st === 'stopping';
+  });
 }

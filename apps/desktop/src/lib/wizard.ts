@@ -12,9 +12,17 @@ export const STEP_TITLES: Record<WizardStep, string> = {
   done: 'Done',
 };
 
-/** Required checks that failed: they block everything after the System check. */
-export function blockingChecks(checks: SetupCheck[] | null): SetupCheck[] {
-  return (checks ?? []).filter((c) => c.required && c.status === 'fail');
+/** True when one of our own services holds the server port (a re-check then sees the port as busy). */
+export function ownServerRunning(services: Partial<Record<string, ServiceStatus>>): boolean {
+  return services.server?.state === 'running' || services.docker?.state === 'running';
+}
+
+/**
+ * Required checks that failed: they block everything after the System check. `server_port` never blocks
+ * while our own server runs on it (the port is busy because of us).
+ */
+export function blockingChecks(checks: SetupCheck[] | null, ownRunning = false): SetupCheck[] {
+  return (checks ?? []).filter((c) => c.required && c.status === 'fail' && !(ownRunning && c.id === 'server_port'));
 }
 
 export interface WizardGate {
@@ -32,7 +40,7 @@ export function canAdvance(step: WizardStep, g: WizardGate): boolean {
     case 'folders':
       return true;
     case 'check':
-      return g.checks !== null && !g.checking && blockingChecks(g.checks).length === 0;
+      return g.checks !== null && !g.checking && blockingChecks(g.checks, ownServerRunning(g.services)).length === 0;
     case 'hooks': {
       // Explicit consent: either the user pressed Install (result present) or the hooks are already installed.
       const already = g.checks?.find((c) => c.id === 'hooks')?.status === 'ok';
@@ -52,9 +60,17 @@ export function prevStep(step: WizardStep): WizardStep {
   return WIZARD_STEPS[Math.max(WIZARD_STEPS.indexOf(step) - 1, 0)] ?? 'welcome';
 }
 
-/** First run, or a required check fails: show the wizard instead of the control panel. */
-export function needsWizard(setupDone: boolean, checks: SetupCheck[] | null): boolean {
-  return !setupDone || blockingChecks(checks).length > 0;
+/**
+ * Only until setup has completed once. Failed checks later never switch back to the wizard (that would
+ * hide the Stop buttons); the panel shows them as a banner and "Run setup again" reopens the wizard.
+ */
+export function needsWizard(setupDone: boolean): boolean {
+  return !setupDone;
+}
+
+/** Checks the panel banner lists: blocking failures (with fixes), ignoring our own port. */
+export function bannerChecks(setupDone: boolean, checks: SetupCheck[] | null, services: Partial<Record<string, ServiceStatus>>): SetupCheck[] {
+  return setupDone ? blockingChecks(checks, ownServerRunning(services)) : [];
 }
 
 /** Aggregate of the check list for the summary line. */

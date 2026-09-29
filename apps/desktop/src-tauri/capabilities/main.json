@@ -16,8 +16,7 @@
     "allow-check-update",
     "allow-install-update",
     "dialog:allow-open",
-    "autostart:allow-enable",
-    "autostart:allow-disable",
+    "allow-set-autostart",
     "autostart:allow-is-enabled",
     {
       "identifier": "opener:allow-open-url",

@@ -65,6 +65,7 @@ struct LaunchCmd {
 }
 
 /// Splits `TAGCONN_SUPERVISOR_CMD` on whitespace ("node /path/x.js"); quoting is not supported on purpose.
+#[cfg(debug_assertions)]
 fn parse_override(cmd: &str) -> Option<LaunchCmd> {
     let mut parts = cmd.split_whitespace().map(String::from);
     let program = parts.next()?;
@@ -74,12 +75,28 @@ fn parse_override(cmd: &str) -> Option<LaunchCmd> {
 /// Returns (bundle root, supervisor.js). The root is the resource dir, or `resources/` inside it
 /// depending on how the bundler laid the files out.
 fn bundled_supervisor(res: &Path) -> Option<(PathBuf, PathBuf)> {
-    [res.to_path_buf(), res.join("resources")].into_iter().map(|root| (root.join("supervisor/supervisor.js"), root)).find(|(js, _)| js.is_file()).map(|(js, root)| (root, js))
+    [res.to_path_buf(), res.join("resources")].into_iter().map(|root| (root.join("supervisor/supervisor.js"), root)).find(|(js, _)| valid_supervisor(js)).map(|(js, root)| (root, js))
+}
+
+/// A real supervisor bundle, not the tiny placeholder that packaging leaves behind (which would
+/// otherwise be picked over a good build): over 1 KB and it speaks the RPC (`pair.mint`).
+fn valid_supervisor(js: &Path) -> bool {
+    std::fs::metadata(js).map(|m| m.len() > 1024).unwrap_or(false) && std::fs::read_to_string(js).map(|t| t.contains("pair.mint")).unwrap_or(false)
 }
 
 fn resolve_command(app: &AppHandle) -> Result<LaunchCmd, String> {
+    // Debug builds only: in a release build an env var must not be able to pick what the app executes.
+    #[cfg(debug_assertions)]
     if let Ok(cmd) = std::env::var("TAGCONN_SUPERVISOR_CMD") {
         return parse_override(&cmd).ok_or_else(|| "TAGCONN_SUPERVISOR_CMD is empty".to_string());
+    }
+    // Dev: the workspace build of apps/supervisor wins over any staged bundle (which may be a stale stub).
+    #[cfg(debug_assertions)]
+    {
+        let js = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../supervisor/dist/supervisor.js");
+        if valid_supervisor(&js) {
+            return Ok(LaunchCmd { program: "node".into(), args: vec![js.to_string_lossy().into_owned()], bundle: None });
+        }
     }
     let res = app.path().resource_dir().map_err(|e| e.to_string())?;
     // Prod: the bundled node (tauri externalBin) sits next to the app executable, named `node`.
@@ -88,13 +105,8 @@ fn resolve_command(app: &AppHandle) -> Result<LaunchCmd, String> {
     if let (Some(node), Some((root, js))) = (bundled_node, bundled_supervisor(&res)) {
         return Ok(LaunchCmd { program: node, args: vec![js.to_string_lossy().into_owned()], bundle: Some(root) });
     }
-    // Dev: the system node and the workspace build of apps/supervisor.
     if cfg!(debug_assertions) {
-        let js = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../supervisor/dist/supervisor.js");
-        if js.is_file() {
-            return Ok(LaunchCmd { program: "node".into(), args: vec![js.to_string_lossy().into_owned()], bundle: None });
-        }
-        return Err(format!("{} not found. Run `pnpm --filter @tagconn/supervisor build`, or set TAGCONN_SUPERVISOR_CMD.", js.display()));
+        return Err("apps/supervisor/dist/supervisor.js is missing or invalid. Run `pnpm --filter @tagconn/supervisor build`, or set TAGCONN_SUPERVISOR_CMD.".into());
     }
     Err("The bundled service manager is missing: the install is incomplete.".into())
 }
@@ -125,6 +137,10 @@ impl Sidecar {
         let launch = resolve_command(&self.app)?;
         let mut cmd = Command::new(&launch.program);
         cmd.args(&launch.args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        // Own the working directory (not the launch cwd, which may be a repo or a writable shared folder).
+        let data = self.app.path().app_data_dir().map_err(|e| format!("no app data dir: {e}"))?;
+        std::fs::create_dir_all(&data).map_err(|e| format!("Could not create {}: {e}", data.display()))?;
+        cmd.current_dir(&data);
         if let Some(dir) = &launch.bundle {
             cmd.env("TAGCONN_BUNDLE_DIR", dir);
         }
@@ -234,6 +250,8 @@ impl Sidecar {
             match self.spawn() {
                 Ok(()) => {
                     let _ = self.app.emit("desktop://sidecar-up", ());
+                    // The old supervisor's services died with it: tell the UI so it can offer Start again.
+                    let _ = self.app.emit("desktop://sidecar-relaunched", ());
                     return;
                 }
                 Err(e) => self.mark_down(format!("{reason} Relaunch failed: {e}")),

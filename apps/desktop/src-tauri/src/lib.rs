@@ -30,6 +30,7 @@ pub fn run() {
             commands::updates_configured,
             commands::check_update,
             commands::install_update,
+            commands::set_autostart,
         ])
         .setup(move |app| {
             let sc = Sidecar::new(app.handle().clone());

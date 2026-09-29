@@ -12,6 +12,7 @@ fn main() {
             "updates_configured",
             "check_update",
             "install_update",
+            "set_autostart",
         ])),
     )
     .expect("failed to run tauri-build");

@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import type { CheckStatus } from '@tagconn/shared';
-import type { Light } from '../lib/state';
+import type { AppState, Light } from '../lib/state';
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 
@@ -135,20 +135,39 @@ export interface Notice {
   kind: 'error' | 'info';
   message: string;
   hint?: string;
+  /** Clears the notice as soon as this holds for the app state (the condition it reports has resolved). */
+  until?: (s: AppState) => boolean;
+  action?: { label: string; run: () => void };
 }
 
-/** Errors say what failed and one next step (design doc, error handling principles). */
+/** Errors say what failed and one next step (design doc, error handling principles). Overlays the page so it never shifts the layout. */
 export function NoticeBar({ notice, onDismiss }: { notice: Notice | null; onDismiss: () => void }) {
-  if (!notice) return <div aria-live="polite" role="status" />;
   return (
-    <div role={notice.kind === 'error' ? 'alert' : 'status'} className={cx('flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-sm', notice.kind === 'error' ? 'border-red-500/60 bg-red-950 text-red-50' : 'border-ink-600 bg-ink-800 text-ink-100')}>
-      <div>
-        <p>{notice.message}</p>
-        {notice.hint && <p className="mt-0.5 text-xs opacity-90">{notice.hint}</p>}
-      </div>
-      <Button variant="ghost" onClick={onDismiss} aria-label="Dismiss message">
-        Dismiss
-      </Button>
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-40 px-4 pt-3" aria-live="polite">
+      {notice && (
+        <div role={notice.kind === 'error' ? 'alert' : 'status'} className={cx('pointer-events-auto mx-auto flex max-w-3xl items-start justify-between gap-3 rounded-md border px-3 py-2 text-sm shadow-lg', notice.kind === 'error' ? 'border-red-500/60 bg-red-950 text-red-50' : 'border-ink-600 bg-ink-800 text-ink-100')}>
+          <div>
+            <p>{notice.message}</p>
+            {notice.hint && <p className="mt-0.5 text-xs opacity-90">{notice.hint}</p>}
+          </div>
+          <div className="flex shrink-0 gap-2">
+            {notice.action && (
+              <Button
+                variant="primary"
+                onClick={() => {
+                  notice.action?.run();
+                  onDismiss();
+                }}
+              >
+                {notice.action.label}
+              </Button>
+            )}
+            <Button variant="ghost" onClick={onDismiss} aria-label="Dismiss message">
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

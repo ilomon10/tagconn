@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LogLine, ServiceStatus } from '@tagconn/shared';
-import { filterLogs, initialState, lightFor, MAX_LOG_LINES, reducer, visibleServices } from './state';
+import { filterLogs, initialState, lightFor, MAX_LOG_LINES, reducer, visibleServices, idsToStop, activeIn } from './state';
 
 const svc = (over: Partial<ServiceStatus> = {}): ServiceStatus => ({ id: 'server', state: 'running', since: 1, restarts: 0, ...over });
 const line = (ts: number, service: LogLine['service'] = 'server'): LogLine => ({ service, ts, stream: 'stdout', line: `l${ts}` });
@@ -56,5 +56,20 @@ describe('helpers', () => {
   it('lists docker only in docker mode', () => {
     expect(visibleServices('native')).toEqual(['server', 'runner']);
     expect(visibleServices('docker')).toEqual(['docker', 'runner']);
+  });
+});
+
+describe('stop sets', () => {
+  it('stops every live service regardless of run mode', () => {
+    const services = { server: svc(), docker: svc({ id: 'docker', state: 'stopped' }), runner: svc({ id: 'runner', state: 'crashed' }) };
+    expect(idsToStop(services)).toEqual(['server', 'runner']);
+    expect(idsToStop({ docker: svc({ id: 'docker' }) })).toContain('docker');
+    expect(idsToStop({ docker: svc({ id: 'docker', state: 'unavailable' }) })).not.toContain('docker');
+  });
+
+  it('finds the active services of the mode being left', () => {
+    const services = { server: svc(), runner: svc({ id: 'runner', state: 'stopped' }) };
+    expect(activeIn('native', services)).toEqual(['server']);
+    expect(activeIn('docker', services)).toEqual([]);
   });
 });
