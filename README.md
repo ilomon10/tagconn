@@ -13,7 +13,8 @@ handoff report.
 
 Using a running tagconn day to day? Start with the **[user guide](docs/guide/README.md)**:
 
-- [Getting started](docs/guide/getting-started.md) — install, start the stack, dev mode, uninstall.
+- **[tagconn Desktop](docs/guide/desktop.md)** — the control panel app for Windows and Linux (recommended).
+- [Getting started](docs/guide/getting-started.md) — run from source with Docker or dev mode.
 - [Pairing your browser](docs/guide/pairing.md) — why viewing is public but changes need an admin session.
 - [Runner & quests](docs/guide/runner-and-quests.md) — run Claude from the browser on your machine.
 - [The Receptionist](docs/guide/receptionist.md) — the read-only chat help desk.
@@ -58,6 +59,16 @@ The hook is deliberately dumb (POSIX `sh` + `curl`, always exits `0`, prints not
 timeout) so it can never slow down or break a Claude Code session, even if the server is down.
 
 ## Quick start
+
+### Option 1: tagconn Desktop (recommended)
+
+Download the control panel app from [GitHub Releases](https://github.com/ilomon10/tagconn/releases)
+(Windows, Linux, or macOS). Run the installer, and the setup wizard checks your system, installs
+the hooks, and starts the services. See [tagconn Desktop](docs/guide/desktop.md) for the full guide.
+
+### Option 2: From source with Docker
+
+If you're developing tagconn or prefer to run it from a repo checkout:
 
 ```sh
 pnpm install          # one-time, workspace-wide

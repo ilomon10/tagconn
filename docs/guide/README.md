@@ -6,26 +6,50 @@ guide is for using the running app day to day — for the project's architecture
 
 ## Pages
 
-1. **[Getting started](getting-started.md)** — install, start the stack, dev mode, the no-server
-   demo, uninstall.
-2. **[Pairing your browser](pairing.md)** — why viewing is public but changing anything needs a
+1. **[tagconn Desktop](desktop.md)** — the control panel app for Windows and Linux: download, wizard,
+   services, logs, settings, uninstall, and Windows limits.
+2. **[Getting started](getting-started.md)** — install, start the stack with Docker or dev mode, the
+   no-server demo, uninstall (for repo / Docker users).
+3. **[Pairing your browser](pairing.md)** — why viewing is public but changing anything needs a
    paired admin session, every way to get a pairing code, and troubleshooting.
-3. **[Runner & quests](runner-and-quests.md)** — the host runner that lets the browser run Claude
+4. **[Runner & quests](runner-and-quests.md)** — the host runner that lets the browser run Claude
    for you, and the Quests tab.
-4. **[The Receptionist](receptionist.md)** — the read-only help desk NPC you can chat with.
-5. **[Using the office](office.md)** — floors, stairs, the Multiverse, heroes, the Hall Planner,
+5. **[The Receptionist](receptionist.md)** — the read-only help desk NPC you can chat with.
+6. **[Using the office](office.md)** — floors, stairs, the Multiverse, heroes, the Hall Planner,
    notifications, settings.
-6. **[Attribution](attribution.md)** — the `.tagconn/` marker, saving and importing a project's
+7. **[Attribution](attribution.md)** — the `.tagconn/` marker, saving and importing a project's
    office profile.
-7. **[Display & shaders](display.md)** — visual styles, WebGL post-processing, and the screen
+8. **[Display & shaders](display.md)** — visual styles, WebGL post-processing, and the screen
    effects/vignette work landing in the next release.
-8. **[Configuration](configuration.md)** — how settings layer, what the GUI can't change, and the
+9. **[Configuration](configuration.md)** — how settings layer, what the GUI can't change, and the
    most useful keys.
-9. **[Troubleshooting](troubleshooting.md)** — the doctor script and common problems.
+10. **[Troubleshooting](troubleshooting.md)** — the doctor script and common problems.
 
 ## The 5-minute path
 
-This is the shortest route from a fresh checkout to talking to the Receptionist.
+### Option 1: tagconn Desktop (recommended)
+
+Fastest route from a download to the office:
+
+1. **Download** the app for your OS from [GitHub Releases](https://github.com/ilomon10/tagconn/releases):
+   Windows (`.exe` installer), Linux (`.deb` or `.AppImage`).
+
+2. **Install and run** the app. The setup wizard checks your system, installs the hooks, and starts
+   the services.
+
+3. **Open the office** from the control panel, and allow a project folder when prompted.
+
+4. **Run Claude** in the project: `claude` in a terminal. Sessions appear in the office as you
+   work.
+
+5. **Ask the Receptionist** (optional, needs the runner): click **Receptionist** in the office,
+   start a **General** or **This project** conversation, and ask it something.
+
+See [tagconn Desktop](desktop.md) for the full walkthrough.
+
+### Option 2: From a repo checkout (Docker)
+
+If you're developing tagconn or prefer to run it from source:
 
 1. **Start the stack.**
 
