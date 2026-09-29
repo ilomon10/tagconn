@@ -7,6 +7,23 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- **tagconn Desktop** (Windows and Linux): one app with a setup wizard (system check with one-click fixes, runner folders, a consented hook install that shows what changes and where the backup goes) and an XAMPP-style control panel (status lights, Start/Stop/Restart, crash backoff, logs, settings, diagnostics, tray, start with system). Native services by default, Docker optional. Ships as a Windows installer, an AppImage and a .deb, with signed in-app updates. See `docs/guide/desktop.md`.
+- The server can serve the web app itself (`server.webDir`) with the same security headers as nginx, so the desktop app needs no nginx or Docker.
+- A cross-platform Node hook (runs without a shell, ~30 ms) alongside the sh hook; `pnpm office:install --hook node`.
+- The runner works on Windows, with stricter defaults: no Bash or PowerShell for quests, at most accept-edits, and a read-only Receptionist without a sandbox. Quests are also denied tagconn's own folders, Windows credential stores, browser profiles, other tools' tokens, startup scripts and every PATH folder.
+- The web app explains these Windows limits when a quest is refused.
+
+### Changed
+- One small `.tagconn/` folder per project: the agents' working notes move from `.office/` to `.tagconn/work/` (git-ignored), and the README is five lines.
+- `pnpm office:install`, `office:doctor` and `office:pair` run on a shared setup library (`packages/setup`) with OS-correct paths, locked-down secret files (by SID on Windows), and a `settings.json` merge with a backup and automatic rollback.
+
+### Fixed
+- The installer names the line and column of a broken `settings.json`, and refuses before writing anything if a folder isn't writable.
+
+### Security
+- Several rounds of review of the desktop work (hook, runner, setup, supervisor, the Tauri shell and the release pipeline). Among the fixes: hook tokens validated and `hook.json` trusted only when owned by you; Windows helpers run by absolute System32 path; the pairing code never goes on a command line or into logs; the desktop server ignores stray `.env`/`office.yaml` files; releases are built from the tag, signed in an isolated job and published as drafts; shipped dependencies match the lockfile; the bundled node is checksum-pinned.
+
 ## [0.4.1] - 2026-09-26
 
 ### Added
