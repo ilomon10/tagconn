@@ -5,6 +5,7 @@ import { deepMerge, type LoadedConfig, loadConfig, type PlainObject } from './co
 import { diPlugin } from './core/di/index.js';
 import { httpPlugin } from './core/http/index.js';
 import { realtimePlugin } from './core/realtime/index.js';
+import { webPlugin } from './core/web/index.js';
 import { activityModule } from './modules/activity/index.js';
 import { agentsModule } from './modules/agents/index.js';
 import { attributionModule } from './modules/attribution/index.js';
@@ -69,6 +70,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(diPlugin, { config, templatesDir: opts.templatesDir ?? resolveTemplatesDir(env) });
   await app.register(httpPlugin);
   await app.register(realtimePlugin);
+  await app.register(webPlugin); // only when settings.server.webDir is set
 
   // Modules. 'hook.received' listeners run in this registration order:
   // projects → sessions → agents → transcripts → tasks → events.

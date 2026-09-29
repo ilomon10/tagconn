@@ -1,6 +1,8 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+// Relative (not the package): Vite loads this config with plain Node ESM, which can't resolve the shared index's .js specifiers.
+import { DEV_CONTENT_SECURITY_POLICY, SECURITY_HEADERS } from '../../packages/shared/src/securityHeaders';
 
 /**
  * Same security headers nginx sends in production (`docker/nginx.conf`; docs/design/runner-and-
@@ -8,21 +10,8 @@ import tailwindcss from '@tailwindcss/vite';
  * docker build (D1's acceptance: "the app works under CSP"). `preview` serves the built `dist/`
  * (no dev server, no HMR) and gets this verbatim; `server` (the dev server) layers on the narrow,
  * documented relaxations below that only Vite's own dev-time machinery needs.
- */
-const CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; " +
-  "font-src 'self' data:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
-
-const SECURITY_HEADERS: Record<string, string> = {
-  'Content-Security-Policy': CSP,
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-  'Cross-Origin-Opener-Policy': 'same-origin',
-};
-
-/**
- * Two dev-only relaxations, each found by actually loading `/?demo=1` under the strict CSP above and
+ *
+ * Two dev-only relaxations (`DEV_CONTENT_SECURITY_POLICY`), each found by actually loading `/?demo=1` under the strict CSP above and
  * reading the resulting console errors (not guessed):
  *   - `script-src 'unsafe-inline'`: `@vitejs/plugin-react` injects its Fast Refresh preamble as a
  *     literal inline `<script type="module">…</script>` on every page load (no nonce/hash option).
@@ -34,9 +23,8 @@ const SECURITY_HEADERS: Record<string, string> = {
  * regenerated per request) instead of `'unsafe-inline'`, but that needs a custom index.html transform
  * to mint and inject a fresh nonce every request — not worth it for a dev-only, localhost policy.
  * Neither relaxation reaches the built SPA: `index.html` has no inline script, HMR doesn't run, and
- * nginx's CSP (mirrored in `CSP` above, used verbatim by `preview`) is unchanged.
+ * nginx's CSP (`@tagconn/shared` securityHeaders, used verbatim by `preview`) is unchanged.
  */
-const DEV_CSP = CSP.replace("script-src 'self';", "script-src 'self' 'unsafe-inline';").replace("style-src 'self';", "style-src 'self' 'unsafe-inline';");
 
 /**
  * Phaser's bundled webpack runtime finds the global object with `this || new Function('return this')()`.
@@ -64,13 +52,13 @@ export default defineConfig(({ mode }) => {
     plugins: [noGlobalThisEval(), react(), tailwindcss()],
     server: {
       port: 5173,
-      headers: { ...SECURITY_HEADERS, 'Content-Security-Policy': DEV_CSP },
+      headers: { ...SECURITY_HEADERS, 'Content-Security-Policy': DEV_CONTENT_SECURITY_POLICY },
       proxy: {
         '/api': { target, changeOrigin: true },
         '/socket.io': { target, ws: true, changeOrigin: true },
       },
     },
-    preview: { port: 4173, headers: SECURITY_HEADERS },
+    preview: { port: 4173, headers: { ...SECURITY_HEADERS } },
     build: {
       chunkSizeWarningLimit: 2000,
       rollupOptions: {

@@ -128,6 +128,6 @@ export function getPath(obj: unknown, path: string[]): unknown {
 
 export function expandHome(p: string): string {
   if (p === '~') return homedir();
-  if (p.startsWith('~/')) return join(homedir(), p.slice(2));
+  if (p.startsWith('~/') || p.startsWith('~\\')) return join(homedir(), p.slice(2));
   return p;
 }

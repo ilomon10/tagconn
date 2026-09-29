@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolveHookTranscriptPath, subagentTranscriptPath } from '../transcripts.paths.js';
 
@@ -30,6 +30,31 @@ describe('resolveHookTranscriptPath', () => {
     mkdirSync(join(projectsDir, 'proj-slug'), { recursive: true });
     writeFileSync(local, '');
     expect(resolveHookTranscriptPath('/claude/projects/proj-slug/session.jsonl', projectsDir)).toBe(local);
+  });
+
+  it('maps a Windows host path (backslash marker) onto projectsDir', () => {
+    const projectsDir = tmp();
+    const local = join(projectsDir, 'C--proj-slug', 'session.jsonl');
+    mkdirSync(join(projectsDir, 'C--proj-slug'), { recursive: true });
+    writeFileSync(local, '');
+    const hostPath = 'C:\\Users\\someone\\.claude\\projects\\C--proj-slug\\session.jsonl';
+    expect(resolveHookTranscriptPath(hostPath, projectsDir)).toBe(local);
+    // path.win32 agrees on what the separator-normalized form looks like
+    expect(win32.normalize(hostPath).replaceAll('\\', '/')).toContain('/.claude/projects/C--proj-slug/session.jsonl');
+  });
+
+  it('maps mixed separators, and a bare \\projects\\ marker', () => {
+    const projectsDir = tmp();
+    const local = join(projectsDir, 'slug', 'session.jsonl');
+    mkdirSync(join(projectsDir, 'slug'), { recursive: true });
+    writeFileSync(local, '');
+    expect(resolveHookTranscriptPath('C:/Users/someone\\.claude/projects\\slug/session.jsonl', projectsDir)).toBe(local);
+    expect(resolveHookTranscriptPath('D:\\claude\\projects\\slug\\session.jsonl', projectsDir)).toBe(local);
+  });
+
+  it('rejects a Windows-style traversal out of projectsDir', () => {
+    const projectsDir = tmp();
+    expect(resolveHookTranscriptPath('C:\\u\\.claude\\projects\\..\\..\\secret.jsonl', projectsDir)).toBeUndefined();
   });
 
   it('rejects a mapped path that escapes projectsDir via traversal', () => {

@@ -1,13 +1,33 @@
 import type { ClientToServerEvents, ServerToClientEvents } from '@tagconn/shared';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DEFAULT_LAYOUT, OFFICE_NAMESPACE } from '@tagconn/shared';
 import Fastify from 'fastify';
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../../app.js';
-import { adminHeaders, buildTestApp } from '../../../../test/helpers.js';
+import { adminHeaders, buildTestApp, makeTempDir } from '../../../../test/helpers.js';
 import { registerAdminAccess } from '../admin.js';
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+
+describe('web plugin gating (server.webDir)', () => {
+  it('keeps the Host allowlist for web routes and leaves /api 404s as JSON', async () => {
+    const webDir = makeTempDir('tagconn-secweb-');
+    writeFileSync(join(webDir, 'index.html'), '<title>x</title>');
+    const app = await buildTestApp({ settings: { server: { webDir } } });
+    try {
+      expect((await app.inject({ url: '/', headers: { host: 'evil.example.com' } })).statusCode).toBe(403);
+      expect((await app.inject({ url: '/deep/link', headers: { host: 'evil.example.com' } })).statusCode).toBe(403);
+      expect((await app.inject({ url: '/deep/link' })).statusCode).toBe(200);
+      const api = await app.inject({ url: '/api/nope' });
+      expect(api.statusCode).toBe(404);
+      expect(api.json()).toEqual({ error: 'Not Found', statusCode: 404 });
+    } finally {
+      await app.close();
+    }
+  });
+});
 
 describe('request gating (DNS rebinding / CSRF)', () => {
   let app: App | undefined;

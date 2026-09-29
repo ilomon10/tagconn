@@ -7,13 +7,15 @@ const PROJECTS_DIR_MARKERS = ['/.claude/projects/', '/projects/'];
 /**
  * Maps a host-reported path (as seen by the machine running the `claude` CLI, e.g.
  * `/home/u/.claude/projects/<slug>/<id>.jsonl`) onto this server's `settings.paths.projectsDir` by
- * keeping only the part after the last projects-dir marker. Needed under Docker, where the server
+ * keeping only the part after the last projects-dir marker (either separator style). Needed under Docker, where the server
  * only has `projectsDir` bind-mounted (not the host's real path).
  */
 function mapHostPath(reportedPath: string, projectsDir: string): string | undefined {
+  // A Windows host reports `C:\Users\u\.claude\projects\...` (or a mix of separators): match on forward slashes.
+  const normalized = reportedPath.replaceAll('\\', '/');
   for (const marker of PROJECTS_DIR_MARKERS) {
-    const i = reportedPath.lastIndexOf(marker);
-    if (i >= 0) return join(projectsDir, reportedPath.slice(i + marker.length));
+    const i = normalized.lastIndexOf(marker);
+    if (i >= 0) return join(projectsDir, normalized.slice(i + marker.length));
   }
   return undefined;
 }

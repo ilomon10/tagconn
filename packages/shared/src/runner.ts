@@ -98,6 +98,38 @@ export function absoluteRulePath(absPath: string): string {
 }
 
 /**
+ * M11 (decision #28): the absolute-path rule form on Windows is UNDOCUMENTED (canary test pending on a
+ * real Windows machine), so every absolute rule path is emitted in BOTH candidate forms, with forward
+ * slashes: `//C:/Users/u/x` (the POSIX-style doubled slash) and `C:/Users/u/x`. Non-drive paths (POSIX
+ * style, e.g. `/state`) keep the single `absoluteRulePath` form. Returns the forms, doubled form first.
+ */
+export function absoluteRulePathForms(absPath: string, win32 = false): string[] {
+  if (!win32) return [absoluteRulePath(absPath)];
+  const p = absPath.replace(/\\/g, '/');
+  if (/^[A-Za-z]:\//.test(p)) return [`//${p}`, p];
+  return [absoluteRulePath(p)];
+}
+
+const HOME_RULE_RE = /^([A-Za-z]+)\(~(\/.*)\)$/;
+
+/**
+ * Win32 variant of the HOME-scoped deny builder: for every `Tool(~/rest)` rule, keeps the `~/` rule and
+ * adds one rule per absolute-path form of `homeDir` (see `absoluteRulePathForms`). Rules that are not
+ * home-scoped pass through untouched. Result is de-duplicated, order preserved.
+ */
+export function expandHomeDenyRules(rules: readonly string[], homeDir: string): string[] {
+  const forms = absoluteRulePathForms(homeDir.replace(/[\\/]+$/, ''), true);
+  const out: string[] = [];
+  for (const rule of rules) {
+    out.push(rule);
+    const m = HOME_RULE_RE.exec(rule);
+    if (!m) continue;
+    for (const form of forms) out.push(`${m[1]}(${form}${m[2]})`);
+  }
+  return Array.from(new Set(out));
+}
+
+/**
  * Backstop loopback/metadata denies (the primary control is: no bare WebFetch, domain allowlist only).
  * Domain rules cannot express every numeric/alternate loopback form, which is exactly why bare
  * WebFetch is forbidden rather than relying on this list.
@@ -419,7 +451,8 @@ const AbsPath = z
   .string()
   .min(1)
   .max(4096)
-  .startsWith('/')
+  // POSIX absolute, or a Windows drive path (M11: a `C:` drive path with either slash).
+  .regex(/^(\/|[A-Za-z]:[\\/])/, 'path must be absolute')
   .refine((s) => !s.includes('\0'), 'path must not contain NUL');
 
 /** socket.io `auth` payload of the runner connection. The raw token is NEVER sent. */

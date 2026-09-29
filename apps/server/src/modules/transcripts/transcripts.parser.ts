@@ -1,4 +1,4 @@
-import { closeSync, constants as fsConstants, fstatSync, openSync, readlinkSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readlinkSync, readSync, realpathSync } from 'node:fs';
 import { sep } from 'node:path';
 import { platform } from 'node:process';
 import { TextDecoder } from 'node:util';
@@ -201,7 +201,11 @@ export function readTranscriptUsage(path: string, state: TranscriptReadState, pr
 
   let fd: number;
   try {
-    fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+    // win32 has no O_NOFOLLOW/O_NONBLOCK (undefined): without O_NOFOLLOW, refuse a symlinked leaf with lstat instead
+    // (a narrower race window than the flag, but the fd's real path is still containment-checked below).
+    const noFollow: number | undefined = fsConstants.O_NOFOLLOW;
+    if (noFollow === undefined && lstatSync(path).isSymbolicLink()) return summarize(state);
+    fd = openSync(path, fsConstants.O_RDONLY | (noFollow ?? 0) | (fsConstants.O_NONBLOCK ?? 0));
   } catch {
     return summarize(state); // missing, a symlink leaf, or otherwise unopenable: nothing new to read
   }
