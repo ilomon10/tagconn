@@ -156,13 +156,27 @@ Use a canary folder (never real dotfiles) and haiku with a small budget.
 2. `where.exe claude` output for the native, npm (`claude.cmd`) and winget installs. The runner's shim
    parsing launches `node cli.js` the same way the `.cmd` does.
 3. The deny-rule path form: which of `//C:/Users/<u>/...` and `C:/Users/<u>/...` the CLI honours
-   (canary write refused). Then drop the other form.
+   (canary write refused). Then drop the other form. Also try the canary through these aliases (each must
+   be refused, or the gap is documented): a lowercase drive letter and mixed case, the 8.3 short name
+   (`C:/Users/JOHNSM~1/...`), `\\?\C:\...`, `\\localhost\C$\Users\<u>\...`, the legacy junctions
+   (`C:\Documents and Settings`, `%USERPROFILE%\Application Data`), and a WSL home
+   (`\\wsl.localhost\<distro>\home\<u>\...`). Check whether Claude Code exposes a `PowerShell` tool on
+   this machine: it is hard-denied on win32 either way.
+10. Bare-name spawns: planted `claude.exe`, `claude.cmd` or `icacls.exe` in the current dir or a later
+    PATH entry are never run (setup and the runner use absolute System32 binaries and PATH order).
 4. `taskkill /PID <pid> /T /F` reaps the whole claude tree when a quest is stopped.
 5. The trust key style in `%USERPROFILE%\.claude.json`: slashes and drive-letter case.
 6. The stdin prompt (`-p` with stdin) works from a Node parent on win32.
 7. `icacls` ACLs on hook.json, runner.json and the state dir are applied and verified by setup.
 8. Whether `CLAUDE_CONFIG_DIR` is honoured on Windows. Sandboxed Windows tests depend on it.
 9. better-sqlite3 13 loads under the bundled node 24.21 on win-x64.
+
+**Wave 1 security review (2026-09-29):** 1 High, 4 Medium, 12 Low; fixes are tracked as ROADMAP 11.3.
+Fixes land in S1 (runner/shared: Windows deny lists incl. tagconn's own dirs, PowerShell deny,
+System32 binaries, runner.json ACL, kill/launch guards), S2 (setup: stable node for the hook, SID-based ACLs,
+no `cmd /c`, symlink-preserving settings writes, URL validation), S3 (hook: token/header validation,
+hook.json owner/mode, O_NOFOLLOW + dev/ino, Windows ownership fallback, fail-closed home guard) and S4
+(server: no symlink escape from webDir, nosniff + no-store on /api).
 
 **Windows follow-ups for the security review.** Consider denying more Windows-specific sensitive
 locations for quests, beyond the `~/` set duplicated in both forms: `AppData\Roaming` credential
