@@ -7,6 +7,10 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Fixed
+- The first desktop installers: v0.5.0 was tagged, but its CI packaging failed (the Linux package lost its bundled node through a config override, a package check expected the wrong path form, and unpacking node on Windows got an empty path), so v0.5.0 has no GitHub release. v0.5.1 is the first release with tagconn Desktop (preview) installers; everything else is the same as v0.5.0.
+- The release script also bumps the desktop app's version files.
+
 ## [0.5.0] - 2026-09-29
 
 ### Added
