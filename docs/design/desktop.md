@@ -116,6 +116,40 @@ So this work can continue in any later session:
      R3-style with a canary folder.
   4. That the better-sqlite3 13 prebuild covers node 24 on win-x64.
 
+### Wave 0 results (2026-09-29)
+- **W0a contract:** done. It lives in `packages/shared/src/desktop.ts`, which defines `DESKTOP_METHODS`,
+  the notifications, `SetupCheck`, `DesktopConfig` and the error codes. `server.webDir` is added
+  (restart-required), and `corsOrigins` gains `:4317`.
+- **W0b hook execution, from the docs (hooks.md, setup.md):**
+  - A hook `command` without `args` runs through a shell: `sh -c` on Linux/macOS, and on Windows Git Bash
+    if it is installed, otherwise PowerShell.
+  - **Exec form** (`"command": "<exe>", "args": [...]`) runs without a shell. The desktop registers the
+    node hook in exec form (`command` = the bundled node, `args` = [office-hook.mjs]), which avoids all
+    Windows quoting and shell differences.
+  - Input on stdin and exit codes are the same on every OS.
+  - The default hook timeout is 600 s, so our hook keeps enforcing its own 1 s budget.
+  - Still to test on a real Windows machine: that exec form works as documented.
+- **W0c claude on Windows:**
+  - The native install is `%USERPROFILE%\.local\bin\claude.exe`, with the real binary under
+    `%USERPROFILE%\.local\share\claude\versions\<v>\`.
+  - npm installs a `claude.cmd` shim; winget has `Anthropic.ClaudeCode`.
+  - Detection order: `where.exe claude`, then the native path.
+  - Login check: `claude auth status` (exit 0 = logged in; `--json` exists).
+  - Config is `%USERPROFILE%\.claude\settings.json`, `%USERPROFILE%\.claude.json` and
+    `%USERPROFILE%\.claude\projects`. Whether `CLAUDE_CONFIG_DIR` works on Windows is undocumented, so
+    sandboxed Windows tests must verify it.
+- **W0d deny-rule path form on Windows:** undocumented. It needs the canary test on a real Windows machine.
+  Until it is confirmed, the win32 runner policy keeps Bash denied and adds deny rules in BOTH candidate
+  forms (`//C:/Users/<u>/...` and `C:/Users/<u>/...`), and the Windows tests assert both.
+- **W0e better-sqlite3 on win-x64:** to be checked in the Windows CI job (G). If there's no prebuild, CI
+  installs MSVC build tools (windows-latest has them).
+
+**Hook config file (shared by B and D).** `<configDir>/hook.json`, mode 0600 / a user-only ACL:
+`{ "version": 1, "url": "http://127.0.0.1:4317", "token": "<hook token>", "attributionReadme": false }`.
+The node hook reads it (override with `TAGCONN_HOOK_CONFIG`). Import uses `<url>/api/attribution/import`.
+The README template stays `<configDir>/attribution-README.md`. The sh hook keeps `curl.conf` and
+`attribution.conf`. The desktop writes `hook.json` and registers only the node hook.
+
 ### Wave 1: portable core (4 developers in parallel)
 - **A. Server serves the web app.** Add `@fastify/static` in a new `apps/server/src/core/web/` plugin.
   It is active only when `server.webDir` is set; `/api` and `/socket.io` are untouched.

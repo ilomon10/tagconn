@@ -50,12 +50,23 @@ export const SettingsSchema = z.object({
       port: z.number().int().default(4317),
       corsOrigins: z
         .array(z.string())
-        .default(['http://localhost:4318', 'http://127.0.0.1:4318', 'http://localhost:5173', 'http://127.0.0.1:5173']),
+        .default([
+          'http://localhost:4318',
+          'http://127.0.0.1:4318',
+          'http://localhost:5173',
+          'http://127.0.0.1:5173',
+          // M11: the desktop app's server serves the web app itself on its own port.
+          'http://localhost:4317',
+          'http://127.0.0.1:4317',
+        ]),
       /** Accepted Host header hostnames (port ignored). Blocks DNS-rebinding attacks. */
       allowedHosts: z.array(z.string()).default(['localhost', '127.0.0.1', '[::1]', 'server']),
       /** Shared secret sent by the hook as `x-office-token`. Empty = no auth (local only!). */
       hookToken: z.string().default(''),
       logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+      /** M11: a built web app (apps/web/dist) the server serves itself, with the same security headers as
+       *  nginx. null = don't serve it (Docker/nginx or Vite dev serve the web instead). */
+      webDir: z.string().nullable().default(null),
     })
     .prefault({}),
   storage: z
@@ -309,7 +320,7 @@ export type DeepPartial<T> = T extends Array<unknown> ? T : T extends object ? {
 export type SettingsPatch = DeepPartial<Settings>;
 
 /** Dotted paths that only take effect after a server restart. */
-export const RESTART_REQUIRED_SETTINGS = ['server.host', 'server.port', 'server.corsOrigins', 'storage.dbPath', 'paths.projectsDir'] as const;
+export const RESTART_REQUIRED_SETTINGS = ['server.host', 'server.port', 'server.corsOrigins', 'server.webDir', 'storage.dbPath', 'paths.projectsDir'] as const;
 
 /**
  * Settings (dotted prefixes) that can only be set from config file / env, never from the GUI or API.

@@ -10,3 +10,4 @@ export * from './runner.js';
 export * from './receptionist.js';
 export * from './auth.js';
 export * from './attribution.js';
+export * from './desktop.js';

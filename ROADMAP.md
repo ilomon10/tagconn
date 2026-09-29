@@ -154,10 +154,10 @@ One app (Tauri 2 + a bundled Node sidecar) with a setup wizard and an XAMPP-styl
 default, Docker optional; installer + auto-update. Design: `docs/design/desktop.md`. Decisions #27, #28.
 - [x] 11.0 Plan persisted (design doc, roadmap, decisions)  [PM]
 - Wave 0: contract + spikes
-  - [ ] W0a `packages/shared/src/desktop.ts` RPC contract; `server.webDir`; `corsOrigins` + :4317  [PM]
-  - [ ] W0b Spike: how Claude Code on native Windows runs hook commands (shell, quoting, PATH)  [QA, Windows CI + user]
-  - [ ] W0c Spike: claude install form on Windows (claude.exe vs .cmd shim) + "logged in" detection  [QA]
-  - [ ] W0d Spike: Windows permission-rule path form for deny rules (canary, R3-style)  [QA + user]
+  - [x] W0a `packages/shared/src/desktop.ts` RPC contract; `server.webDir`; `corsOrigins` + :4317  [PM]
+  - [~] W0b Hook execution on Windows: docs say shell form = Git Bash or PowerShell, exec form (`command`+`args`) = no shell → desktop registers the node hook in exec form; confirm on a real Windows machine  [user]
+  - [x] W0c claude on Windows: `where.exe claude` then `%USERPROFILE%\\.local\\bin\\claude.exe` (npm = `.cmd` shim); login = `claude auth status` exit code (docs)
+  - [ ] W0d Windows deny-rule path form: undocumented → policy writes both `//C:/…` and `C:/…` until a canary test on a real Windows machine confirms  [user]
   - [ ] W0e Spike: better-sqlite3 13 prebuild for node 24 win-x64  [QA, Windows CI]
 - Wave 1: portable core (parallel)
   - [ ] A Server serves the web app (`@fastify/static`, shared security headers, SPA fallback, cache rules) + path portability (`~\`, backslash transcript paths)  [Developer]
