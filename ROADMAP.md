@@ -179,7 +179,7 @@ default, Docker optional; installer + auto-update. Design: `docs/design/desktop.
   - [~] 11.1 One small `.tagconn/` per project (user decision 2026-09-29): `.office/` agent memory → `.tagconn/work/` (git-ignored via `.tagconn/.gitignore`), skills updated [x]; README template cut to 5 lines [x]; both hooks add the README next to agent-made `work/`/`.gitignore` and still honour the `.tagconn`-file opt-out [x]
   - [~] 11.2 Windows-specific quest denies (now part of 11.3 S1) (AppData credential stores, PowerShell profiles, npm) + Windows text in web rejection guidance  [security review → Developer]
 - Wave 2: the app (parallel)
-  - [~] E `apps/supervisor`: stdio JSON-RPC, service manager (backoff, health, logs, tree-kill), setup, Docker mode, auto-pair [Developer]
+  - [x] E `apps/supervisor`: stdio JSON-RPC, service manager (backoff, health, logs, tree-kill), setup, Docker mode, auto-pair [Developer]
   - [~] F `apps/desktop` (Tauri 2): sidecar + tray + autostart/updater/single-instance; React wizard + control panel [Developer]
 - Wave 3: packaging + docs
   - [ ] G CI `desktop.yml` (windows + ubuntu matrix, node sidecar, NSIS/AppImage/deb, signed updater, ghcr images) [Developer]
