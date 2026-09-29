@@ -203,11 +203,12 @@ jobs:
         run: |
           deb=$(ls apps/desktop/src-tauri/target/release/bundle/deb/*.deb | head -n 1)
           dpkg-deb -c "$deb" > "$RUNNER_TEMP/deb-contents.txt"
-          if grep -Eq ' \./usr/bin/node( -> .*)?$' "$RUNNER_TEMP/deb-contents.txt"; then
+          # dpkg-deb -c lists paths with or without a leading ./ depending on how the archive was built.
+          if grep -Eq ' (\./)?usr/bin/node( -> .*)?$' "$RUNNER_TEMP/deb-contents.txt"; then
             echo "::error::the .deb contains /usr/bin/node"
             exit 1
           fi
-          grep -Eq ' \./usr/bin/tagconn-node$' "$RUNNER_TEMP/deb-contents.txt" || { echo "::error::the .deb has no /usr/bin/tagconn-node"; exit 1; }
+          grep -Eq ' (\./)?usr/bin/tagconn-node$' "$RUNNER_TEMP/deb-contents.txt" || { echo "::error::the .deb has no /usr/bin/tagconn-node"; exit 1; }
           dpkg-deb -x "$deb" "$RUNNER_TEMP/tagconn-deb"
           node scripts/smoke-desktop.ts rpc \
             --resources "$RUNNER_TEMP/tagconn-deb/usr/lib/tagconn" \
