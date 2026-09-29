@@ -337,7 +337,10 @@ jobs:
           }
           JS
           # --clobber only replaces assets of this DRAFT (a re-run of the workflow).
-          gh release upload "$TAG" dist/* --repo "$REPO" --clobber
+          # The artifacts download into one folder per bundle (appimage/, deb/, nsis/): upload the files, not the folders.
+          mapfile -t files < <(find dist -type f | sort)
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::no files to upload"; exit 1; }
+          gh release upload "$TAG" "${files[@]}" --repo "$REPO" --clobber
 
   docker-image:
     name: server image (ghcr.io)
