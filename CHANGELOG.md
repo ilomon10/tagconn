@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-29
+
 ### Added
 - **tagconn Desktop, preview** (Windows and Linux): unsigned installers, in-app updates off until signed releases, and the Windows build is experimental (not yet tested on real hardware). One app with a setup wizard (system check with one-click fixes, runner folders, a consented hook install that shows what changes and where the backup goes) and an XAMPP-style control panel (status lights, Start/Stop/Restart, crash backoff, logs, settings, diagnostics, tray, start with system). Native services by default, Docker optional. Ships as a Windows installer, an AppImage and a .deb, with signed in-app updates. See `docs/guide/desktop.md`.
 - The server can serve the web app itself (`server.webDir`) with the same security headers as nginx, so the desktop app needs no nginx or Docker.
@@ -129,7 +131,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/ilomon10/tagconn/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/ilomon10/tagconn/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ilomon10/tagconn/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ilomon10/tagconn/compare/v0.2.0...v0.3.0
