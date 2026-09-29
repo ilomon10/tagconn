@@ -10,6 +10,7 @@
 
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import type { RunEvent } from '@tagconn/shared';
+import { childSpawnOptions, currentPlatform, killTree, type Platform } from './platform.js';
 import { createLineSplitter, mapClaudeLine, stderrNotice } from './streamParser.js';
 
 export type SpawnWrapper = 'plain' | 'systemd-scope' | 'bwrap';
@@ -46,12 +47,13 @@ export interface RunProcessHandle {
 }
 
 /** Spawns `spec` and wires stdout/stderr parsing with bounded buffers; returns a stop()-able handle. */
-export function spawnRun(spec: SpawnSpec, limits: RunProcessLimits, killGraceMs: number, callbacks: RunProcessCallbacks): RunProcessHandle {
-  const detachForGroupKill = spec.wrapper === 'plain';
+export function spawnRun(spec: SpawnSpec, limits: RunProcessLimits, killGraceMs: number, callbacks: RunProcessCallbacks, platform: Platform = currentPlatform()): RunProcessHandle {
+  const spawnOpts = childSpawnOptions(platform, spec.wrapper === 'plain');
+  const detachForGroupKill = spawnOpts.detached;
   const child = spawn(spec.command, spec.args, {
     cwd: spec.cwd,
     env: spec.env,
-    detached: detachForGroupKill,
+    ...spawnOpts,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
@@ -131,20 +133,12 @@ export function spawnRun(spec: SpawnSpec, limits: RunProcessLimits, killGraceMs:
       spawnSync('systemctl', ['--user', 'stop', spec.scopeUnitName], { stdio: 'ignore' });
       return;
     }
-    const target = detachForGroupKill && child.pid ? -child.pid : child.pid;
-    if (target === undefined) return;
-    try {
-      process.kill(target, 'SIGTERM');
-    } catch {
-      /* already gone */
-    }
-    const timer = setTimeout(() => {
-      try {
-        process.kill(target, 'SIGKILL');
-      } catch {
-        /* already gone */
-      }
-    }, killGraceMs);
+    if (child.pid === undefined) return;
+    const pid = child.pid;
+    killTree(pid, { platform, signal: 'SIGTERM', group: detachForGroupKill });
+    // win32's taskkill /F is already final; elsewhere escalate after the grace period.
+    if (platform.isWin32) return;
+    const timer = setTimeout(() => killTree(pid, { platform, signal: 'SIGKILL', group: detachForGroupKill }), killGraceMs);
     timer.unref();
   }
 
@@ -169,7 +163,8 @@ const defaultSystemctlSpawn: SystemctlSpawn = (args) => spawnSync('systemctl', a
  * subscription (and CPU/network) indefinitely. Returns the unit names it stopped (for logging); never
  * throws (a missing/unusable `systemctl --user` — e.g. no systemd session — just means nothing to do).
  */
-export function reapStaleQuestScopes(spawnSystemctl: SystemctlSpawn = defaultSystemctlSpawn): string[] {
+export function reapStaleQuestScopes(spawnSystemctl: SystemctlSpawn = defaultSystemctlSpawn, platform: Platform = currentPlatform()): string[] {
+  if (platform.isWin32) return []; // no systemd scopes on Windows
   let list: Pick<SpawnSyncReturns<string>, 'status' | 'stdout'>;
   try {
     list = spawnSystemctl(['--user', 'list-units', '--all', '--plain', '--no-legend', 'tagconn-quest-*.scope']);

@@ -8,6 +8,7 @@
 //  - the prompt goes on stdin; `-- <prompt>` is only the fallback if stdin isn't supported (V9)
 
 import {
+  expandHomeDenyRules,
   type ReceptionistScope,
   RECEPTIONIST_BASE_TOOLS,
   RECEPTIONIST_DENY_READ_GLOBS,
@@ -20,6 +21,7 @@ import {
   type RunnerCapabilities,
   type RunPermissionMode,
 } from '@tagconn/shared';
+import type { Platform } from './platform.js';
 
 export class CapabilityError extends Error {}
 
@@ -122,6 +124,8 @@ export interface ReceptionistArgvInput extends StdinOrFallback {
   addDirDocs?: string;
   /** Server `extraDenyReadGlobs` (already formatted as `Read(<glob>)`) plus any server extra denies. */
   extraDisallowedTools: readonly string[];
+  /** Only consulted for win32, where the `~/` Read denies are also emitted in both absolute-path forms. */
+  platform?: Platform;
 }
 
 export interface ReceptionistArgvResult {
@@ -154,12 +158,13 @@ export function buildReceptionistArgv(input: ReceptionistArgvInput): Receptionis
   });
   const allowedRules = toolSet.flatMap((t) => (t === 'WebFetch' ? input.webFetchDomains.map((d) => `WebFetch(domain:${d})`) : [t]));
 
-  const disallowedTools = [
+  const plainDenies = [
     ...RECEPTIONIST_DISALLOWED_TOOLS,
     ...RECEPTIONIST_DENY_READ_GLOBS.map((g) => `Read(${g})`),
     ...RECEPTIONIST_WEBFETCH_DENY_RULES,
     ...input.extraDisallowedTools,
   ];
+  const disallowedTools = input.platform?.isWin32 ? expandHomeDenyRules(plainDenies, input.platform.homedir()) : plainDenies;
 
   const argv = [input.claudePath, '-p', '--output-format=stream-json', '--verbose', '--include-partial-messages'];
   argv.push(

@@ -16,16 +16,18 @@ import {
   probeStdinPrompt,
   probeSystemdScope,
   realSpawn,
-  resolveClaudePath,
+  type Spawn,
   saveCachedCapabilities,
   verifyTranscriptKeyDerivation,
 } from './capabilities.js';
 import { ConfigError, loadRunnerConfig, parseCliArgs } from './config.js';
 import { defaultRepoRoot, refreshReceptionistDocs } from './docsCopy.js';
 import { buildRunEnv } from './env.js';
+import { currentPlatform, resolveClaudeLaunch } from './platform.js';
 import { loadLedger } from './ledger.js';
 import { createLogger } from './logger.js';
 import { reapStaleQuestScopes } from './runProcess.js';
+import { effectiveMaxPermissionMode } from './toolPolicy.js';
 import { createRunManager } from './runManager.js';
 import { connectRunner } from './socketClient.js';
 import { defaultClaudeJsonPath } from './trust.js';
@@ -34,7 +36,13 @@ import { announceVerified, wireRunnerSocket } from './wireSocket.js';
 
 const logger = createLogger();
 
-async function probeCapabilities(claudePath: string, cwd: string, stateDir: string): Promise<{ caps: RunnerCapabilities; version: string }> {
+/** A Spawn that prepends the launch's fixed args (win32 npm shim: `node cli.js`) to every probe call. */
+function launchSpawn(launchArgs: string[]): Spawn {
+  return launchArgs.length === 0 ? realSpawn : (command, args, opts) => realSpawn(command, [...launchArgs, ...args], opts);
+}
+
+async function probeCapabilities(claudePath: string, cwd: string, stateDir: string, launchArgs: string[]): Promise<{ caps: RunnerCapabilities; version: string }> {
+  const realSpawn = launchSpawn(launchArgs);
   // L8: every probe turn actually spawns the real `claude` CLI (some print --help/--version, but
   // the mode/stdin/transcript-key probes send a real prompt). It must get the SAME env hygiene as a
   // real run — no ANTHROPIC_* passthrough (the whole point of "no API key") — not the runner's raw
@@ -100,7 +108,9 @@ async function main(): Promise<void> {
   const cfg = loadRunnerConfig(configPath);
   logger.info('runner config loaded', { configPath: cfg.configPath, stateDir: cfg.stateDir, allowedProjectDirs: cfg.allowedProjectDirs.length });
 
-  const { caps, version } = await probeCapabilities(cfg.claudePath, cfg.stateDir, cfg.stateDir);
+  // Resolve first: on win32 an npm `.cmd` shim cannot be spawned directly, so probes and runs use its real target.
+  const claudeLaunch = resolveClaudeLaunch(cfg.claudePath);
+  const { caps, version } = await probeCapabilities(claudeLaunch?.command ?? cfg.claudePath, cfg.stateDir, cfg.stateDir, claudeLaunch?.args ?? []);
   // L1: this log is informational only now — the REAL gate is assertRequiredCapabilities() called
   // per run inside runManager.startQuest/startReceptionist (it used to be dead code: this was the
   // only place it ran, and it never stopped a spawn).
@@ -109,7 +119,8 @@ async function main(): Promise<void> {
   } catch (err) {
     logger.error('capability_missing: every run will be refused until this claude CLI supports it', { error: err instanceof Error ? err.message : String(err) });
   }
-  const claudeBinRealPath = resolveClaudePath(cfg.claudePath);
+  const claudeBinRealPath = claudeLaunch?.command;
+  if (currentPlatform().isWin32) logger.warn('Windows: Bash is always denied, quests are capped at acceptEdits and the Receptionist runs without a sandbox (decision #28)');
 
   // H2: advisory-only audit of the user's OWN ~/.claude/settings.json (still in effect on every run:
   // --setting-sources=user). Logged for the operator; office:doctor (scripts/) surfaces the same
@@ -159,7 +170,8 @@ async function main(): Promise<void> {
     claudeVersion: version,
     capabilities: caps,
     maxConcurrent: cfg.maxConcurrent,
-    maxPermissionMode: cfg.maxPermissionMode,
+    // The cap actually enforced (lowered to acceptEdits on win32), so the server/web show the real ceiling.
+    maxPermissionMode: effectiveMaxPermissionMode(cfg.maxPermissionMode),
     allowedProjectDirs: cfg.allowedProjectDirs,
     questMaxAllowedTools: cfg.questToolPolicy.maxAllowedTools,
     // L2: report what will ACTUALLY be used given receptionistSandbox, not just what was probed.
@@ -177,6 +189,7 @@ async function main(): Promise<void> {
     ledgerPath,
     claudeJsonPath: defaultClaudeJsonPath(),
     claudeBinRealPath,
+    claudeLaunchArgs: claudeLaunch?.args,
     logger,
     userSettingsRisk,
     // H1 (L5): route through the offline queue unless THIS process itself verified the connection

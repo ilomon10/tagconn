@@ -2,8 +2,9 @@
 // §2.3, steps 2-7; step 1 schema and step 8 concurrency are checked by the caller). Composed from
 // trust.ts (dir/trust) and toolPolicy.ts (mode/tools/containment) plus the resume ledger.
 
-import { absoluteRulePath, type RunEndReason, type RunnerCapabilities, type RunnerLocalConfig, type RunPermissionMode } from '@tagconn/shared';
+import { absoluteRulePathForms, type RunEndReason, type RunnerCapabilities, type RunnerLocalConfig, type RunPermissionMode } from '@tagconn/shared';
 import { canResume, computeFingerprint, type Ledger } from './ledger.js';
+import { currentPlatform, type Platform } from './platform.js';
 import { checkQuestPolicy } from './toolPolicy.js';
 import { checkAllowedDir, isTrustedDir } from './trust.js';
 
@@ -22,6 +23,8 @@ export interface QuestValidationOk {
   requiresScope: boolean;
   /** SC5 H2: the exact `--tools` list to pass (see toolPolicy.ts's checkQuestPolicy). */
   toolSet: string[];
+  /** Allow rules to pass on the wire (win32 drops Bash rules, decision #28). */
+  allowedTools: string[];
   /** Fingerprint to record in the ledger once the run's session id is known (init event). */
   fingerprint: string;
 }
@@ -42,14 +45,15 @@ export function validateQuestStart(
   caps: Pick<RunnerCapabilities, 'permissionModes' | 'systemdScope'>,
   claudeJsonPath: string,
   ledger: Ledger,
+  platform: Platform = currentPlatform(),
 ): QuestValidationOk | QuestValidationFail {
   // 2. Dir.
-  const dirCheck = checkAllowedDir(input.projectDir, cfg.allowedProjectDirs);
+  const dirCheck = checkAllowedDir(input.projectDir, cfg.allowedProjectDirs, platform);
   if (!dirCheck.ok || !dirCheck.realDir) return { ok: false, failure: 'dir_not_allowed' };
   const realDir = dirCheck.realDir;
 
   // 3. Trust.
-  if (!isTrustedDir(realDir, { claudeJsonPath, trustOverrideDirs: cfg.trustOverrideDirs })) {
+  if (!isTrustedDir(realDir, { claudeJsonPath, trustOverrideDirs: cfg.trustOverrideDirs }, platform)) {
     return { ok: false, failure: 'dir_not_trusted' };
   }
 
@@ -62,6 +66,7 @@ export function validateQuestStart(
       allowBypassPermissions: cfg.allowBypassPermissions,
       questToolPolicy: cfg.questToolPolicy,
       systemdScopeAvailable,
+      platform,
     },
     input.disallowedTools,
   );
@@ -78,8 +83,11 @@ export function validateQuestStart(
   // re-review): a rule glob's leading `/` is relative to the settings source, not the filesystem root
   // — `absoluteRulePath` doubles it (`//home/...`) so this deny actually matches the absolute stateDir
   // instead of silently matching nothing (see its doc in packages/shared/src/runner.ts).
-  const stateDirDeny = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((tool) => `${tool}(${absoluteRulePath(cfg.stateDir)}/**)`);
+  // win32: both candidate absolute forms (see absoluteRulePathForms).
+  const stateDirDeny = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].flatMap((tool) =>
+    absoluteRulePathForms(cfg.stateDir, platform.isWin32).map((form) => `${tool}(${form}/**)`),
+  );
   const disallowedTools = Array.from(new Set([...policy.disallowedTools, ...stateDirDeny]));
 
-  return { ok: true, realDir, disallowedTools, requiresScope: policy.requiresScope, toolSet: policy.toolSet, fingerprint };
+  return { ok: true, realDir, disallowedTools, requiresScope: policy.requiresScope, toolSet: policy.toolSet, allowedTools: policy.allowedTools, fingerprint };
 }

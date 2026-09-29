@@ -3,6 +3,7 @@
 
 import {
   DEFAULT_QUEST_ALWAYS_DENY,
+  expandHomeDenyRules,
   isBareWebFetchRule,
   permissionModeWithin,
   QUEST_NEVER_TOOLS,
@@ -11,6 +12,15 @@ import {
   type RunPermissionMode,
   type RunnerLocalConfig,
 } from '@tagconn/shared';
+import { currentPlatform, type Platform } from './platform.js';
+
+/** Decision #28: on Windows there is no sandbox, so quests never go above this mode. */
+export const WIN32_MAX_PERMISSION_MODE: RunPermissionMode = 'acceptEdits';
+
+/** The mode cap actually enforced (and reported to the server in runner:hello): the configured cap, lowered on win32. */
+export function effectiveMaxPermissionMode(configured: RunPermissionMode, platform: Platform = currentPlatform()): RunPermissionMode {
+  return platform.isWin32 && !permissionModeWithin(configured, WIN32_MAX_PERMISSION_MODE) ? WIN32_MAX_PERMISSION_MODE : configured;
+}
 
 export type PolicyFailure = Extract<RunEndReason, 'mode_not_allowed' | 'tool_not_allowed' | 'isolation_unavailable'>;
 
@@ -28,6 +38,8 @@ export interface PolicyCheckContext {
   questToolPolicy: RunnerLocalConfig['questToolPolicy'];
   /** Whether a systemd scope (cgroup kill) is available for this run, per runner.json processIsolation + probe. */
   systemdScopeAvailable: boolean;
+  /** Defaults to the real platform; tests pass a win32 one (decision #28). */
+  platform?: Platform;
 }
 
 export interface PolicyCheckOk {
@@ -44,6 +56,8 @@ export interface PolicyCheckOk {
    * `--setting-sources=user`, so user-level allow rules still apply on top of --allowedTools).
    */
   toolSet: string[];
+  /** The allow rules to pass on the wire. Same as the input except on win32, where Bash rules are dropped. */
+  allowedTools: string[];
 }
 
 export interface PolicyCheckFail {
@@ -89,8 +103,9 @@ export function checkQuestPolicy(
   ctx: PolicyCheckContext,
   callerDisallowedTools: readonly string[] = [],
 ): PolicyCheckOk | PolicyCheckFail {
-  // 4. Mode.
-  if (!permissionModeWithin(input.mode, ctx.maxPermissionMode)) return { ok: false, failure: 'mode_not_allowed' };
+  const platform = ctx.platform ?? currentPlatform();
+  // 4. Mode. On win32 the cap is lowered to acceptEdits whatever runner.json says (decision #28).
+  if (!permissionModeWithin(input.mode, effectiveMaxPermissionMode(ctx.maxPermissionMode, platform))) return { ok: false, failure: 'mode_not_allowed' };
   if (!input.availablePermissionModes.includes(input.mode)) return { ok: false, failure: 'mode_not_allowed' };
   if (input.mode === 'bypassPermissions' && !ctx.allowBypassPermissions) return { ok: false, failure: 'mode_not_allowed' };
 
@@ -101,8 +116,12 @@ export function checkQuestPolicy(
     if (!maxAllowed.has(rule)) return { ok: false, failure: 'tool_not_allowed' };
   }
 
+  // Decision #28: on win32 Bash is always hard-denied and never in --tools, whatever the allow rules
+  // (there is no sandbox or cgroup kill). Its allow rules are dropped so they are not passed on the wire.
+  const allowedTools = platform.isWin32 ? input.allowedTools.filter((r) => !isBashRule(r)) : [...input.allowedTools];
+
   // 6. Containment: Bash allow rule, or a mode that can execute without one, needs a cgroup kill.
-  const hasBashRule = input.allowedTools.some(isBashRule);
+  const hasBashRule = allowedTools.some(isBashRule);
   const requiresScope = hasBashRule || modeCanExecuteFreely(input.mode);
   if (requiresScope && !ctx.systemdScopeAvailable) return { ok: false, failure: 'isolation_unavailable' };
 
@@ -115,10 +134,12 @@ export function checkQuestPolicy(
   // questToolPolicy.alwaysDeny is merged IN ADDITION to it, never in place of it — a host operator who
   // overrides alwaysDeny (e.g. to add one project-specific deny) must not thereby silently drop the
   // built-in HOME-scoped config/secret-read denies.
-  const disallowedTools = dedupe([...callerDisallowedTools, ...DEFAULT_QUEST_ALWAYS_DENY, ...ctx.questToolPolicy.alwaysDeny, ...(hasBashRule ? [] : ['Bash'])]);
-  const toolSet = buildQuestToolSet(input.allowedTools);
+  const denies = dedupe([...callerDisallowedTools, ...DEFAULT_QUEST_ALWAYS_DENY, ...ctx.questToolPolicy.alwaysDeny, ...(hasBashRule ? [] : ['Bash'])]);
+  // win32: the absolute-path rule form is undocumented, so every `~/` deny is also emitted in both candidate forms.
+  const disallowedTools = platform.isWin32 ? expandHomeDenyRules(denies, platform.homedir()) : denies;
+  const toolSet = buildQuestToolSet(allowedTools);
   if (hasBashRule) toolSet.push('Bash');
-  return { ok: true, disallowedTools, requiresScope, toolSet: dedupe(toolSet) };
+  return { ok: true, disallowedTools, requiresScope, toolSet: dedupe(toolSet), allowedTools };
 }
 
 function dedupe(items: readonly string[]): string[] {

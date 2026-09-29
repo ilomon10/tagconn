@@ -4,17 +4,12 @@
 
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
+import { platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { type RunnerLocalConfig, RunnerLocalConfigSchema } from '@tagconn/shared';
+import { currentPlatform, defaultStateDir, type Platform } from './platform.js';
 
 export class ConfigError extends Error {}
-
-/** Default stateDir: $XDG_STATE_HOME/tagconn or ~/.local/state/tagconn (matches design §2.1). */
-function defaultStateDir(): string {
-  const xdg = process.env.XDG_STATE_HOME;
-  return xdg && xdg.trim() !== '' ? join(xdg, 'tagconn') : join(homedir(), '.local', 'state', 'tagconn');
-}
 
 /** Best-effort realpath: falls back to a resolved (but not symlink-verified) path if the dir does not exist yet. */
 function tryRealpath(p: string): string {
@@ -38,15 +33,16 @@ export interface ResolvedRunnerConfig extends RunnerLocalConfig {
  * the runner side, never the raw string the server sends). Persists a generated `runnerId` back to
  * the file (still 0600) if one was missing.
  */
-export function loadRunnerConfig(configPath: string): ResolvedRunnerConfig {
+export function loadRunnerConfig(configPath: string, plat: Platform = currentPlatform()): ResolvedRunnerConfig {
   if (platform() !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0) {
     throw new ConfigError('the runner refuses to run as root');
   }
   const abs = resolve(configPath);
   if (!existsSync(abs)) throw new ConfigError(`runner config not found: ${abs}`);
 
-  // POSIX permission/ownership check. Skipped on platforms without getuid (e.g. Windows dev boxes).
-  if (typeof process.getuid === 'function') {
+  // POSIX permission/ownership check. Skipped on win32 (no mode bits there): the file's user-only ACL is
+  // set by packages/setup at install time, not verified here.
+  if (!plat.isWin32 && typeof process.getuid === 'function') {
     const st = statSync(abs);
     const mode = st.mode & 0o777;
     if (mode !== 0o600) {
@@ -70,7 +66,7 @@ export function loadRunnerConfig(configPath: string): ResolvedRunnerConfig {
   }
   const cfg = parsed.data;
 
-  const stateDirRaw = cfg.stateDir ?? defaultStateDir();
+  const stateDirRaw = cfg.stateDir ?? defaultStateDir(plat);
   mkdirSync(stateDirRaw, { recursive: true, mode: 0o700 });
   const stateDir = tryRealpath(stateDirRaw);
   const allowedProjectDirs = dedupe(cfg.allowedProjectDirs.map(tryRealpath));

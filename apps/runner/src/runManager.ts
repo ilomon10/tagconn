@@ -20,6 +20,7 @@ import { detectMergedUsr, guessTranscriptKey, type BwrapPaths } from './bwrap.js
 import { checkOutputCap, createOutputCapState, type RunOutputCap, type RunOutputCapState } from './buffer.js';
 import type { ResolvedRunnerConfig } from './config.js';
 import { buildRunEnv } from './env.js';
+import { currentPlatform, type Platform } from './platform.js';
 import { canResume, computeFingerprint, recordSession, saveLedger, type Ledger } from './ledger.js';
 import type { Logger } from './logger.js';
 import { questSpawnSpec, receptionistSpawnSpec } from './spawnPlan.js';
@@ -53,6 +54,10 @@ export interface RunManagerDeps {
   claudeJsonPath: string;
   /** Realpath of the resolved claude binary (capabilities.resolveClaudePath), for bwrap's --ro-bind. */
   claudeBinRealPath?: string;
+  /** win32 npm-shim launches (`node cli.js`): fixed args that follow `claudeExecPath()` in every argv (platform.ts). */
+  claudeLaunchArgs?: string[];
+  /** Defaults to the real platform; tests pass a win32 one (decision #28). */
+  platform?: Platform;
   logger: Logger;
   /** H2: startup audit of the user's OWN ~/.claude/settings.json (userSettingsAudit.ts). Advisory for
    *  logging; `bareWebFetchAllowed` additionally drops WebFetch from a Receptionist turn. */
@@ -64,6 +69,13 @@ export interface RunManagerDeps {
 
 export function createRunManager(deps: RunManagerDeps) {
   const active = new Map<string, ActiveRun>();
+  const platform = deps.platform ?? currentPlatform();
+
+  /** Inserts the shim's fixed launch args right after argv[0] (a no-op except for a win32 `node cli.js` shim). */
+  function withLaunchArgs(argv: string[]): string[] {
+    const extra = deps.claudeLaunchArgs ?? [];
+    return extra.length > 0 ? [argv[0] ?? '', ...extra, ...argv.slice(1)] : argv;
+  }
 
   /**
    * SC5 re-review (HIGH, real-CLI QA): the standard native-installer layout makes `~/.local/bin/claude`
@@ -154,6 +166,7 @@ export function createRunManager(deps: RunManagerDeps) {
       deps.caps,
       deps.claudeJsonPath,
       deps.ledger,
+      platform,
     );
     if (!check.ok) return rejectStart(cmd.runId, check.failure);
 
@@ -163,7 +176,7 @@ export function createRunManager(deps: RunManagerDeps) {
       mode: cmd.permissionMode,
       maxTurns: cmd.maxTurns,
       resumeSessionId: cmd.resumeSessionId,
-      allowedTools: cmd.allowedTools,
+      allowedTools: check.allowedTools,
       disallowedTools: check.disallowedTools,
       toolSet: check.toolSet,
       questMcpConfigPath: deps.cfg.questMcpConfigPath,
@@ -174,7 +187,7 @@ export function createRunManager(deps: RunManagerDeps) {
     });
     const env = buildRunEnv({ runId: cmd.runId, runKind: 'quest', passEnv: deps.cfg.passEnv });
     const spec = questSpawnSpec(
-      argv,
+      withLaunchArgs(argv),
       cmd.runId,
       check.realDir,
       env,
@@ -211,7 +224,8 @@ export function createRunManager(deps: RunManagerDeps) {
     // L2: honor runner.json receptionistSandbox. 'bwrap' = required (refuse rather than silently
     // fall back to an unsandboxed turn); 'none' = never sandbox even if bwrap is available; 'auto' =
     // the previous behavior (use it when the probe confirmed it).
-    const bwrapProbed = deps.caps.bwrap && !!deps.claudeBinRealPath;
+    // Decision #28: win32 never sandboxes (caps.bwrap is already false there; this also covers a stale/forged cache).
+    const bwrapProbed = !platform.isWin32 && deps.caps.bwrap && !!deps.claudeBinRealPath;
     const sandboxSetting = deps.cfg.receptionistSandbox;
     if (sandboxSetting === 'bwrap' && !bwrapProbed) {
       return rejectStart(cmd.runId, 'isolation_unavailable', 'receptionistSandbox=bwrap but bubblewrap is unavailable');
@@ -237,6 +251,7 @@ export function createRunManager(deps: RunManagerDeps) {
       extraDisallowedTools: cmd.disallowedTools,
       stdinPrompt: deps.caps.stdinPrompt,
       prompt: cmd.prompt,
+      platform,
     });
     const fingerprint = computeFingerprint({ tools: built.toolSet, mode: 'plan', restricted: built.restricted, safeMode: cmd.safeMode, webFetchDomains });
     if (cmd.resumeSessionId && !canResume(deps.ledger, cmd.resumeSessionId, fingerprint)) {
@@ -269,7 +284,7 @@ export function createRunManager(deps: RunManagerDeps) {
         cwd,
       };
     }
-    const spec = receptionistSpawnSpec(built.argv, cwd, env, sandboxed, bwrapPaths, sandboxed ? detectMergedUsr() : undefined, deps.caps.stdinPrompt ? cmd.prompt : undefined);
+    const spec = receptionistSpawnSpec(withLaunchArgs(built.argv), cwd, env, sandboxed, bwrapPaths, sandboxed ? detectMergedUsr() : undefined, deps.caps.stdinPrompt ? cmd.prompt : undefined);
 
     // M2: receptionist turns get the (shorter) receptionist timeout cap.
     const timeoutSec = Math.min(cmd.timeoutSec, deps.cfg.receptionistTimeoutCapSec);
@@ -330,6 +345,7 @@ export function createRunManager(deps: RunManagerDeps) {
           },
           onParseError: (line) => deps.logger.warn('unparseable stream-json line', { runId: cmd.runId, line: line.slice(0, 200) }),
         },
+        platform,
       );
     } catch (err) {
       // SC5 re-review (recommended): node:child_process's `spawn()` can throw SYNCHRONOUSLY (as

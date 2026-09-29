@@ -6,10 +6,11 @@
 //  - stdinPrompt (V9), the sandboxed probe turn (bwrap) and systemdScope are functional probes too.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { RUN_PERMISSION_MODES, type RunnerCapabilities } from '@tagconn/shared';
 import { guessTranscriptKey } from './bwrap.js';
+import { currentPlatform, resolveClaudeLaunch, type Platform } from './platform.js';
 import { mapClaudeLine } from './streamParser.js';
 
 const PROBE_TIMEOUT_MS = 15_000;
@@ -71,23 +72,10 @@ export function parseVersion(versionText: string): string {
  * Resolves `runner.json`'s `claudePath` (a bare PATH-relative name, or an absolute path) to a real,
  * symlink-free absolute path. Needed for the bwrap `--ro-bind` of the CLI's own directory (§4.3):
  * `--ro-bind "$(dirname "$(readlink -f "$claudePath")")"`. Returns undefined if it can't be resolved.
+ * The per-OS logic (POSIX `command -v`, win32 `where.exe` + shim handling) lives in platform.ts.
  */
-export function resolveClaudePath(claudePath: string): string | undefined {
-  if (isAbsolute(claudePath)) {
-    try {
-      return realpathSync(claudePath);
-    } catch {
-      return undefined;
-    }
-  }
-  const r = spawnSync('sh', ['-c', `command -v -- "$1"`, 'sh', claudePath], { encoding: 'utf8' });
-  const found = r.stdout?.trim();
-  if (r.status !== 0 || !found) return undefined;
-  try {
-    return realpathSync(found);
-  } catch {
-    return undefined;
-  }
+export function resolveClaudePath(claudePath: string, platform: Platform = currentPlatform()): string | undefined {
+  return resolveClaudeLaunch(claudePath, platform)?.command;
 }
 
 // ---------------------------------------------------------------------------------------- permission modes
@@ -156,14 +144,16 @@ export function probeStdinPrompt(spawn: Spawn, claudePath: string, cwd: string, 
 
 // ---------------------------------------------------------------------------------------- systemd scope
 
-export function probeSystemdScope(spawn: Spawn = realSpawn): boolean {
+export function probeSystemdScope(spawn: Spawn = realSpawn, platform: Platform = currentPlatform()): boolean {
+  if (platform.isWin32) return false; // no systemd on Windows: never spawned (decision #28)
   const r = spawn('systemd-run', ['--user', '--scope', '--quiet', '--', 'true'], { cwd: '/', env: process.env });
   return r.status === 0;
 }
 
 // ---------------------------------------------------------------------------------------- bwrap / merged-usr / transcript key
 
-export function bwrapAvailable(spawn: Spawn = realSpawn): boolean {
+export function bwrapAvailable(spawn: Spawn = realSpawn, platform: Platform = currentPlatform()): boolean {
+  if (platform.isWin32) return false; // no bubblewrap on Windows: never spawned (decision #28)
   const r = spawn('bwrap', ['--version'], { cwd: '/', env: process.env });
   return r.status === 0;
 }
