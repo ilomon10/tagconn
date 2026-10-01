@@ -1,4 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react';
+import { useOverlayEscape } from './overlayStack';
 
 /** Selects the elements a keyboard user can land on with Tab — the same rough list every focus-trap
  * implementation uses, since there's no single DOM API that returns it. */
@@ -46,7 +47,7 @@ export interface UseModalFocusOptions {
   /** Keep Tab / Shift+Tab cycling within the container instead of leaving it — only meaningful for
    * true modals (backdrop, `aria-modal`); a docked panel like `AgentDrawer` leaves this off. */
   trap?: boolean;
-  /** Esc inside the container closes it (ignored while typing in a field, which handles its own Esc). */
+  /** Esc closes it when it is the top-most open overlay (ignored while typing in a field, which handles its own Esc). */
   onEscape?: () => void;
 }
 
@@ -62,8 +63,6 @@ export interface UseModalFocusOptions {
  */
 export function useModalFocus(open: boolean, containerRef: RefObject<HTMLElement | null>, options: UseModalFocusOptions = {}): void {
   const { initialFocusRef, trap = false, onEscape } = options;
-  const onEscapeRef = useRef(onEscape);
-  onEscapeRef.current = onEscape;
   const restoreToRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -75,7 +74,8 @@ export function useModalFocus(open: boolean, containerRef: RefObject<HTMLElement
     const container = containerRef.current;
     const focusables = container ? focusableElements(container) : [];
     const target = initialFocusTarget(initialFocusRef?.current ?? null, focusables);
-    target?.focus();
+    if (target) target.focus();
+    else if (container) focusContainer(container);
 
     return () => {
       const restoreTo = restoreToRef.current;
@@ -109,19 +109,39 @@ export function useModalFocus(open: boolean, containerRef: RefObject<HTMLElement
     return () => container.removeEventListener('keydown', onKeyDown);
   }, [open, trap]);
 
+  // Esc closes the top-most open overlay wherever focus is (`lib/overlayStack.ts`).
+  useOverlayEscape(open, onEscape);
+
+  // Keep focus inside: a focused button that becomes disabled (Settings -> Save) drops focus to
+  // <body>, so pull it back to the container.
   useEffect(() => {
     if (!open) return;
     const container = containerRef.current;
     if (!container) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || !onEscapeRef.current || isEditableTarget(e.target)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      onEscapeRef.current();
+    const rescue = () => {
+      const active = document.activeElement;
+      // Only recover from "nothing focused"; focus that moved to another dialog is not ours to take back.
+      if (active && active !== document.body) return;
+      focusContainer(container);
     };
-    container.addEventListener('keydown', onKeyDown);
-    return () => container.removeEventListener('keydown', onKeyDown);
+    const mo = new MutationObserver(rescue);
+    mo.observe(container, { attributes: true, attributeFilter: ['disabled'], subtree: true, childList: true });
+    const onFocusOut = (e: FocusEvent) => {
+      if (!e.relatedTarget) setTimeout(rescue, 0);
+    };
+    container.addEventListener('focusout', onFocusOut);
+    return () => {
+      mo.disconnect();
+      container.removeEventListener('focusout', onFocusOut);
+    };
   }, [open]);
+}
+
+/** Focuses the container itself (made programmatically focusable), for when no child can take focus. */
+function focusContainer(container: HTMLElement) {
+  if (!container.hasAttribute('tabindex')) container.setAttribute('tabindex', '-1');
+  container.style.outline = 'none';
+  container.focus();
 }
 
 /** A field that handles its own Esc (e.g. cancelling a rename) — Esc there must not close the dialog. */

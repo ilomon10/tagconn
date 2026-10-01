@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ROOM_TYPES, ZONES, type RoomType } from '@tagconn/shared';
 import { APPLIANCE_SPECS, type ApplianceKind } from '../../procgen/backWallSpec';
 import type { FurnitureKind, PlacedFurniture, WallDecorKind, WallDecorSlot } from '../../procgen/types';
+import { guildTheme } from '../guild';
 import { riftTheme } from '../rift';
 import { paintRiftBackWall, paintRiftWallDecor } from '../paint/riftWalls';
 import { makeBoundsGraphics, makeStubGraphics } from './testUtils';
@@ -208,6 +209,17 @@ describe('rift theme painters (implements every FurnitureKind/RoomType exhaustiv
   it('reuses the guild role titles and costumes (heroes keep their look in the Nexus)', () => {
     expect(riftTheme.roleTitles.pm).toBe('Guild Master');
     expect(riftTheme.costumes.developer).toBeDefined();
+  });
+
+  it('tints the guild costumes with the aurora palette so a rift look differs from guild', () => {
+    const g = guildTheme.costumes.architect!;
+    const r = riftTheme.costumes.architect!;
+    expect(r.hat).toBe(g.hat);
+    expect(r.staff).toBe(g.staff);
+    expect(r.cloak).not.toBe(g.cloak);
+    expect(r.hatColor).not.toBe(g.hatColor);
+    expect(riftTheme.costumes.developer?.hat).toBe('none');
+    expect(riftTheme.costumes.developer?.hatColor).toBeUndefined();
   });
 
   it('floorLabel always reads "The Multiverse"', () => {

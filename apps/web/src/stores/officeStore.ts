@@ -71,8 +71,11 @@ export const reducers = {
     const events = [...snap.events].sort((a, b) => a.id - b.id);
     const agents = byId(snap.agents);
     const sessions = byId(snap.sessions);
+    const projects = byId(snap.projects);
     return {
-      projects: byId(snap.projects),
+      projects,
+      // The selected floor may be gone (merged away on the server): fall back to the Multiverse.
+      selectedProjectId: s.selectedProjectId === ALL_FLOORS || Object.hasOwn(projects, s.selectedProjectId) ? s.selectedProjectId : ALL_FLOORS,
       sessions,
       agents,
       tasks: byId(snap.tasks),
@@ -106,6 +109,27 @@ export const reducers = {
       agents,
       lastLiveAt: foldLastLiveAt(s.lastLiveAt, [removed]),
       pinnedPrimary: prunePins(s.pinnedPrimary, agents, s.sessions),
+    };
+  },
+  /** The server folded floor `from` into `into`: drop it, move its rows over, follow the selection. */
+  mergeProject(s: OfficeData, from: string, into: string): Partial<OfficeData> {
+    if (from === into) return {};
+    const move = <T extends { projectId: string }>(rows: Record<string, T>): Record<string, T> =>
+      Object.fromEntries(Object.entries(rows).map(([k, r]) => [k, r.projectId === from ? { ...r, projectId: into } : r]));
+    const projects = { ...s.projects };
+    delete projects[from];
+    const pinnedPrimary = { ...s.pinnedPrimary };
+    const pin = pinnedPrimary[from];
+    delete pinnedPrimary[from];
+    if (pin !== undefined && !(into in pinnedPrimary)) pinnedPrimary[into] = pin;
+    return {
+      projects,
+      sessions: move(s.sessions),
+      agents: move(s.agents),
+      tasks: move(s.tasks),
+      events: s.events.map((e) => (e.projectId === from ? { ...e, projectId: into } : e)),
+      selectedProjectId: s.selectedProjectId === from ? into : s.selectedProjectId,
+      pinnedPrimary,
     };
   },
   upsertTask: (s: OfficeData, t: Task): Partial<OfficeData> => ({ tasks: { ...s.tasks, [t.id]: t } }),
@@ -149,6 +173,7 @@ export const initialOfficeData = (): OfficeData => ({
 export interface OfficeActions {
   applySnapshot(snap: OfficeSnapshot): void;
   upsertProject(p: Project): void;
+  mergeProject(from: string, into: string): void;
   upsertSession(s: Session): void;
   upsertAgent(a: Agent): void;
   removeAgent(id: string): void;
@@ -171,6 +196,7 @@ export const useOfficeStore = create<OfficeState>()((set) => ({
   ...initialOfficeData(),
   applySnapshot: (snap) => set((s) => reducers.applySnapshot(s, snap)),
   upsertProject: (p) => set((s) => reducers.upsertProject(s, p)),
+  mergeProject: (from, into) => set((s) => reducers.mergeProject(s, from, into)),
   upsertSession: (x) => set((s) => reducers.upsertSession(s, x)),
   upsertAgent: (a) => set((s) => reducers.upsertAgent(s, a)),
   removeAgent: (id) => set((s) => reducers.removeAgent(s, id)),

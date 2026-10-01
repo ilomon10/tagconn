@@ -18,6 +18,7 @@ import {
   type Project,
   validateLayout,
 } from '@tagconn/shared';
+import { isStrictlyUnder, normPath } from '../../core/db/index.js';
 import { redactValue } from '../../core/redact/index.js';
 import type { Deps } from '../../core/di/index.js';
 import { HttpError, notFound } from '../../core/http/index.js';
@@ -76,7 +77,7 @@ export class AttributionService {
    * anything inside the body, so a forged header naming another session can only ever target that
    * session's own project (and only within its `importWindowSec` window).
    */
-  importProfile(sessionId: string | undefined, rawBody: unknown, now = Date.now()): AttributionImportResult {
+  importProfile(sessionId: string | undefined, rawBody: unknown, now = Date.now(), opts: { sourceDir?: string } = {}): AttributionImportResult {
     const sizeBytes = this.approxSize(rawBody);
     const { attribution } = this.deps.settings.get();
 
@@ -105,7 +106,13 @@ export class AttributionService {
     const hasLayout = profile.layout !== undefined;
     const heroCount = profile.heroes.length;
 
-    if (attribution.autoImport === 'auto') {
+    // The profile was read from `sourceDir`; when that is not inside the session's pinned floor (e.g. the
+    // session was pinned elsewhere), never auto-apply it: record where it came from and ask the admin.
+    const foreign =
+      opts.sourceDir !== undefined && normPath(opts.sourceDir) !== normPath(project.cwd) && !isStrictlyUnder(opts.sourceDir, project.cwd);
+    const projectCwd = foreign ? opts.sourceDir! : project.cwd;
+
+    if (attribution.autoImport === 'auto' && !foreign) {
       const alreadyConfigured = Boolean(project.layoutId) || this.deps.heroesRepository.list(projectId).length > 0;
       if (alreadyConfigured) return this.log(ignored('already-configured'), sizeBytes, projectId);
       this.apply(projectId, profile);
@@ -114,8 +121,8 @@ export class AttributionService {
     }
 
     // autoImport: 'ask' (default). Store as pending and let the admin decide (attribution:pending toast).
-    this.repo.upsertPending({ projectId, projectCwd: project.cwd, receivedAt: now, floorName: profile.floor.name, tagconnVersion: profile.tagconnVersion, hasLayout, heroCount, unknownRoles, profile });
-    const pending: PendingProfileImport = { projectId, projectCwd: project.cwd, receivedAt: now, floorName: profile.floor.name, tagconnVersion: profile.tagconnVersion, hasLayout, heroCount, unknownRoles };
+    this.repo.upsertPending({ projectId, projectCwd, receivedAt: now, floorName: profile.floor.name, tagconnVersion: profile.tagconnVersion, hasLayout, heroCount, unknownRoles, profile });
+    const pending: PendingProfileImport = { projectId, projectCwd, receivedAt: now, floorName: profile.floor.name, tagconnVersion: profile.tagconnVersion, hasLayout, heroCount, unknownRoles };
     this.deps.bus.emit('attribution.pending', pending);
     return this.log({ status: 'pending', projectId }, sizeBytes, projectId);
   }

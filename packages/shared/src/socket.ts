@@ -21,6 +21,12 @@ export interface ServerToClientEvents
     AttributionServerToClientEvents {
   snapshot: (s: OfficeSnapshot) => void;
   'project:upsert': (p: Project) => void;
+  /**
+   * Floor `from` was folded into the git-root floor `into` on the server (M12). Same rooms as
+   * `project:upsert`. Clients drop `from`, move its sessions/agents/tasks/events to `into` and
+   * re-select `into` if `from` was selected; a `project:upsert` of `into` follows.
+   */
+  'project:merged': (e: { from: string; into: string }) => void;
   'session:upsert': (s: Session) => void;
   'agent:upsert': (a: Agent) => void;
   'agent:remove': (id: string) => void;

@@ -117,6 +117,12 @@ export function isModalOpen(doc: Document = document): boolean {
   return !!doc.querySelector('[aria-modal="true"], [data-modal]');
 }
 
+/** True when the only modal open is the one with this `data-modal` name (e.g. the menu, which `M` may close). */
+export function onlyModalIs(name: string, doc: Document = document): boolean {
+  const modals = Array.from(doc.querySelectorAll('[aria-modal="true"], [data-modal]'));
+  return modals.length > 0 && modals.every((m) => m.getAttribute('data-modal') === name);
+}
+
 /**
  * The next (`dir = 1`, `]`) or previous (`dir = -1`, `[`) index when cycling through `count` items,
  * wrapping at the ends — the M9 8f roster-cycling hotkeys in `OfficeView` (`useFloorAgents()`'s

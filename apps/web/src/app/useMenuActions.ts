@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { resolveScreenFx, useDisplayPrefsStore } from '../stores/displayPrefsStore';
-import { isModalOpen, isTypingTarget } from '../lib/floors';
+import { isModalOpen, isTypingTarget, onlyModalIs } from '../lib/floors';
 import { useRequireAdmin } from '../features/auth/useRequireAdmin';
 import { defaultHeroFloor } from '../features/heroes/formState';
 import { useHeroPanelStore } from '../features/heroes/store';
@@ -61,7 +61,9 @@ export function useMenuActions({ onOpenPlanner, onManageFloors, onToggleMenu }: 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
       const id = menuActionForKey(e);
-      if (!id || isTypingTarget(e.target) || isModalOpen()) return;
+      if (!id || isTypingTarget(e.target)) return;
+      // `M` also closes the menu; every other key waits for whatever modal is open.
+      if (isModalOpen() && !(id === 'menu' && onlyModalIs('menu'))) return;
       const a = ref.current[id];
       if (a.disabled) return;
       e.preventDefault();

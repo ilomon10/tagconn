@@ -52,7 +52,41 @@ export type HookPayload = z.infer<typeof HookPayloadSchema>;
 export const PROJECT_ROOT_HEADER = 'x-tagconn-project-root';
 export const PROJECT_ROOT_MAX_BYTES = 4096;
 
-/** Decode + validate the header: an absolute POSIX or Windows path, no NUL/control chars, no `..` segments. */
+/** `git` = the root came from `git rev-parse --show-toplevel`; `dir` = fallback to `CLAUDE_PROJECT_DIR`. */
+export const PROJECT_ROOT_KIND_HEADER = 'x-tagconn-project-root-kind';
+export type ProjectRootKind = 'git' | 'dir';
+
+export function parseProjectRootKindHeader(raw: unknown): ProjectRootKind | undefined {
+  return raw === 'git' || raw === 'dir' ? raw : undefined;
+}
+
+/**
+ * Validate and normalise an untrusted absolute path (the root header or a payload `cwd`): POSIX or
+ * Windows drive path, NFC, no control or format (bidi) chars, no `..` segments, not a filesystem root,
+ * Windows paths without a `:` after the drive (alternate data streams). Returns the cleaned path.
+ */
+export function parseProjectPath(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > PROJECT_ROOT_MAX_BYTES) return undefined;
+  const decoded = raw.normalize('NFC');
+  if (decoded.length === 0 || utf8Length(decoded) > PROJECT_ROOT_MAX_BYTES) return undefined;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(decoded) || /\p{Cf}/u.test(decoded)) return undefined;
+  const isPosix = decoded.startsWith('/');
+  const isWin = /^[A-Za-z]:[\\/]/.test(decoded);
+  if (!isPosix && !isWin) return undefined;
+  if (isWin && decoded.slice(2).includes(':')) return undefined;
+  if (decoded.split(isWin ? /[\\/]/ : '/').some((seg) => seg === '..')) return undefined;
+  // Normalize: drop trailing separators (keep a bare root) and collapse repeated separators.
+  let norm = decoded.replace(isWin ? /[\\/]{2,}/g : /\/{2,}/g, isWin ? '\\' : '/');
+  while (norm.length > (isWin ? 3 : 1) && (isWin ? /[\\/]$/ : /\/$/).test(norm)) norm = norm.slice(0, -1);
+  // A filesystem root is never a project (it would swallow every floor).
+  if (norm === '/' || /^[A-Za-z]:[\\/]?$/.test(norm)) return undefined;
+  return norm;
+}
+
+const utf8Length = (s: string) => new TextEncoder().encode(s).length;
+
+/** Decode + validate the header: base64 of a path `parseProjectPath` accepts. */
 export function parseProjectRootHeader(raw: unknown): string | undefined {
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > Math.ceil((PROJECT_ROOT_MAX_BYTES * 4) / 3) + 4) return undefined;
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(raw.trim())) return undefined;
@@ -63,17 +97,5 @@ export function parseProjectRootHeader(raw: unknown): string | undefined {
   } catch {
     return undefined;
   }
-  if (decoded.length === 0 || decoded.length > PROJECT_ROOT_MAX_BYTES) return undefined;
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(decoded)) return undefined;
-  const isPosix = decoded.startsWith('/');
-  const isWin = /^[A-Za-z]:[\\/]/.test(decoded);
-  if (!isPosix && !isWin) return undefined;
-  if (decoded.split(/[\\/]/).some((seg) => seg === '..')) return undefined;
-  // Normalize: drop trailing separators (keep a bare root) and collapse repeated separators.
-  let norm = decoded.replace(/[\\/]{2,}/g, isWin ? '\\' : '/');
-  while (norm.length > (isWin ? 3 : 1) && /[\\/]$/.test(norm)) norm = norm.slice(0, -1);
-  // A filesystem root is never a project (it would swallow every floor).
-  if (norm === '/' || /^[A-Za-z]:[\\/]?$/.test(norm)) return undefined;
-  return norm;
+  return parseProjectPath(decoded);
 }

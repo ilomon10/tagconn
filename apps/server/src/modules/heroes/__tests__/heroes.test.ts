@@ -362,6 +362,19 @@ describe('heroes module (M8 8i)', () => {
     expect(list.ok).toBe(true); // never denied/timed-out by the admin-guard's per-packet check
   });
 
+  it('create and move reject an unknown role (400), like the attribution import', async () => {
+    app = await buildTestApp();
+    const headers = adminHeaders(app);
+    await app.inject({ method: 'POST', url: '/api/hooks', payload: hook({ hook_event_name: 'SessionStart', cwd: CWD }) });
+    const pid = await projectId(app);
+    const bad = await app.inject({ method: 'POST', url: '/api/heroes', payload: { projectId: pid, role: 'no-such-role' }, headers });
+    expect(bad.statusCode).toBe(400);
+    const a = (await app.inject({ method: 'POST', url: '/api/heroes', payload: { projectId: pid, role: 'analyst' }, headers })).json<Hero>();
+    const move = await app.inject({ method: 'PATCH', url: `/api/heroes/${a.id}`, payload: { role: 'no-such-role' }, headers });
+    expect(move.statusCode).toBe(400);
+    expect((await app.inject({ url: `/api/heroes?projectId=${pid}` })).json<Hero[]>().find((h) => h.id === a.id)?.role).toBe('analyst');
+  });
+
   it('PATCH role (M12): moves a released hero to the lowest free slot, 409 when bound or full; styles merge/null/reset', async () => {
     app = await buildTestApp({ settings: { heroes: { maxPerRole: 2 } } });
     const headers = adminHeaders(app);

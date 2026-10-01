@@ -385,13 +385,18 @@ export class Character extends Phaser.GameObjects.Container {
     this.beaconRing.setScale(scale);
   }
 
+  /** Live reduced-motion state, pushed per frame by the scene (its cached watcher), so toggling the
+   *  OS setting mid-session takes effect without a reselect. */
+  setBeaconStatic(isStatic: boolean) {
+    this.beaconStatic = isStatic;
+  }
+
   private get beaconVisible(): boolean {
     return this.beaconEnabled && this.selected;
   }
 
   private refreshBeacon() {
     const on = this.beaconVisible;
-    this.beaconStatic = prefersReducedMotion();
     this.beaconArrow.setVisible(on);
     this.beaconRing.setVisible(on);
     if (on) this.paintBeacon();

@@ -1,8 +1,10 @@
 import type { Agent, HookPayload, OfficeSnapshot, Project } from '@tagconn/shared';
-import { PROJECT_ROOT_HEADER } from '@tagconn/shared';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { PROJECT_ROOT_HEADER, PROJECT_ROOT_KIND_HEADER } from '@tagconn/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { App } from '../../../app.js';
-import { buildTestApp, loadFixture } from '../../../../test/helpers.js';
+import { buildTestApp, loadFixture, makeTempDir } from '../../../../test/helpers.js';
 import type { HookContext } from '../../../core/event-bus/index.js';
 import { isStrictlyUnder, nearestAncestor } from '../../../core/db/index.js';
 
@@ -46,11 +48,12 @@ describe('project pinning, root header and ancestor folding (M12)', () => {
     app = await buildTestApp();
     const contexts: HookContext[] = [];
     app.diContainer.cradle.bus.on('hook.received', (c) => contexts.push(c));
-    await post({ session_id: 's1', cwd: '/work/repo/apps/web', hook_event_name: 'SessionStart' }, { [PROJECT_ROOT_HEADER]: b64('/work/repo') });
-    expect(contexts[0]?.projectRoot).toBe('/work/repo');
+    await post({ session_id: 's1', cwd: '/work/p/repo/apps/web', hook_event_name: 'SessionStart' }, { [PROJECT_ROOT_HEADER]: b64('/work/p/repo') });
+    expect(contexts[0]?.projectRoot).toBe('/work/p/repo');
+    expect(contexts[0]?.projectRootKind).toBeUndefined(); // no kind header: the service treats it as dir, never git
     const projects = (await app.inject({ url: '/api/projects' })).json<Project[]>();
     expect(projects).toHaveLength(1);
-    expect(projects[0]).toMatchObject({ cwd: '/work/repo', name: 'repo' });
+    expect(projects[0]).toMatchObject({ cwd: '/work/p/repo', name: 'repo' });
   });
 
   it.each([
@@ -72,15 +75,130 @@ describe('project pinning, root header and ancestor folding (M12)', () => {
     expect(projects.map((p) => p.cwd)).toEqual(['/work/cwd-project']);
   });
 
-  it('a new session whose root lies under an existing project joins that ancestor project', async () => {
+  const git = (root: string) => ({ [PROJECT_ROOT_HEADER]: b64(root), [PROJECT_ROOT_KIND_HEADER]: 'git' });
+  const dir = (root: string) => ({ [PROJECT_ROOT_HEADER]: b64(root), [PROJECT_ROOT_KIND_HEADER]: 'dir' });
+  const start = (sid: string, cwd: string, headers: Record<string, string> = {}) => post({ session_id: sid, cwd, hook_event_name: 'SessionStart' }, headers);
+  const cwds = async () => (await snapshot()).projects.map((p) => p.cwd).sort();
+  const projectOf = async (sid: string) => (await snapshot()).sessions.find((s) => s.id === sid)?.projectId;
+
+  it('floors fold only into a CONFIRMED git root: unconfirmed ancestors stay separate floors', async () => {
     app = await buildTestApp();
-    await post({ session_id: 's1', cwd: '/work/repo', hook_event_name: 'SessionStart' });
-    await post({ session_id: 's2', cwd: '/work/repo/apps/web', hook_event_name: 'SessionStart' });
-    await post({ session_id: 's3', cwd: '/work/repo-other', hook_event_name: 'SessionStart' }); // prefix without separator: not a child
+    await start('s1', '/work/p/repo'); // cwd only: source 'cwd'
+    await start('s2', '/work/p/repo/apps/web');
+    await start('s3', '/work/p/repo/apps/api', dir('/work/p/repo/apps/api'));
+    expect(await cwds()).toEqual(['/work/p/repo', '/work/p/repo/apps/api', '/work/p/repo/apps/web']);
+  });
+
+  it('a git-confirmed root absorbs later sessions below it (cwd or dir-kind), but not a nested git repo or a prefix sibling', async () => {
+    app = await buildTestApp();
+    await start('s1', '/work/p/repo', git('/work/p/repo'));
+    await start('s2', '/work/p/repo/apps/web');
+    await start('s3', '/work/p/repo/apps/api', dir('/work/p/repo/apps/api'));
+    await start('s4', '/work/p/repo/vendor/lib', git('/work/p/repo/vendor/lib')); // separate nested repo
+    await start('s5', '/work/p/repo/vendor/lib/src');
+    await start('s6', '/work/p/repo-other');
+    expect(await cwds()).toEqual(['/work/p/repo', '/work/p/repo-other', '/work/p/repo/vendor/lib']);
+    const root = await projectOf('s1');
+    expect(await projectOf('s2')).toBe(root);
+    expect(await projectOf('s3')).toBe(root);
+    expect(await projectOf('s5')).toBe(await projectOf('s4'));
+    expect(await projectOf('s4')).not.toBe(root);
+  });
+
+  it('a runtime merge announces each folded floor (project.merged) before the parent upsert', async () => {
+    app = await buildTestApp();
+    await start('s2', '/work/p/repo/apps/web');
+    const child = (await projectOf('s2'))!;
+    const seen: string[] = [];
+    const { bus } = app.diContainer.cradle;
+    bus.on('project.merged', (m) => seen.push(`merged:${m.from}>${m.into}`));
+    bus.on('project.upserted', (p) => seen.push(`upsert:${p.id}`));
+    await start('s1', '/work/p/repo', git('/work/p/repo'));
+    const root = (await projectOf('s1'))!;
+    expect(await projectOf('s2')).toBe(root);
+    expect(seen.slice(-2)).toEqual([`merged:${child}>${root}`, `upsert:${root}`]);
+  });
+
+  it('~ and /home (shallow roots) never absorb, even when a git header confirms them', async () => {
+    app = await buildTestApp();
+    await start('s1', '/home/u', git('/home/u'));
+    await start('s2', '/home/u/proj');
+    await start('s3', '/home', git('/home'));
+    await start('s4', '/home/other/proj');
+    expect(await cwds()).toEqual(['/home', '/home/other/proj', '/home/u', '/home/u/proj']);
+  });
+
+  it('an archived git root absorbs nothing', async () => {
+    app = await buildTestApp();
+    await start('s1', '/work/p/repo', git('/work/p/repo'));
+    const id = (await projectOf('s1'))!;
+    app.diContainer.cradle.projectsService.update(id, { archived: true });
+    await start('s2', '/work/p/repo/apps/web');
+    expect(await cwds()).toEqual(['/work/p/repo', '/work/p/repo/apps/web']);
+  });
+
+  it('equal normalised paths are one project (trailing slash, doubled slash, Windows case and separators)', async () => {
+    app = await buildTestApp();
+    await start('s1', '/work/p/repo/');
+    await start('s2', '/work/p//repo');
+    await start('s3', 'C:\\Work\\Proj\\Repo');
+    await start('s4', 'c:/work/proj/repo');
+    await start('s5', 'c:\\work\\proj\\repo.'); // Windows drops the trailing dot
+    expect((await snapshot()).projects).toHaveLength(2);
+    expect(await projectOf('s2')).toBe(await projectOf('s1'));
+    expect(await projectOf('s4')).toBe(await projectOf('s3'));
+    expect(await projectOf('s5')).toBe(await projectOf('s3'));
+  });
+
+  it.each([
+    ['relative', 'work/repo'],
+    ['dot-dot', '/work/../etc'],
+    ['filesystem root', '/'],
+    ['control char', '/work/re\u0001po'],
+    ['bidi override', '/work/re\u202Epo'],
+    ['Windows ADS colon', 'C:\\work\\repo:stream'],
+    ['oversized', `/${'a'.repeat(5000)}`],
+  ])('an invalid payload cwd (%s) is treated as missing', async (_n, cwd) => {
+    app = await buildTestApp();
+    await start('s1', cwd);
+    expect(await cwds()).toEqual(['(unknown)']);
+  });
+
+  it('the first git event merges the old nested floor into its repo (backup first, once), even from a pinned session', async () => {
+    const dbDir = makeTempDir('tagconn-merge-');
+    app = await buildTestApp({ dbPath: join(dbDir, 'office.db') });
+    await start('old', '/work/p/ovor/apps/platform'); // pre-upgrade floor: created from a cd'd cwd
+    await start('other', '/work/p/ovor'); // the repo floor, not yet confirmed
+    expect(await cwds()).toEqual(['/work/p/ovor', '/work/p/ovor/apps/platform']);
+
+    // The pinned session's next event now carries the git header: ovor is confirmed and absorbs the child.
+    const contexts: HookContext[] = [];
+    app.diContainer.cradle.bus.on('hook.received', (c) => contexts.push(c));
+    await post({ session_id: 'old', cwd: '/work/p/ovor/apps/platform', hook_event_name: 'UserPromptSubmit', prompt: 'x' }, git('/work/p/ovor'));
     const snap = await snapshot();
-    expect(snap.projects.map((p) => p.cwd).sort()).toEqual(['/work/repo', '/work/repo-other']);
-    const s1 = snap.sessions.find((s) => s.id === 's1');
-    expect(snap.sessions.find((s) => s.id === 's2')?.projectId).toBe(s1?.projectId);
+    expect(snap.projects.map((p) => p.cwd)).toEqual(['/work/p/ovor']);
+    expect(snap.sessions.map((s) => s.projectId)).toEqual(snap.sessions.map(() => snap.projects[0]!.id));
+    expect(contexts[0]?.projectId).toBe(snap.projects[0]!.id);
+
+    const backups = readdirSync(dbDir).filter((f) => f.includes('.pre-merge-'));
+    expect(backups).toHaveLength(1);
+    expect(existsSync(join(dbDir, backups[0]!))).toBe(true);
+
+    // A second merge in the same process does not take another backup.
+    await start('o2', '/work/p/two/a');
+    await start('o3', '/work/p/two');
+    await post({ session_id: 'o3', cwd: '/work/p/two', hook_event_name: 'Stop' }, git('/work/p/two'));
+    expect((await snapshot()).projects.map((p) => p.cwd).sort()).toEqual(['/work/p/ovor', '/work/p/two']);
+    expect(readdirSync(dbDir).filter((f) => f.includes('.pre-merge-'))).toHaveLength(1);
+  });
+
+  it('a git header for an existing project upgrades it in place; a later dir header never downgrades it', async () => {
+    app = await buildTestApp();
+    await start('s1', '/work/p/repo'); // source 'cwd'
+    await start('s2', '/work/p/repo', git('/work/p/repo'));
+    await start('s3', '/work/p/repo/sub', dir('/work/p/repo/sub'));
+    expect(await cwds()).toEqual(['/work/p/repo']); // s3 folded: the repo is now a confirmed git root
+    expect(await projectOf('s3')).toBe(await projectOf('s1'));
   });
 
   it('path helpers: POSIX and Windows-style prefixes, nearest ancestor', () => {

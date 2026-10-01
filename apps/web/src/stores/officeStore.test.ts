@@ -33,6 +33,15 @@ const event = (id: number, over: Partial<OfficeEvent> = {}): OfficeEvent => ({
 const apply = (s: OfficeData, patch: Partial<OfficeData>): OfficeData => ({ ...s, ...patch });
 
 describe('office reducers', () => {
+  it('applySnapshot falls back to the Multiverse when the selected floor no longer exists', () => {
+    const proj = (id: string): Project => ({ id, cwd: `/${id}`, name: id, archived: false, createdAt: 0, lastActivityAt: 0 });
+    const snap: OfficeSnapshot = { projects: [proj('p1')], sessions: [], agents: [], tasks: [], events: [] };
+    const gone = apply(initialOfficeData(), { selectedProjectId: 'merged-away' });
+    expect(reducers.applySnapshot(gone, snap).selectedProjectId).toBe(ALL_FLOORS);
+    const kept = apply(initialOfficeData(), { selectedProjectId: 'p1' });
+    expect(reducers.applySnapshot(kept, snap).selectedProjectId).toBe('p1');
+  });
+
   it('applySnapshot replaces state, indexes by id and sorts events', () => {
     const snap: OfficeSnapshot = {
       projects: [{ id: 'p1', cwd: '/x', name: 'x', archived: false, createdAt: 0, lastActivityAt: 0 }],
@@ -110,6 +119,31 @@ describe('office reducers', () => {
     expect(s.projects.p1?.name).toBe('x');
     s = apply(s, reducers.upsertProject(s, { ...p1, name: 'renamed', archived: true }));
     expect(s.projects.p1).toEqual({ ...p1, name: 'renamed', archived: true });
+  });
+});
+
+describe('mergeProject (project:merged)', () => {
+  it('drops the floor, moves its rows to the survivor and follows the selection', () => {
+    const proj = (id: string) => ({ id, name: id, cwd: `/x/${id}` }) as Project;
+    const s: OfficeData = {
+      ...initialOfficeData(),
+      projects: { a: proj('a'), b: proj('b') },
+      agents: { a1: agent('a1', { projectId: 'a' }), b1: agent('b1', { projectId: 'b' }) },
+      events: [event(1, { projectId: 'a' }), event(2, { projectId: 'b' })],
+      selectedProjectId: 'a',
+      pinnedPrimary: { a: 'a1' },
+    };
+    const next = apply(s, reducers.mergeProject(s, 'a', 'b'));
+    expect(Object.keys(next.projects)).toEqual(['b']);
+    expect(next.agents.a1?.projectId).toBe('b');
+    expect(next.events.map((e) => e.projectId)).toEqual(['b', 'b']);
+    expect(next.selectedProjectId).toBe('b');
+    expect(next.pinnedPrimary).toEqual({ b: 'a1' });
+  });
+
+  it('keeps an unrelated selection', () => {
+    const s: OfficeData = { ...initialOfficeData(), selectedProjectId: ALL_FLOORS };
+    expect(apply(s, reducers.mergeProject(s, 'a', 'b')).selectedProjectId).toBe(ALL_FLOORS);
   });
 });
 

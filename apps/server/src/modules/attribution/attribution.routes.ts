@@ -1,4 +1,11 @@
-import { ATTRIBUTION_MAX_PROFILE_BYTES, ATTRIBUTION_SESSION_HEADER, AttributionResolveSchema, AttributionSaveSchema } from '@tagconn/shared';
+import {
+  ATTRIBUTION_MAX_PROFILE_BYTES,
+  ATTRIBUTION_SESSION_HEADER,
+  AttributionResolveSchema,
+  AttributionSaveSchema,
+  parseProjectRootHeader,
+  PROJECT_ROOT_HEADER,
+} from '@tagconn/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { hookTokenAuth } from '../../core/http/index.js';
 import { projectIdFor } from '../projects/index.js';
@@ -29,7 +36,10 @@ export const attributionRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const sessionIdHeader = req.headers[ATTRIBUTION_SESSION_HEADER];
       const sessionId = typeof sessionIdHeader === 'string' ? sessionIdHeader : undefined;
-      const result = attributionService.importProfile(sessionId, req.body);
+      // The directory the hook read the profile from (CLAUDE_PROJECT_DIR), validated like the hook root header.
+      const rawSource = req.headers[PROJECT_ROOT_HEADER];
+      const sourceDir = typeof rawSource === 'string' ? parseProjectRootHeader(rawSource) : undefined;
+      const result = attributionService.importProfile(sessionId, req.body, Date.now(), { sourceDir });
       return reply.code(200).send(result);
     },
   );

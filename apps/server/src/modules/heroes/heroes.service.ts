@@ -198,6 +198,7 @@ export class HeroesService {
   create(rawInput: HeroCreate): Hero {
     const input = HeroCreateSchema.parse(rawInput);
     if (!this.deps.projectsRepository.get(input.projectId)) throw notFound(`Project ${input.projectId}`);
+    if (!this.deps.rolesService.get(input.role)) throw new HttpError(400, `Unknown role "${input.role}"`);
     const cfg = this.deps.settings.get().heroes;
     const projectHeroes = this.repo.list(input.projectId);
     const roleHeroes = projectHeroes.filter((h) => h.role === input.role);
@@ -248,6 +249,7 @@ export class HeroesService {
     let role = existing.role;
     let slot = existing.slot;
     if (patch.role !== undefined && patch.role !== existing.role) {
+      if (!this.deps.rolesService.get(patch.role)) throw new HttpError(400, `Unknown role "${patch.role}"`);
       if (!isHeroReleased(existing)) throw new HttpError(409, `Hero "${id}" is bound to a live agent and cannot change role`);
       const { maxPerRole } = this.deps.settings.get().heroes;
       const roleHeroes = this.repo.list(existing.projectId).filter((h) => h.role === patch.role);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MENU_HOTKEYS, menuActionForKey } from './menuHotkeys';
 
-const key = (k: string, mods: Partial<{ ctrlKey: boolean; metaKey: boolean; altKey: boolean }> = {}) => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, ...mods });
+const key = (k: string, mods: Partial<{ ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }> = {}) => ({ key: k, ctrlKey: false, metaKey: false, altKey: false, ...mods });
 
 describe('menuActionForKey', () => {
   it('maps a letter, case-insensitively', () => {
@@ -14,6 +14,13 @@ describe('menuActionForKey', () => {
     expect(menuActionForKey(key('s', { metaKey: true }))).toBeNull();
     expect(menuActionForKey(key('PageUp'))).toBeNull();
     expect(menuActionForKey(key('['))).toBeNull();
+  });
+  it('ignores Shift, Alt, Ctrl and Meta combinations', () => {
+    expect(menuActionForKey(key('H', { shiftKey: true }))).toBeNull();
+    expect(menuActionForKey(key('h', { altKey: true }))).toBeNull();
+    expect(menuActionForKey(key('d', { ctrlKey: true }))).toBeNull();
+    expect(menuActionForKey(key('m', { metaKey: true }))).toBeNull();
+    expect(menuActionForKey(key('h'))).toBe('heroes');
   });
   it('leaves F to the floor manager hotkey', () => {
     expect(menuActionForKey(key('f'))).toBeNull();

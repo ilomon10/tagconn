@@ -363,7 +363,7 @@ export function Inspector({
   onSealRoom: (id: string) => void;
 }) {
   return (
-    <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-l border-ink-700 bg-ink-850">
+    <aside className="flex w-full shrink-0 flex-col overflow-y-auto border-t border-ink-700 bg-ink-850 md:w-72 md:border-l md:border-t-0">
       <LayoutMeta draft={draft} onMeta={onMeta} />
       <FurnishDefaultsFields defaults={draft.furnishDefaults} onChange={onFurnishDefaults} />
       {selectedRoom ? (

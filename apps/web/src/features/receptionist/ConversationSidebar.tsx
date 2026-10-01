@@ -21,6 +21,7 @@ export function ConversationSidebar({
   onCreate,
   createBusy,
   createError,
+  hiddenOnMobile,
 }: {
   conversations: ReceptionistConversation[];
   activeId: string | null;
@@ -32,6 +33,8 @@ export function ConversationSidebar({
   onCreate: (scope: ReceptionistScope, projectId?: string) => void;
   createBusy: boolean;
   createError: string | null;
+  /** Below `sm` the list and the thread are separate screens; hide the list while a thread is open. */
+  hiddenOnMobile?: boolean;
 }) {
   const scopeOptions = projectScopeOptions(projects, allowedProjectDirs);
   const firstAllowed = scopeOptions.find((o) => o.allowed);
@@ -49,7 +52,7 @@ export function ConversationSidebar({
   };
 
   return (
-    <div className="flex w-64 shrink-0 flex-col border-r border-ink-700">
+    <div className={cx(hiddenOnMobile ? 'hidden sm:flex' : 'flex', 'w-full shrink-0 flex-col sm:w-64 sm:border-r sm:border-ink-700')}>
       <div className="space-y-2 border-b border-ink-700 p-2.5">
         <div className="flex items-center gap-1 rounded-lg bg-ink-850 p-0.5">
           {(['general', 'project'] as const).map((s) => (

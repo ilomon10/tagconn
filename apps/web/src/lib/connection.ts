@@ -2,7 +2,7 @@ import { ALL_FLOORS, useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { registerLayoutEvents, useLayoutStore } from '../stores/layoutStore';
 import { registerHeroEvents, useHeroStore } from '../stores/heroStore';
-import { emitWithAck, getSocket } from './socket';
+import { emitWithAck, getSocket, heroSocket } from './socket';
 import { startDemo } from './mock';
 import { DEFAULT_ROLES } from './defaultRoles';
 import { defaultSettings } from '@tagconn/shared';
@@ -42,6 +42,12 @@ function wireLive() {
     if (snap.heroes) useHeroStore.getState().setHeroes(snap.heroes);
   });
   s.on('project:upsert', (p) => office().upsertProject(p));
+  s.on('project:merged', ({ from, into }) => {
+    office().mergeProject(from, into);
+    useHeroStore.getState().dropProject(from);
+    // The server moved (or dropped) the child's heroes without broadcasting each one: re-read the survivor's.
+    void heroSocket.list({ projectId: into }).then((list) => list.forEach((h) => useHeroStore.getState().upsertHero(h)), () => {});
+  });
   s.on('session:upsert', (x) => office().upsertSession(x));
   s.on('agent:upsert', (a) => office().upsertAgent(a));
   s.on('agent:remove', (id) => office().removeAgent(id));

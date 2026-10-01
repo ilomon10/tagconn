@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { isHeroReleased, namePoolFor, pickHeroName, type Hero, type HeroNamePools } from '@tagconn/shared';
 import { useOfficeStore } from '../../stores/officeStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useRoleLookup } from '../../lib/hooks';
 import { updateSettings } from '../../lib/commands';
-import { floorsInOrder, isMultiverseFloor, isTypingTarget } from '../../lib/floors';
+import { floorsInOrder, isMultiverseFloor } from '../../lib/floors';
+import { useModalFocus } from '../../lib/useModalFocus';
 import { getTheme } from '../../game/themes';
 import { useHeroPanelStore, type HeroPanelTab } from './store';
 import { classifyHeroError, createHero, deleteHero, resetHero, saveHeroDraft } from './commands';
@@ -88,19 +89,25 @@ export function HeroPanel() {
 
   // Open on a sensible default floor the first time, if the caller didn't already pick one.
   useEffect(() => {
-    if (open && storeProjectId === null) {
+    // A floor that no longer exists (merged away on the server) falls back to the default floor.
+    if (open && (storeProjectId === null || !Object.hasOwn(projects, storeProjectId))) {
       const fallback = defaultHeroFloor(projects, useOfficeStore.getState().selectedProjectId, settings.office.floorOrder);
       if (fallback) setProjectIdRaw(fallback);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, storeProjectId]);
 
-  if (!open) return null;
-
   const requestClose = () => {
     if ((dirty || poolsDirty) && !window.confirm('Discard unsaved changes?')) return;
     closePanel();
   };
+
+  // Focus moves in on open, stays in while Save disables itself, and Esc closes this (top-most) overlay.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(open, dialogRef, { trap: true, onEscape: requestClose });
+
+  if (!open) return null;
+
   const changeFloor = (id: string) => {
     if (dirty && !window.confirm('Discard unsaved changes to this hero?')) return;
     setProjectIdRaw(id);
@@ -235,7 +242,7 @@ export function HeroPanel() {
     }
   };
 
-  // Global shortcuts while the panel is open, capture phase (same convention as the Hall Planner —
+  // Save shortcut while the panel is open, capture phase (same convention as the Hall Planner —
   // `data-modal="heroes"` below is what makes floor hotkeys pause, `lib/floors.ts` `isModalOpen`).
   const onKeyDownCapture = (e: React.KeyboardEvent) => {
     const isSave = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's';
@@ -244,11 +251,6 @@ export function HeroPanel() {
       e.stopPropagation();
       if (tab === 'roster') void performSave();
       else void performSavePools();
-      return;
-    }
-    if (e.key === 'Escape' && !isTypingTarget(e.target as EventTarget)) {
-      e.stopPropagation();
-      requestClose();
     }
   };
 
@@ -257,10 +259,10 @@ export function HeroPanel() {
   const floorList = floorsInOrder(Object.values(projects), settings.office.floorOrder, projectId ?? undefined).filter((p) => !isMultiverseFloor(p.id));
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-ink-950" data-modal="heroes" role="dialog" aria-modal="true" aria-label="Heroes" onKeyDownCapture={onKeyDownCapture}>
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-ink-700 bg-ink-900 px-3">
-        <span className="font-pixel text-xs font-semibold text-ink-100">Heroes</span>
-        <Select aria-label="Floor" className="w-36 sm:w-56" value={projectId ?? ''} onChange={(e) => changeFloor(e.target.value)} disabled={floorList.length === 0}>
+    <div className="fixed inset-0 z-50 flex flex-col bg-ink-950" ref={dialogRef} data-modal="heroes" role="dialog" aria-modal="true" aria-label="Heroes" onKeyDownCapture={onKeyDownCapture}>
+      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-700 bg-ink-900 px-3 py-1">
+        <span className="hidden font-pixel text-xs font-semibold text-ink-100 sm:inline">Heroes</span>
+        <Select aria-label="Floor" className="w-32 min-w-0 sm:w-56" value={projectId ?? ''} onChange={(e) => changeFloor(e.target.value)} disabled={floorList.length === 0}>
           {floorList.length === 0 && <option value="">(no floors)</option>}
           {floorList.map((p) => (
             <option key={p.id} value={p.id}>
@@ -269,15 +271,15 @@ export function HeroPanel() {
             </option>
           ))}
         </Select>
-        <nav className="ml-2 flex items-center gap-0.5 rounded-lg bg-ink-850 p-0.5">
-          <button type="button" onClick={() => changeTab('roster')} className={cx('rounded-md px-3 py-1 text-xs', tab === 'roster' ? 'bg-ink-600 text-ink-100' : 'text-ink-400 hover:text-ink-100')}>
+        <nav className="flex shrink-0 items-center sm:ml-2 gap-0.5 rounded-lg bg-ink-850 p-0.5">
+          <button type="button" onClick={() => changeTab('roster')} className={cx('whitespace-nowrap rounded-md px-3 py-1 text-xs', tab === 'roster' ? 'bg-ink-600 text-ink-100' : 'text-ink-400 hover:text-ink-100')}>
             Roster
           </button>
-          <button type="button" onClick={() => changeTab('pools')} className={cx('rounded-md px-3 py-1 text-xs', tab === 'pools' ? 'bg-ink-600 text-ink-100' : 'text-ink-400 hover:text-ink-100')}>
+          <button type="button" onClick={() => changeTab('pools')} className={cx('whitespace-nowrap rounded-md px-3 py-1 text-xs', tab === 'pools' ? 'bg-ink-600 text-ink-100' : 'text-ink-400 hover:text-ink-100')}>
             Name pools
           </button>
         </nav>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {tab === 'pools' && poolsMessage && <span className={cx('max-w-xs truncate text-[11px]', poolsMessage.tone === 'ok' ? 'text-emerald-300' : 'text-red-300')}>{poolsMessage.text}</span>}
           {tab === 'pools' && (
             <>

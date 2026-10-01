@@ -21,8 +21,8 @@ export const MENU_HOTKEYS: Record<MenuActionId, string> = {
 };
 
 /** Pure: which menu action a key press maps to, or null. `floors` (F) is handled by `OfficeView`, so it is skipped here. */
-export function menuActionForKey(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): MenuActionId | null {
-  if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return null;
+export function menuActionForKey(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey?: boolean }): MenuActionId | null {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.key.length !== 1) return null;
   const key = e.key.toUpperCase();
   for (const [id, k] of Object.entries(MENU_HOTKEYS) as [MenuActionId, string][]) {
     if (id !== 'floors' && k === key) return id;

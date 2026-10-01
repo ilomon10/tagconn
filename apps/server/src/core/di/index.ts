@@ -1,10 +1,11 @@
 import { type Cradle, fastifyAwilixPlugin } from '@fastify/awilix';
 import { asValue, createContainer, InjectionMode } from 'awilix';
+import type Database from 'better-sqlite3';
 import type { FastifyBaseLogger } from 'fastify';
 import fp from 'fastify-plugin';
 import type { LoadedConfig } from '../config/index.js';
 import { SettingsService } from '../config/index.js';
-import { type Db, DbSettingsStore, mergeNestedProjects, openDb } from '../db/index.js';
+import { type Db, DbSettingsStore, openDb } from '../db/index.js';
 import { EventBus } from '../event-bus/index.js';
 
 declare module '@fastify/awilix' {
@@ -12,6 +13,8 @@ declare module '@fastify/awilix' {
     config: LoadedConfig;
     logger: FastifyBaseLogger;
     db: Db;
+    /** The raw better-sqlite3 handle (project merges, backups). */
+    sqlite: Database.Database;
     bus: EventBus;
     settings: SettingsService;
     /** Directory holding the default role markdown files (may be undefined if not found). */
@@ -48,14 +51,11 @@ export const diPlugin = fp<CoreDiOptions>(
       app.log.warn({ err }, 'stored settings overrides are invalid; ignoring them'),
     );
 
-    // M12: fold projects created by a mid-session `cd` into the project that contains them (idempotent).
-    const merged = mergeNestedProjects(handle.sqlite, { maxPerRole: settings.get().heroes.maxPerRole });
-    if (merged.merged > 0) app.log.info(merged, `merged ${merged.merged} nested project(s) into their ancestor floors`);
-
     container.register({
       config: asValue(opts.config),
       logger: asValue(app.log),
       db: asValue(handle.db),
+      sqlite: asValue(handle.sqlite),
       bus: asValue(bus),
       settings: asValue(settings),
       templatesDir: asValue(opts.templatesDir),

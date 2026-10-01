@@ -7,6 +7,7 @@ import type {
   OfficeLayout,
   PendingProfileImport,
   Project,
+  ProjectRootKind,
   ReceptionistConversation,
   ReceptionistMessage,
   Role,
@@ -30,6 +31,8 @@ export interface HookContext {
   projectId: string;
   /** Validated `x-tagconn-project-root` header (M12): the repo root the hook ran in, if sent. */
   projectRoot?: string;
+  /** Validated `x-tagconn-project-root-kind` header: `git` only when the root is a git toplevel. */
+  projectRootKind?: ProjectRootKind;
   sessionId: string;
   /** Set by agents: the agent the event is attributed to. */
   agentId: string;
@@ -52,6 +55,8 @@ export interface HookContext {
 export interface BusEvents {
   'hook.received': HookContext;
   'project.upserted': Project;
+  /** A nested floor was folded into its git-root floor; emitted before the parent's `project.upserted`. */
+  'project.merged': { from: string; into: string };
   'session.upserted': Session;
   'agent.upserted': Agent;
   'agent.removed': { id: string; projectId: string };

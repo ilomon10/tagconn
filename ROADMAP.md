@@ -212,7 +212,7 @@ role can't change while bound, fixes ship first.
   - [x] F2+F3+F5 Scene: themed titles everywhere in the scene, selection beacon + off-screen arrow, Receptionist as a real Character, pinch zoom [Developer: game]
   - [x] F4 Heroes UI: name pools accept space/Enter, role select (disabled while bound), per-style tabs, Rift preview [Developer: heroes]
   - [x] F6 Shell: compact top bar + ☰ menu, overlay panels, responsive phone/tablet, floor-style titles in React [Developer: shell]
-  - [ ] Gate 1: QA (375×667, 667×375, 1280×800) + review + security → v0.5.2
+  - [~] Gate 1: QA (7/7 pass; Esc on Heroes/Receptionist/after Save, Receptionist + planner on phones) + review (High: automatic destructive merge) + security (High: Windows bare `git` lookup; Med: `~`/`C:\` ancestors, `core.worktree` spoof) → fixes [x]: merge/fold only into confirmed git roots (`root_source`, ≥3 segments, backup, live `project:merged`), hook absolute git + cleared env + toplevel must contain the project dir + cache, cwd validation, overlay Esc stack, phone layouts, scene lows, rift tint; supervisor backoff test de-flaked → re-review → v0.5.2
 - Wave 2 (features → v0.6.0)
   - [ ] G1 Drama: idle banter per style, tired/dizzy/sweat emotes, `toolStartedAt`
   - [ ] G2 HUD: party bar, RPG status card, Details dialog
@@ -223,7 +223,7 @@ role can't change while bound, fixes ship first.
 ## Backlog
 
 - [ ] Flaky under the full turbo run only: one `apps/web/src/lib/socket.test.ts` case timed out once at 11.7 s (passes alone and in 2 full web reruns); find the real-timer case and make it deterministic
-- [ ] Flaky under load: server `heroes.test.ts` "takes over a long-idle live subagent's hero…" failed once in the full turbo run (passes alone); procgen bsp 128x96 300-seed cases time out at 60 s when headless Chrome is left running
+- [ ] Flaky under load (full turbo run): supervisor `service.test.ts` timing cases ("SIGTERM first… tree kill"); server `heroes.test.ts` "takes over a long-idle live subagent's hero…" failed once in the full turbo run (passes alone); procgen bsp 128x96 300-seed cases time out at 60 s when headless Chrome is left running
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 
 ## Releases

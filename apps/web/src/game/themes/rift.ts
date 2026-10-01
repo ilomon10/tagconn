@@ -7,7 +7,7 @@ import { paintRiftDecorTextures, riftDecorFor, RIFT_AURORA, RIFT_GLOW, riftBanne
 import { paintRiftFloor } from './paint/riftFloors';
 import { paintRiftFurniture } from './paint/riftFurniture';
 import { paintRiftBackWall, paintRiftDoor, paintRiftIslandEdge, paintRiftVoid, paintRiftWall, paintRiftWallDecor } from './paint/riftWalls';
-import type { ThemeDefinition } from './types';
+import type { Costume, ThemeDefinition } from './types';
 import { ambientMotes, ensureFxTextures, portalShimmer, prefersReducedMotion } from './fx';
 
 // `Phaser.BlendModes.ADD` (only a type import of `phaser` is safe under vitest's node environment
@@ -166,6 +166,25 @@ function animate(scene: Phaser.Scene, map: GeneratedMap, opts: { ambient: boolea
   return created;
 }
 
+/** The rift's aurora tints over the guild's silhouettes, so a rift look is recognisable at a glance
+ *  (and in the hero editor's Rift preview) while heroes keep their guild role flavour. */
+const RIFT_CLOAK = 0x1f7f86;
+const RIFT_HAT = 0x4ff0d0;
+const RIFT_TRIM = 0x8ff7e4;
+
+export function riftCostumes(base: Record<string, Costume>): Record<string, Costume> {
+  const out: Record<string, Costume> = {};
+  for (const [role, c] of Object.entries(base)) {
+    out[role] = {
+      ...c,
+      cloak: RIFT_CLOAK,
+      trim: RIFT_TRIM,
+      ...(c.hat && c.hat !== 'none' ? { hatColor: RIFT_HAT } : {}),
+    };
+  }
+  return out;
+}
+
 export const riftTheme: ThemeDefinition = {
   id: 'rift',
   palette: {
@@ -198,7 +217,7 @@ export const riftTheme: ThemeDefinition = {
   roomNames: ROOM_NAMES,
   // Heroes keep the guild's role flavour when they step from their realm into the Nexus (section 6.2).
   roleTitles: guildTheme.roleTitles,
-  costumes: guildTheme.costumes,
+  costumes: riftCostumes(guildTheme.costumes),
   activityVerbs: guildTheme.activityVerbs,
   activityFx: guildTheme.activityFx,
   lighting: { dayTint: 0xd6d0ff, nightTint: 0x0b0820, nightAlpha: 0.55, glowAtNight: true },

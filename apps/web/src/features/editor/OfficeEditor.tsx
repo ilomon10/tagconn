@@ -14,7 +14,8 @@ import { PlanCanvas } from './PlanCanvas';
 import { Inspector } from './Inspector';
 import { IssueList } from './IssueList';
 import { PreviewGame } from './PreviewScene';
-import { Button, Select } from '../../components/ui';
+import { Button, Select, cx } from '../../components/ui';
+import { useOverlayEscape } from '../../lib/overlayStack';
 
 const TOOLS: { tool: EditorTool; label: string; hotkey: string }[] = [
   { tool: 'select', label: 'Select', hotkey: 'V' },
@@ -67,6 +68,8 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewStyle, setPreviewStyle] = useState<OfficeStyle>(settings.office.style);
   const [helpOpen, setHelpOpen] = useState(false);
+  /** Below `md` the inspector is stacked under the canvas and collapsed until asked for. */
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [flashRoomIds, setFlashRoomIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -262,6 +265,10 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
     flash([roomId]);
   };
 
+  // Registered as the top overlay so an Esc that reaches the document (the shortcuts below normally
+  // take it first) never closes a dialog underneath, e.g. Manage floors, which opened this.
+  useOverlayEscape(true, requestClose);
+
   // ------------------------------------------------------------------------------ global shortcuts
   // Capture phase + stopPropagation: the planner's own shortcuts must win over any other
   // window-level keydown listener (e.g. the office's floor-switch hotkeys), which is also why the
@@ -366,7 +373,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
       aria-modal="true"
       aria-label="Hall Planner"
     >
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-ink-700 bg-ink-900 px-3">
+      <header className="flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b border-ink-700 bg-ink-900 px-3 [&>*]:shrink-0">
         <span className="font-pixel text-xs font-semibold text-ink-100">Hall Planner</span>
         <Select className="w-48" value={originalId ?? ''} onChange={(e) => (e.target.value ? openLayout(e.target.value) : store.createNew())}>
           <option value="">(unsaved) {draft.name}</option>
@@ -432,7 +439,11 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
+      <p className="shrink-0 border-b border-ink-700 bg-ink-900 px-3 py-1 text-[11px] text-amber-300 md:hidden">
+        Best on a larger screen. Viewing and selecting rooms works here; precise editing is easier with a mouse.
+      </p>
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <div className="flex min-h-0 flex-1">
         <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-ink-700 bg-ink-900 py-2">
           {TOOLS.map((t) => (
             <button
@@ -452,7 +463,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <PlanCanvas generatedMap={generatedMap} issues={issues} theme={theme} flashRoomIds={flashRoomIds} />
-          <div className="h-32 shrink-0 overflow-hidden border-t border-ink-700 bg-ink-900">
+          <div className="h-20 shrink-0 overflow-hidden border-t border-ink-700 bg-ink-900 md:h-32">
             <IssueList issues={issues} rooms={draft.rooms} reachability={generatedMap?.reachability} onSelectIssue={flash} onFix={performFix} />
           </div>
         </div>
@@ -462,7 +473,17 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
             <div ref={previewHostRef} className="h-full w-full" />
           </div>
         )}
+        </div>
 
+        <button
+          type="button"
+          className="shrink-0 border-t border-ink-700 bg-ink-850 px-3 py-1.5 text-left text-xs text-ink-200 md:hidden"
+          aria-expanded={inspectorOpen}
+          onClick={() => setInspectorOpen((v) => !v)}
+        >
+          Inspector {inspectorOpen ? '▾' : '▴'}
+        </button>
+        <div className={cx(inspectorOpen ? 'block' : 'hidden', 'max-h-[40dvh] shrink-0 overflow-y-auto md:flex md:max-h-none md:overflow-visible')}>
         <Inspector
           draft={draft}
           theme={theme}
@@ -476,6 +497,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           onAutoDoors={(id) => store.setRoomDoors(id, undefined)}
           onSealRoom={(id) => store.sealRoom(id)}
         />
+        </div>
       </div>
 
       {helpOpen && (

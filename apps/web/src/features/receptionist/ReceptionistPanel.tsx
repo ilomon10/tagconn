@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReceptionistScope, RunnerStatus } from '@tagconn/shared';
 import { useOfficeStore } from '../../stores/officeStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -6,8 +6,9 @@ import { useAuthStore } from '../../stores/authStore';
 import { conversationList, registerReceptionistEvents, useReceptionistStore } from '../../stores/receptionistStore';
 import { getSocket } from '../../lib/socket';
 import { isDemo } from '../../lib/connection';
-import { isMultiverseFloor, isTypingTarget } from '../../lib/floors';
-import { Button } from '../../components/ui';
+import { isMultiverseFloor } from '../../lib/floors';
+import { useModalFocus } from '../../lib/useModalFocus';
+import { Button, cx } from '../../components/ui';
 import { useReceptionistUiStore } from './uiStore';
 import { AckError, AckTimeoutError, receptionistApi } from './receptionistApi';
 import { DEMO_CONVERSATION, DEMO_CONVERSATION_ID, DEMO_MESSAGES } from './demoData';
@@ -63,6 +64,8 @@ export function ReceptionistPanel() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [sendBusy, setSendBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  /** Below `sm` the list and the thread are two screens (back-button pattern); this is true while the list is the one showing. */
+  const [showList, setShowList] = useState(false);
 
   const projects = useMemo(() => Object.values(projectsMap).filter((p) => !isMultiverseFloor(p.id) && !p.archived), [projectsMap]);
   const list = useMemo(() => (demo ? [DEMO_CONVERSATION] : conversationList(conversations)), [demo, conversations]);
@@ -126,6 +129,9 @@ export function ReceptionistPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, demo, allowed, activeConversationId]);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(open, dialogRef, { trap: true, onEscape: closePanel });
+
   if (!open) return null;
 
   const createConversation = (scope: ReceptionistScope, projectId?: string) => {
@@ -182,13 +188,6 @@ export function ReceptionistPanel() {
 
   const requestClose = () => closePanel();
 
-  const onKeyDownCapture = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape' && !isTypingTarget(e.target as EventTarget)) {
-      e.stopPropagation();
-      requestClose();
-    }
-  };
-
   const sendGate = receptionistSendGate({ demo, allowed, receptionistEnabled, runnerStatus });
   const runnerOffline = sendGate === 'runner_offline';
   const capabilityMissing = sendGate === 'capability_missing';
@@ -212,12 +211,12 @@ export function ReceptionistPanel() {
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-50 flex flex-col bg-ink-950"
       data-modal="receptionist"
       role="dialog"
       aria-modal="true"
       aria-label="Receptionist"
-      onKeyDownCapture={onKeyDownCapture}
     >
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-ink-700 bg-ink-900 px-3">
         <span className="font-pixel text-xs font-semibold text-ink-100">Receptionist</span>
@@ -258,7 +257,11 @@ export function ReceptionistPanel() {
           <ConversationSidebar
             conversations={list}
             activeId={activeConversationId}
-            onSelect={setActiveConversationId}
+            onSelect={(id) => {
+              setActiveConversationId(id);
+              setShowList(false);
+            }}
+            hiddenOnMobile={!!activeConversationId && !showList}
             onDelete={deleteConversation}
             deletingId={deletingId}
             projects={projects}
@@ -267,7 +270,15 @@ export function ReceptionistPanel() {
             createBusy={createBusy}
             createError={createError}
           />
-          <div className="flex min-h-0 flex-1 flex-col">
+          <div className={cx('min-h-0 flex-1 flex-col', !activeConversationId || showList ? 'hidden sm:flex' : 'flex')}>
+            {activeConversationId && (
+              <div className="flex shrink-0 items-center border-b border-ink-700 px-2 py-1 sm:hidden">
+                <Button variant="ghost" onClick={() => setShowList(true)} aria-label="Back to conversations">
+                  ‹ Conversations
+                </Button>
+                <span className="min-w-0 flex-1 truncate pl-1 text-xs text-ink-300">{active?.title}</span>
+              </div>
+            )}
             {listError && (
               <p className="flex flex-wrap items-center gap-2 border-b border-ink-700 bg-red-950/40 px-3 py-1.5 text-[11px] text-red-300">
                 <span>{listError}</span>

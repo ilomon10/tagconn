@@ -43,6 +43,7 @@ import { pinchDistance, pinchMidpoint } from '../camera/pinch';
 import { isDragMove } from '../camera/drag';
 import { hitScaleFor } from '../camera/hitsize';
 import { ReducedMotionWatcher } from '../camera/reducedMotion';
+import { receptionistLookKey } from '../receptionistLook';
 import { counterScale, labelVisible, layoutLabels, type LabelSubject } from '../labels';
 import { PostFxController } from '../postfx/PostFxController';
 
@@ -310,6 +311,10 @@ export class OfficeScene extends Phaser.Scene {
   private selectedAgentId: string | null = null;
   private selectedKey: ActorKey | null = null;
   private hoveredKey: ActorKey | null = null;
+  /** Last input of `applyReceptionistLook` (see `receptionistLookKey`); '' forces the next apply. */
+  private receptionistLookKey = '';
+  /** A press began on the off-screen edge arrow: the Character under it must not also take the click. */
+  private arrowPress = false;
   /** Countdown to the next throttled `refreshLabels()` pass (M8 8e); `<= 0` due next `update()`. */
   private labelTimer = 0;
   /** M8 8b/8c: Guild Master hysteresis (`cast.ts`'s `prevPrimary`, seeded every call with
@@ -433,6 +438,9 @@ export class OfficeScene extends Phaser.Scene {
    *  is baked into the base texture, so nothing else can paint over a character). */
   private rebuildReceptionist() {
     this.receptionist?.destroyAll();
+    // The old Character is gone, so a hover held on it can never get its pointerout.
+    if (this.hoveredKey === RECEPTIONIST_KEY) this.hoveredKey = null;
+    this.receptionistLookKey = '';
     this.receptionistDeskFront?.destroy();
     this.receptionistDeskFront = null;
     const spot = pickReceptionistSpot(this.map);
@@ -443,7 +451,7 @@ export class OfficeScene extends Phaser.Scene {
     c.setSeated(behindDesk);
     c.setHitScale(this.currentHitScale);
     c.on('pointerup', () => {
-      if (this.drag?.moved || this.pinchGuard) return;
+      if (this.drag?.moved || this.pinchGuard || this.arrowPress) return;
       this.events.emit('receptionistClick');
     });
     c.on('pointerover', () => this.setHovered(RECEPTIONIST_KEY));
@@ -466,13 +474,20 @@ export class OfficeScene extends Phaser.Scene {
   private applyReceptionistLook() {
     const c = this.receptionist;
     if (!c) return;
+    const enabled = this.state?.settings.receptionist.enabled ?? true;
+    const ambient = (this.state?.settings.office.ambientEffects ?? true) && !prefersReducedMotion();
+    // Memoised: applyState/setReceptionistBusy call this often, and re-applying would restart her pose.
+    const key = receptionistLookKey(this.theme.id, this.receptionistBusy, enabled, titleFor(this.theme, 'receptionist', undefined), ambient);
+    if (key === this.receptionistLookKey) return;
+    this.receptionistLookKey = key;
     const color = 0xf3c94d;
     c.setLook({ color, title: titleFor(this.theme, 'receptionist', undefined), sprite: 2 }, true);
     c.setCostume(resolveCostume(this.theme, 'receptionist'), color);
     c.setAppearance({ skin: 0xe3ab7c, hair: 0x3b2a20, hairStyle: 2 });
     // Reading at the desk when idle; the "thinking" pose (dots, hand to chin) while a turn is in flight.
-    c.setActivity(this.receptionistBusy ? 'thinking' : 'reading', 'active');
-    const enabled = this.state?.settings.receptionist.enabled ?? true;
+    const activity = this.receptionistBusy ? 'thinking' : 'reading';
+    c.setActivity(activity, 'active');
+    c.setActivityFx(this.theme.activityFx?.[activity], ambient);
     c.setShown(enabled);
     this.receptionistDeskFront?.setVisible(enabled);
   }
@@ -796,8 +811,27 @@ export class OfficeScene extends Phaser.Scene {
     if (!this.input.pointer2) this.input.addPointer(1);
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (this.inputLocked) return;
+      // A stale guard (a touch cancel never delivers its pointerup) must not outlive the gesture.
+      const { pointer1, pointer2 } = this.input;
+      const otherDown = (pointer1.isDown && pointer1 !== p) || (pointer2.isDown && pointer2 !== p);
+      if (!otherDown) {
+        this.pinchGuard = false;
+        this.pinch = null;
+      }
+      this.arrowPress = this.onEdgeArrow(p);
       this.drag = { x: p.x, y: p.y, sx: cam.scrollX, sy: cam.scrollY, moved: false };
       this.maybeStartPinch();
+    });
+    const endGesture = () => {
+      if (this.input.pointer1.isDown || this.input.pointer2.isDown) return;
+      this.pinchGuard = false;
+      this.pinch = null;
+    };
+    this.input.on('pointerupoutside', endGesture);
+    this.input.on('gameout', () => {
+      this.pinchGuard = false;
+      this.pinch = null;
+      this.drag = null;
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (this.pinch) {
@@ -823,6 +857,7 @@ export class OfficeScene extends Phaser.Scene {
       const wasEmptyClick = plainClick && hitObjects.length === 0;
       this.drag = null;
       this.pinch = null;
+      this.arrowPress = false;
       if (!this.input.pointer1.isDown && !this.input.pointer2.isDown) this.pinchGuard = false;
       if (plainClick && this.handleEdgeArrowClick(p)) return;
       if (wasEmptyClick) this.events.emit('emptyClick');
@@ -1195,7 +1230,7 @@ export class OfficeScene extends Phaser.Scene {
    *  resting/on-quest switch needs no re-registration. */
   private attachCharacterHandlers(c: Character) {
     c.on('pointerup', () => {
-      if (this.drag?.moved || this.pinchGuard) return;
+      if (this.drag?.moved || this.pinchGuard || this.arrowPress) return;
       if (c.lifecycleFrame.state === 'quest' && c.boundAgentId) this.events.emit('agentClick', c.boundAgentId);
       else if (c.heroId) this.events.emit('heroClick', c.heroId);
     });
@@ -1381,6 +1416,7 @@ export class OfficeScene extends Phaser.Scene {
       return;
     }
     c.setBeaconScale(beaconScale(zoom));
+    c.setBeaconStatic(this.reducedMotion.value);
     const cam = this.cameras.main;
     const at = worldToScreen({ scrollX: cam.scrollX, scrollY: cam.scrollY, zoom, camWidth: cam.width, camHeight: cam.height }, c.x, c.y - 8);
     const e = edgeArrowPlacement(at.x, at.y, safeViewportRect(cam.width, cam.height, this.insets), EDGE_ARROW_MARGIN);
@@ -1440,12 +1476,15 @@ export class OfficeScene extends Phaser.Scene {
     this.edgeArrowHits = [];
   }
 
+  private onEdgeArrow(p: Phaser.Input.Pointer): boolean {
+    return this.edgeArrowHits.some((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
+  }
+
   /** A plain click on the off-screen arrow (or its name) focuses the selected agent through the same
    *  pan path the roster uses. Hit-tested in screen space here rather than via Phaser input, because a
    *  scroll-factor-0 object under a zoomed camera is awkward to hit-test. */
   private handleEdgeArrowClick(p: Phaser.Input.Pointer): boolean {
-    if (!this.selectedAgentId || this.edgeArrowHits.length === 0) return false;
-    if (!this.edgeArrowHits.some((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h)) return false;
+    if (!this.selectedAgentId || !this.onEdgeArrow(p)) return false;
     this.focusAgent(this.selectedAgentId);
     return true;
   }

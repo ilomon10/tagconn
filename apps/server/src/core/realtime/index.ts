@@ -109,6 +109,7 @@ export const realtimePlugin = fp(
 
     const toProject = (projectId: string) => office.to([rooms.all, rooms.project(projectId)]);
     bus.on('project.upserted', (p) => toProject(p.id).emit('project:upsert', p));
+    bus.on('project.merged', ({ from, into }) => office.to([rooms.all, rooms.project(from), rooms.project(into)]).emit('project:merged', { from, into }));
     bus.on('session.upserted', (s) => toProject(s.projectId).emit('session:upsert', s));
     bus.on('agent.upserted', (a) => toProject(a.projectId).emit('agent:upsert', a));
     bus.on('agent.removed', ({ id, projectId }) => toProject(projectId).emit('agent:remove', id));

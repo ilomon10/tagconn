@@ -28,7 +28,8 @@
 // finishing inline, would add filesystem work plus a second POST (up to a whole second)
 // to the latency Claude Code waits on, while a spawn costs ~1 ms in the parent.
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, constants as fsc, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { accessSync, closeSync, constants as fsc, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import net from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -39,6 +40,8 @@ export const SESSION_START_SCAN_MAX = 16384; // same cap as the sh hook's sed ch
 export const IMPORT_MAX_BYTES = 65536;
 export const README_MAX_BYTES = 65536;
 const EVENT_TIMEOUT_MS = 850;
+const EVENT_TIMEOUT_AFTER_GIT_MS = 550; // git runs first (<= GIT_TIMEOUT_MS), so git + POST stay near 1 s
+const GIT_TIMEOUT_MS = 300;
 const FAILSAFE_MS = 950;
 
 const debugOn = () => process.env.TAGCONN_HOOK_DEBUG === '1';
@@ -221,7 +224,7 @@ function loadConfig(hookJson) {
 // Transport: a minimal HTTP/1.1 POST over node:net for http:// (the local office server), and
 // node:https (loaded lazily) for https://. Not global fetch (its first use loads undici, ~75 ms cold)
 // and not node:http (~20 ms extra import): the latency budget is p50 < 60 ms including node startup.
-function post(url, token, body, extraHeaders) {
+function post(url, token, body, extraHeaders, timeoutMs = EVENT_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let done = false;
     let timer;
@@ -244,7 +247,7 @@ function post(url, token, body, extraHeaders) {
         'x-office-token': token,
         ...extraHeaders,
       };
-      timer = setTimeout(() => finish('timeout'), EVENT_TIMEOUT_MS);
+      timer = setTimeout(() => finish('timeout'), timeoutMs);
       if (u.protocol === 'https:') {
         import('node:https')
           .then(({ default: https }) => {
@@ -399,7 +402,12 @@ async function attribution(cfg, configDir, sid) {
     } finally {
       closeSync(fd);
     }
-    await post(`${cfg.base}/api/attribution/import`, cfg.token, raw, { 'x-tagconn-session-id': sid });
+    // The directory the profile was read from: the server never auto-applies a profile whose source
+    // lies outside the session's floor (it asks the admin instead).
+    await post(`${cfg.base}/api/attribution/import`, cfg.token, raw, {
+      'x-tagconn-session-id': sid,
+      'x-tagconn-project-root': Buffer.from(rd, 'utf8').toString('base64'),
+    });
   } catch (e) {
     dbg('import step failed', e?.message ?? e);
   }
@@ -429,12 +437,16 @@ async function main() {
   if (!cfg) return dbg('no usable config at', hookJson);
 
   const headers = isRunIdHint(process.env.TAGCONN_RUN_ID) ? { 'x-tagconn-run-id': process.env.TAGCONN_RUN_ID } : {};
-  const root = projectRoot(process.env);
-  if (root) headers['x-tagconn-project-root'] = Buffer.from(root, 'utf8').toString('base64');
-  await post(`${cfg.base}/api/hooks`, cfg.token, buf, headers);
-
   const body = buf.length <= SESSION_START_SCAN_MAX ? buf.toString('utf8') : '';
-  if (body && process.env.TAGCONN_ATTRIBUTION !== 'off' && isSessionStart(body)) {
+  const sessionStart = !!body && isSessionStart(body);
+  const found = projectRoot(process.env, { configDir, sessionStart });
+  if (found) {
+    headers['x-tagconn-project-root'] = Buffer.from(found.root, 'utf8').toString('base64');
+    headers['x-tagconn-project-root-kind'] = found.kind;
+  }
+  await post(`${cfg.base}/api/hooks`, cfg.token, buf, headers, found?.gitRan ? EVENT_TIMEOUT_AFTER_GIT_MS : EVENT_TIMEOUT_MS);
+
+  if (sessionStart && process.env.TAGCONN_ATTRIBUTION !== 'off') {
     try {
       const child = spawn(process.execPath, [fileURLToPath(import.meta.url), '--attribution'], {
         detached: true,
@@ -451,27 +463,128 @@ async function main() {
   clearTimeout(failsafe);
 }
 
-/**
- * M12: the project root sent as `x-tagconn-project-root`: the git toplevel of CLAUDE_PROJECT_DIR (git
- * bounded to 300 ms; missing git or a non-repo falls back), else CLAUDE_PROJECT_DIR itself, else none.
- * Only absolute POSIX/Windows paths are sent; the server validates the value again.
- */
-export function projectRoot(env) {
-  const dir = env.CLAUDE_PROJECT_DIR;
-  if (!dir || dir.length > 3000) return undefined;
-  let root = dir;
+/** Absolute git executable from PATH (+PATHEXT on win32); empty, `.` and relative entries are skipped so
+ *  a repo-planted `git`/`git.cmd` in the hook's cwd is never run. `.cmd`/`.bat` cannot be spawned
+ *  without a shell, so they are not candidates. Returns undefined when none is found. */
+export function findGit(env, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const pathVar = (platform === 'win32' ? (env.Path ?? env.PATH) : env.PATH) ?? '';
+  const exts = platform === 'win32' ? (env.PATHEXT || '.COM;.EXE').split(';').filter((e) => /^\.(com|exe)$/i.test(e)) : [''];
+  for (const entry of pathVar.split(p.delimiter)) {
+    const dir = entry.replace(/^"|"$/g, '');
+    if (!dir || dir === '.' || !p.isAbsolute(dir)) continue;
+    for (const ext of exts) {
+      const file = p.join(dir, `git${ext}`);
+      try {
+        if (!statSync(file).isFile()) continue;
+        if (platform !== 'win32') accessSync(file, fsc.X_OK);
+        return file;
+      } catch {}
+    }
+  }
+  return undefined;
+}
+
+/** The env git runs with: no repo/worktree/config redirection (GIT_DIR, GIT_WORK_TREE, GIT_CEILING_DIRECTORIES, GIT_CONFIG_*). */
+export function gitEnv(env) {
+  const e = {};
+  for (const [k, v] of Object.entries(env)) {
+    const u = k.toUpperCase();
+    if (u === 'GIT_DIR' || u === 'GIT_WORK_TREE' || u === 'GIT_CEILING_DIRECTORIES' || u.startsWith('GIT_CONFIG')) continue;
+    e[k] = v;
+  }
+  return e;
+}
+
+const lexKey = (x, platform) => {
+  const n = String(x).replace(platform === 'win32' ? /[\\/]+/g : /\/+/g, '/').replace(/(.)\/$/, '$1');
+  return platform === 'win32' ? n.toLowerCase() : n;
+};
+
+/** A toplevel is trusted only if it is the project dir (or its real path) or an ancestor of it, and holds a `.git`
+ *  entry (a `core.worktree=/home` spoof points git at a dir that has neither). */
+export function acceptToplevel(top, pdir, realPdir, platform = process.platform, hasGit = (t) => existsSync(path.join(t, '.git'))) {
+  if (!top) return false;
+  const t = lexKey(top, platform);
+  if (t === '/' || /^[a-z]:\/?$/i.test(t)) return false;
+  const under = (d) => !!d && (lexKey(d, platform) === t || lexKey(d, platform).startsWith(`${t}/`));
+  return (under(pdir) || under(realPdir)) && hasGit(top);
+}
+
+const cacheFile = (configDir, pdir) => path.join(configDir, 'root-cache', `${createHash('sha256').update(pdir).digest('hex').slice(0, 32)}.json`);
+
+/** Cached { root, kind } for `pdir` (one tiny 0600 file per project dir in the config dir); any problem = a miss. */
+export function readRootCache(configDir, pdir) {
   try {
-    const r = spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-      timeout: 300,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const out = r.status === 0 ? String(r.stdout ?? '').trim() : '';
-    if (out) root = out;
-  } catch {}
+    const file = cacheFile(configDir, pdir);
+    const st = lstatSync(file);
+    if (!st.isFile() || st.size > 8192 || !owned(st)) return undefined;
+    const c = JSON.parse(readFileSync(file, 'utf8'));
+    if (c?.dir !== pdir || (c.kind !== 'git' && c.kind !== 'dir') || typeof c.root !== 'string' || !c.root) return undefined;
+    return { root: c.root, kind: c.kind };
+  } catch {
+    return undefined;
+  }
+}
+
+function writeRootCache(configDir, pdir, value) {
+  const file = cacheFile(configDir, pdir);
+  const tmp = `${file}.${process.pid}`;
+  try {
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    writeFileSync(tmp, JSON.stringify({ dir: pdir, ...value }), { mode: 0o600, flag: 'w' });
+    renameSync(tmp, file);
+  } catch {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {}
+  }
+}
+
+/**
+ * M12: the project root sent as `x-tagconn-project-root` (+ `-kind`): the git toplevel of
+ * CLAUDE_PROJECT_DIR (kind `git`), else CLAUDE_PROJECT_DIR itself (kind `dir`), else none. git is an absolute
+ * path found on PATH (never a bare name), runs from the home dir with repo/config env cleared, is bounded to
+ * 300 ms, and its answer is only accepted when `acceptToplevel` agrees. The result is cached per project dir
+ * in `configDir`; git runs only on a miss or on SessionStart. Only absolute POSIX/Windows paths are sent; the
+ * server validates the value again. Returns { root, kind, gitRan }.
+ */
+export function projectRoot(env, { configDir, sessionStart = false, home = homedir(), platform = process.platform } = {}) {
+  const dir = env.CLAUDE_PROJECT_DIR;
+  if (!dir || dir.length > 3000 || !(dir.startsWith('/') || /^[A-Za-z]:[\\/]/.test(dir)) || /[\u0000-\u001f]/.test(dir)) return undefined;
+  if (configDir && !sessionStart) {
+    const hit = readRootCache(configDir, dir);
+    if (hit) return { ...hit, gitRan: false };
+  }
+  let root = dir;
+  let kind = 'dir';
+  let gitRan = false;
+  const git = findGit(env, platform);
+  if (git) {
+    gitRan = true;
+    try {
+      const r = spawnSync(git, ['-C', dir, 'rev-parse', '--show-toplevel'], {
+        encoding: 'utf8',
+        timeout: GIT_TIMEOUT_MS,
+        windowsHide: true,
+        cwd: home,
+        env: gitEnv(env),
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const top = r.status === 0 ? String(r.stdout ?? '').trim() : '';
+      let real = '';
+      try {
+        real = realpathSync.native(dir);
+      } catch {}
+      if (top && acceptToplevel(top, dir, real, platform)) {
+        root = top;
+        kind = 'git';
+      }
+    } catch {}
+  }
   if (root.length > 3000 || !(root.startsWith('/') || /^[A-Za-z]:[\\/]/.test(root))) return undefined;
-  return root;
+  if (configDir) writeRootCache(configDir, dir, { root, kind });
+  return { root, kind, gitRan };
 }
 
 /** L2: the detached child must not inherit interpreter-altering env. */

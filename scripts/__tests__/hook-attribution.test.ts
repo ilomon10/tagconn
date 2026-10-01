@@ -4,8 +4,8 @@
 // early exit. Runs the real hooks as child processes, with a fake
 // `curl` on PATH for sh and a local HTTP server for node (so nothing ever touches the network) and a sandboxed
 // HOME/CLAUDE_PROJECT_DIR (never the real ones - see support/real-paths-guard.ts).
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -18,6 +18,8 @@ import {
   type HookSandbox,
   makeFakeCurlBin,
   runHook as runHookWith,
+  hookScript,
+  nodeHookScript,
   spawnHook,
   TEST_TOKEN,
   writeHookJson,
@@ -138,6 +140,111 @@ describe('office-hook basics', () => {
     await afterBackground();
     const root = decode(rootHeader(readFileSync(sandbox.logFile, 'utf8')));
     expect(root && realpathSync(root)).toBe(realpathSync(sandbox.projectDir));
+  });
+
+  const kindHeader = (log: string) => /ARG: x-tagconn-project-root-kind: (\S+)/.exec(log)?.[1];
+  const realGit = spawnSync('git', ['--version']).status === 0 ? (spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim() || undefined) : undefined;
+  const gitSandbox = (sub = 'repo') => {
+    const repo = join(sandbox.projectDir, sub);
+    mkdirSync(repo, { recursive: true });
+    spawnSync(realGit!, ['init', '-q', repo]);
+    return repo;
+  };
+  const readLog = () => readFileSync(sandbox.logFile, 'utf8');
+
+  it('sends x-tagconn-project-root-kind: git for a repo and dir otherwise', async () => {
+    sandbox = await createHookSandbox();
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' });
+    await afterBackground();
+    expect(kindHeader(readLog())).toBe('dir');
+    if (!realGit) return;
+    const repo = gitSandbox();
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, { CLAUDE_PROJECT_DIR: repo });
+    await afterBackground();
+    const log = readLog();
+    expect(log.split('=== invocation ===').filter(Boolean).map(kindHeader)).toEqual(['dir', 'git']);
+  });
+
+  it('git env redirection is cleared (GIT_DIR / GIT_WORK_TREE / GIT_CONFIG_*)', async () => {
+    if (!realGit) return;
+    sandbox = await createHookSandbox();
+    const repo = gitSandbox();
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, {
+      CLAUDE_PROJECT_DIR: repo,
+      GIT_DIR: '/nonexistent/.git',
+      GIT_WORK_TREE: '/',
+      GIT_CEILING_DIRECTORIES: repo,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.worktree',
+      GIT_CONFIG_VALUE_0: '/',
+    });
+    await afterBackground();
+    expect(kindHeader(readLog())).toBe('git');
+    expect(realpathSync(decode(rootHeader(readLog()))!)).toBe(realpathSync(repo));
+  });
+
+  it('rejects a core.worktree spoof (toplevel is an ancestor without a .git): kind dir, project dir as root', async () => {
+    if (!realGit) return;
+    sandbox = await createHookSandbox();
+    const repo = gitSandbox(join('a', 'b', 'repo'));
+    const spoof = join(sandbox.projectDir, 'a');
+    spawnSync(realGit, ['-C', repo, 'config', 'core.worktree', spoof]);
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, { CLAUDE_PROJECT_DIR: repo });
+    await afterBackground();
+    expect(kindHeader(readLog())).toBe('dir');
+    expect(decode(rootHeader(readLog()))).toBe(repo);
+  });
+
+  it('never runs a git (or git.cmd) stub planted in the hook cwd, even with `.` and an empty entry on PATH', async () => {
+    sandbox = await createHookSandbox();
+    const cwd = mkdtempSync(join(tmpdir(), 'tagconn-hook-cwd-'));
+    const marker = join(cwd, 'ran');
+    for (const name of ['git', 'git.cmd']) writeFileSync(join(cwd, name), `#!/bin/sh\necho ran > "${marker}"\nexit 1\n`, { mode: 0o755 });
+    const env: NodeJS.ProcessEnv =
+      kind === 'sh'
+        ? { PATH: `.::${binDir}:${process.env.PATH}`, HOME: sandbox.home, TAGCONN_CURL_CONF: sandbox.curlConf, FAKE_CURL_LOG: sandbox.logFile, CLAUDE_PROJECT_DIR: sandbox.projectDir }
+        : { PATH: `.::${process.env.PATH}`, PATHEXT: '.CMD;.EXE', HOME: sandbox.home, USERPROFILE: sandbox.home, TAGCONN_HOOK_CONFIG: sandbox.hookJson, CLAUDE_PROJECT_DIR: sandbox.projectDir };
+    const child = spawn(kind === 'sh' ? 'sh' : process.execPath, [kind === 'sh' ? hookScript : nodeHookScript], { env, cwd });
+    child.stdin.end(JSON.stringify({ session_id: 's', hook_event_name: 'PreToolUse' }));
+    await new Promise((r) => child.on('close', r));
+    await afterBackground();
+    expect(existsSync(marker)).toBe(false);
+    expect(decode(rootHeader(readLog()))).toBe(sandbox.projectDir); // still sent (kind dir or a real git: not a repo here)
+  });
+
+  it('caches the root per project dir (0600) and runs git only on a miss or on SessionStart', async () => {
+    if (!realGit) return;
+    sandbox = await createHookSandbox();
+    const repo = gitSandbox();
+    const shimDir = mkdtempSync(join(tmpdir(), 'tagconn-git-shim-'));
+    const counter = join(shimDir, 'count');
+    writeFileSync(join(shimDir, 'git'), `#!/bin/sh\necho x >> "${counter}"\nexec "${realGit}" "$@"\n`, { mode: 0o755 });
+    const env = { PATH: `${shimDir}:${binDir}:${process.env.PATH}`, CLAUDE_PROJECT_DIR: repo };
+    const runs = () => (existsSync(counter) ? readFileSync(counter, 'utf8').split('\n').filter(Boolean).length : 0);
+
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, env);
+    expect(runs()).toBe(1);
+    const cacheDir = join(sandbox.configDir, 'root-cache');
+    const files = readdirSync(cacheDir);
+    expect(files).toHaveLength(1);
+    expect(statSync(join(cacheDir, files[0]!)).mode & 0o777).toBe(0o600);
+
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PostToolUse' }, env);
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'Stop' }, env);
+    expect(runs()).toBe(1); // cache hits
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'SessionStart' }, env);
+    expect(runs()).toBe(2); // SessionStart refreshes
+    await afterBackground();
+    const log = readLog().split('=== invocation ===').filter(Boolean);
+    expect(log.map(kindHeader).filter((k) => k === 'git')).toHaveLength(4);
+
+    // A corrupt cache file is a miss, not an error: git runs again and the header is still sent.
+    writeFileSync(join(cacheDir, files[0]!), '{{ not a cache', { mode: 0o600 });
+    const res = await runHook(sandbox, { session_id: 's', hook_event_name: 'Stop' }, env);
+    expect(res.status).toBe(0);
+    expect(runs()).toBe(3);
+    await afterBackground();
+    expect(kindHeader(readLog().split('=== invocation ===').filter(Boolean).at(-1)!)).toBe('git');
   });
 
   it('omits the header when CLAUDE_PROJECT_DIR is unset or not absolute', async () => {
@@ -280,6 +387,10 @@ describe('.tagconn/office.json import (opt-in via attribution.conf)', () => {
     const log = readFileSync(sandbox.logFile, 'utf8');
     expect(log).toContain('x-tagconn-session-id: sess-import-1');
     expect(log).toContain('"kind":"tagconn.office-profile"');
+    // The import carries the directory it read the profile from, so the server can refuse to auto-apply a foreign one.
+    const importCall = log.split('=== invocation ===').find((c) => c.includes('x-tagconn-session-id'))!;
+    const b64 = /ARG: x-tagconn-project-root: (\S+)/.exec(importCall)?.[1];
+    expect(realpathSync(Buffer.from(b64!, 'base64').toString('utf8'))).toBe(realpathSync(sandbox.projectDir));
   });
 
   it('does not import without attribution.conf', async () => {

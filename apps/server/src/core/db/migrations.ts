@@ -124,6 +124,9 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE heroes ADD COLUMN styles TEXT;
   ALTER TABLE agents ADD COLUMN tool_started_at INTEGER;
   `,
+  /* 11: M12 how a project's cwd was established (git toplevel, project-dir fallback, payload cwd); null on old rows */ `
+  ALTER TABLE projects ADD COLUMN root_source TEXT;
+  `,
 ];
 
 export function migrate(sqlite: Database.Database): number {

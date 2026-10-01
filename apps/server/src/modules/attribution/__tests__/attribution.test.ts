@@ -167,6 +167,23 @@ describe('attribution import (M8 8j, S4)', () => {
     expect(res.json()).toMatchObject({ status: 'rejected', reason: 'invalid' });
   });
 
+  it('a profile read from outside the session floor is never auto-applied: pending, with the source dir as projectCwd', async () => {
+    app = await buildTestApp({ settings: { server: { hookToken: HOOK_TOKEN }, attribution: { autoImport: 'auto' } } });
+    await startSession(app, 'sess-foreign', '/tmp/attr/floor/repo');
+    await startSession(app, 'sess-inside', '/tmp/attr/floor2/repo');
+    const b64 = (p: string) => Buffer.from(p).toString('base64');
+    const withSource = (p: string) => ({ ...HOOK_HEADERS, 'x-tagconn-project-root': b64(p) });
+
+    const foreign = await importPost(app, 'sess-foreign', validProfile(), withSource('/tmp/attr/other/repo'));
+    expect(foreign.json()).toMatchObject({ status: 'pending' });
+    const pending = (await app.inject({ url: '/api/attribution/pending', headers: adminHeaders(app) })).json<PendingProfileImport[]>();
+    expect(pending[0]).toMatchObject({ projectCwd: '/tmp/attr/other/repo' });
+
+    // The floor itself, or a directory inside it, is the normal case: auto applies.
+    const inside = await importPost(app, 'sess-inside', validProfile(), withSource('/tmp/attr/floor2/repo/apps/web'));
+    expect(inside.json()).toMatchObject({ status: 'imported' });
+  });
+
   describe('autoImport modes', () => {
     it("'off': the import is ignored and nothing is stored as pending", async () => {
       app = await buildTestApp({ settings: { server: { hookToken: HOOK_TOKEN }, attribution: { autoImport: 'off' } } });

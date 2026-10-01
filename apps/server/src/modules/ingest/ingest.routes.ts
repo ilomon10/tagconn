@@ -1,4 +1,4 @@
-import { HookPayloadSchema, PROJECT_ROOT_HEADER, RUN_ID_HEADER } from '@tagconn/shared';
+import { HookPayloadSchema, PROJECT_ROOT_HEADER, PROJECT_ROOT_KIND_HEADER, RUN_ID_HEADER } from '@tagconn/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { hookTokenAuth } from '../../core/http/index.js';
 
@@ -31,7 +31,9 @@ export const ingestRoutes: FastifyPluginAsyncZod = async (app) => {
       const runIdHeader = typeof rawRunId === 'string' ? rawRunId : undefined;
       const rawRoot = req.headers[PROJECT_ROOT_HEADER];
       const projectRootHeader = typeof rawRoot === 'string' ? rawRoot : undefined;
-      const result = ingestService.ingest(req.body, { runIdHeader, projectRootHeader });
+      const rawKind = req.headers[PROJECT_ROOT_KIND_HEADER];
+      const projectRootKindHeader = typeof rawKind === 'string' ? rawKind : undefined;
+      const result = ingestService.ingest(req.body, { runIdHeader, projectRootHeader, projectRootKindHeader });
       return reply.code(202).send(result.accepted ? { ok: true } : { ok: true, ignored: result.reason });
     },
   );

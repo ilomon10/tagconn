@@ -12,6 +12,8 @@ export const projects = sqliteTable('projects', {
   lastActivityAt: integer('last_activity_at').notNull(),
   /** Office layout of this floor (M7). Null = settings.office.defaultLayoutId. */
   layoutId: text('layout_id'),
+  /** M12: 'git' (confirmed git toplevel), 'dir' (project-dir fallback), 'cwd' (payload cwd); null = unknown (old rows). */
+  rootSource: text('root_source').$type<'git' | 'dir' | 'cwd'>(),
 });
 
 export const sessions = sqliteTable(

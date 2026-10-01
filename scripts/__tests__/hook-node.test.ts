@@ -145,6 +145,61 @@ describe('node hook robustness', () => {
   });
 });
 
+describe('node hook project root helpers (M12)', () => {
+  it('findGit walks PATH, skipping empty, `.` and relative entries', () => {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const os = require('node:os') as typeof import('node:os');
+    const root = fs.mkdtempSync(join(os.tmpdir(), 'tagconn-findgit-'));
+    const planted = join(root, 'planted');
+    const real = join(root, 'real');
+    for (const d of [planted, real]) {
+      mkdirSync(d);
+      writeFileSync(join(d, 'git'), '#!/bin/sh\n', { mode: 0o755 });
+    }
+    expect(hook.findGit({ PATH: `:.:rel/bin:${real}` }, 'linux')).toBe(join(real, 'git'));
+    expect(hook.findGit({ PATH: `:.:rel/bin` }, 'linux')).toBeUndefined();
+    expect(hook.findGit({ PATH: planted + ':' + real }, 'linux')).toBe(join(planted, 'git'));
+    expect(hook.findGit({}, 'linux')).toBeUndefined();
+  });
+
+  it('findGit on win32 only considers spawnable .exe/.com from PATHEXT (never .cmd)', () => {
+    expect(hook.findGit({ PATH: 'C:\\nope', PATHEXT: '.CMD;.BAT' }, 'win32')).toBeUndefined();
+  });
+
+  it('gitEnv drops GIT_DIR, GIT_WORK_TREE, GIT_CEILING_DIRECTORIES and GIT_CONFIG_*', () => {
+    const e = hook.gitEnv({ PATH: '/bin', GIT_DIR: 'x', GIT_WORK_TREE: 'x', GIT_CEILING_DIRECTORIES: 'x', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'k', GIT_CONFIG_GLOBAL: '/x', GIT_AUTHOR_NAME: 'a' });
+    expect(Object.keys(e).sort()).toEqual(['GIT_AUTHOR_NAME', 'PATH']);
+  });
+
+  it('acceptToplevel: the project dir or an ancestor with a .git entry; never a root or an unrelated dir', () => {
+    const has = () => true;
+    expect(hook.acceptToplevel('/w/repo', '/w/repo/apps/web', '', 'linux', has)).toBe(true);
+    expect(hook.acceptToplevel('/w/repo', '/w/repo', '', 'linux', has)).toBe(true);
+    expect(hook.acceptToplevel('/w/repo', '/link', '/w/repo/real', 'linux', has)).toBe(true);
+    expect(hook.acceptToplevel('/w/repo', '/w/repo-other', '', 'linux', has)).toBe(false);
+    expect(hook.acceptToplevel('/home', '/w/repo', '', 'linux', has)).toBe(false);
+    expect(hook.acceptToplevel('/', '/w/repo', '', 'linux', has)).toBe(false);
+    expect(hook.acceptToplevel('/w', '/w/repo', '', 'linux', () => false)).toBe(false); // spoofed: no .git there
+    expect(hook.acceptToplevel('C:/Repo', 'c:\\repo\\apps', '', 'win32', has)).toBe(true);
+  });
+
+  it('readRootCache tolerates a missing, corrupt or foreign-dir cache', () => {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const os = require('node:os') as typeof import('node:os');
+    const dir = fs.mkdtempSync(join(os.tmpdir(), 'tagconn-rootcache-'));
+    expect(hook.readRootCache(dir, '/w/repo')).toBeUndefined();
+    mkdirSync(join(dir, 'root-cache'));
+    const { createHash } = require('node:crypto') as typeof import('node:crypto');
+    const file = join(dir, 'root-cache', `${createHash('sha256').update('/w/repo').digest('hex').slice(0, 32)}.json`);
+    writeFileSync(file, '{ nope', { mode: 0o600 });
+    expect(hook.readRootCache(dir, '/w/repo')).toBeUndefined();
+    writeFileSync(file, JSON.stringify({ dir: '/other', kind: 'git', root: '/w/repo' }), { mode: 0o600 });
+    expect(hook.readRootCache(dir, '/w/repo')).toBeUndefined();
+    writeFileSync(file, JSON.stringify({ dir: '/w/repo', kind: 'git', root: '/w/repo' }), { mode: 0o600 });
+    expect(hook.readRootCache(dir, '/w/repo')).toEqual({ root: '/w/repo', kind: 'git' });
+  });
+});
+
 describe('node hook pure helpers', () => {
   it('resolveConfigPaths: TAGCONN_HOOK_CONFIG wins, then TAGCONN_CONFIG_DIR, then OS default', () => {
     expect(hook.resolveConfigPaths({ TAGCONN_HOOK_CONFIG: '/home/u/b/h.json', TAGCONN_CONFIG_DIR: '/home/u/z' }, 'linux', '/home/u')).toEqual({

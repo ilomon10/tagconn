@@ -32,6 +32,8 @@ export interface HeroState {
   setHeroes(list: Hero[]): void;
   upsertHero(h: Hero): void;
   removeHero(id: string): void;
+  /** Drops every hero of a floor that was merged away (the survivors are re-fetched). */
+  dropProject(projectId: string): void;
 }
 
 export const useHeroStore = create<HeroState>()((set) => ({
@@ -52,6 +54,12 @@ export const useHeroStore = create<HeroState>()((set) => ({
       if (!Object.hasOwn(s.heroes, id)) return {};
       const heroes = cloneHeroMap(s.heroes);
       delete heroes[id];
+      return { heroes };
+    }),
+  dropProject: (projectId) =>
+    set((s) => {
+      const heroes = emptyHeroMap();
+      for (const h of Object.values(s.heroes)) if (h.projectId !== projectId) heroes[h.id] = h;
       return { heroes };
     }),
 }));

@@ -73,12 +73,14 @@ describe('ManagedService', () => {
   });
 
   it('caps the backoff delay', async () => {
-    const { svc, spawnTimes } = make(['exit', '1'], { timing: { backoffBaseMs: 30, backoffMaxMs: 50, maxCrashes: 5 } });
+    // Uncapped, the 4th gap would be 100 * 2^3 = 800 ms; capped it is 150 ms plus spawn time. The wide
+    // margin keeps this stable on a loaded machine, where spawning a child can take a few hundred ms.
+    const { svc, spawnTimes } = make(['exit', '1'], { timing: { backoffBaseMs: 100, backoffMaxMs: 150, maxCrashes: 5 } });
     await svc.start();
-    await waitFor(() => svc.status().state === 'crashed', 8000, 'crashed');
+    await waitFor(() => svc.status().state === 'crashed', 15000, 'crashed');
     const gaps = spawnTimes.slice(1).map((t, i) => t - spawnTimes[i]!);
-    expect(gaps[3]).toBeGreaterThanOrEqual(48); // capped at 50, not 240
-    expect(gaps[3]).toBeLessThan(200);
+    expect(gaps[3]).toBeGreaterThanOrEqual(148); // capped at 150, not 800
+    expect(gaps[3]).toBeLessThan(650);
   });
 
   it('a start failure (prepare throws) leaves the service stopped and rethrows', async () => {
