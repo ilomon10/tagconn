@@ -63,7 +63,14 @@ export type FurnitureKind =
   | 'fireplace'
   | 'coat-rack'
   | 'supply-stack'
-  | 'cage';
+  | 'cage'
+  // M12 G3: trigger furniture placed by procgen/triggers.ts (2D: same kind in every style).
+  | 'notice-board'
+  | 'roster-board';
+
+/** M12 G3: the panel a furniture item opens. A subset of `app/menuHotkeys.ts` MenuActionId (asserted by a test in G3). */
+export type FurnitureAction = 'board' | 'log' | 'quests' | 'settings' | 'heroes' | 'receptionist';
+
 export interface PlacedFurniture extends Rect {
   kind: FurnitureKind;
   blocking: boolean;
@@ -73,6 +80,10 @@ export interface PlacedFurniture extends Rect {
   /** M8 8p: true when y === room.interior.y and every tile directly north of the footprint is a wall.
    *  Only then may a painter draw above the footprint (at most MAX_OVERDRAW_PX). Omitted = false. */
   againstNorthWall?: boolean;
+  /** M12 G4: placed from `LayoutRoom.furniture` (a user pin); never removed by the reachability retry. */
+  pinned?: true;
+  /** M12 G3: this item is the floor's trigger for `action` (exactly one item per action, at most). */
+  trigger?: FurnitureAction;
 }
 export interface Seat extends Point {
   zone: Zone;

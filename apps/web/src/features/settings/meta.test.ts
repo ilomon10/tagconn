@@ -26,7 +26,10 @@ const leafPaths: string[] = sections
  * schema shape), `shaders`'s keys are fixed by the schema, so — unlike a record — every one of them can
  * and should have its own hint.
  */
-const nestedLeafPaths: string[] = Object.keys(settings.office.shaders).map((k) => `office.shaders.${k}`);
+const nestedLeafPaths: string[] = Object.keys(settings.office.shaders)
+  .map((k) => `office.shaders.${k}`)
+  // M12: `office.drama` is a fixed-shape object whose keys carry their own hints.
+  .concat(Object.keys(settings.office.drama).map((k) => `office.drama.${k}`));
 
 describe('SECTION_LABELS', () => {
   it('has a title and hint for every settings section', () => {

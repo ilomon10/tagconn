@@ -77,6 +77,9 @@ function paintRiftStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: 
 }
 
 const RIFT: Record<FurnitureKind, Painter> = {
+  // M12 G3 placeholders (real art lands with G3).
+  'notice-board': paintCrystalAppliance,
+  'roster-board': paintCrystalAppliance,
   'work-desk': paintCrystalBlock,
   'lead-desk': paintCrystalBlock,
   table: paintCrystalBlock,

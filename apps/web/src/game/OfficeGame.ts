@@ -1,6 +1,7 @@
 import * as Phaser from 'phaser';
 import { OfficeScene, type OfficeFloorInfo, type OfficeFloorNeighbor, type OfficeState } from './scenes/OfficeScene';
 import type { SafeInsets } from './camera/insets';
+import type { FurnitureAction } from './procgen/types';
 
 export type { OfficeFloorInfo, OfficeFloorNeighbor, OfficeState };
 
@@ -45,6 +46,8 @@ type Events = {
   /** W3b: the Receptionist NPC was clicked. The host opens the Receptionist panel
    *  (`features/receptionist/uiStore.ts#openPanel`) — its own gate handles a non-admin session. */
   receptionistClick: () => void;
+  /** M12 G3: a trigger furniture item was clicked (gated by `office.furnitureTriggers` in the scene). */
+  furnitureClick: (action: FurnitureAction) => void;
 };
 
 /** Framework-agnostic handle around a Phaser.Game hosting the office scene. */
@@ -66,6 +69,7 @@ export class OfficeGame {
     gmSessions: new Set(),
     heroClick: new Set(),
     receptionistClick: new Set(),
+    furnitureClick: new Set(),
   };
 
   constructor(parent: HTMLElement) {
@@ -80,6 +84,7 @@ export class OfficeGame {
       ready.events.on('gmSessions', (id: string) => this.listeners.gmSessions.forEach((cb) => cb(id)));
       ready.events.on('heroClick', (id: string) => this.listeners.heroClick.forEach((cb) => cb(id)));
       ready.events.on('receptionistClick', () => this.listeners.receptionistClick.forEach((cb) => cb()));
+      ready.events.on('furnitureClick', (action: FurnitureAction) => this.listeners.furnitureClick.forEach((cb) => cb(action)));
       if (this.pending) ready.setOfficeState(this.pending);
       this.pending = null;
       if (this.pendingInsets) ready.setSafeInsets(this.pendingInsets);
@@ -188,6 +193,7 @@ export class OfficeGame {
     this.listeners.gmSessions.clear();
     this.listeners.heroClick.clear();
     this.listeners.receptionistClick.clear();
+    this.listeners.furnitureClick.clear();
     this.scene = null;
     this.game.destroy(true);
   }

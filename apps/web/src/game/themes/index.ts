@@ -5,7 +5,8 @@ import { modernTheme } from './modern';
 import { riftTheme } from './rift';
 import type { ThemeDefinition } from './types';
 
-export type { Costume, Palette, ThemeDefinition } from './types';
+export type { ActivityFxKind, Costume, DramaAntic, DramaContent, DramaEmote, Palette, StrainKind, ThemeDefinition } from './types';
+export { STRAIN_PRIORITY } from './types';
 export { modernTheme } from './modern';
 export { guildTheme } from './guild';
 export { riftTheme } from './rift';

@@ -52,6 +52,8 @@ const FURNITURE_KIND_SET: Record<FurnitureKind, true> = {
   fridge: true,
   'water-cooler': true,
   'filing-cabinet': true,
+  'notice-board': true,
+  'roster-board': true,
   'coffee-machine': true,
   bookcase: true,
   fireplace: true,

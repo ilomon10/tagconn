@@ -5,7 +5,7 @@ import { INITIAL_LIFECYCLE, type LifecycleFrame } from '../actorLifecycle';
 import type { Point } from '../procgen/types';
 import type { Size } from '../labels';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '../textures';
-import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, prefersReducedMotion, staffTextureKey, type Costume } from '../themes';
+import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, prefersReducedMotion, staffTextureKey, type ActivityFxKind, type Costume } from '../themes';
 
 export interface CharacterLook {
   color: number;
@@ -298,7 +298,7 @@ export class Character extends Phaser.GameObjects.Container {
   }
 
   /** Particle effect for the current activity (docs/design/guild-hall.md "Magic activity effects"). */
-  setActivityFx(kind: 'sparkles' | 'bubbles' | 'rune' | 'channel' | 'none' | undefined, enabled: boolean) {
+  setActivityFx(kind: ActivityFxKind | undefined, enabled: boolean) {
     const key = `${kind ?? ''}|${enabled}`;
     if (key === this.fxKey) return;
     this.fxKey = key;

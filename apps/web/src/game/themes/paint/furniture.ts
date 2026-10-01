@@ -18,6 +18,9 @@ function pick<T>(arr: readonly T[], seed: number): T {
 // ==================================================================== modern (port of renderMap.ts)
 
 const MODERN: Record<FurnitureKind, Painter> = {
+  // M12 G3 placeholders (real art lands with G3).
+  'notice-board': (g, f, T, r) => MODERN.board(g, f, T, r),
+  'roster-board': (g, f, T, r) => MODERN.board(g, f, T, r),
   'work-desk': (g, f, T, rect) => {
     const x = f.x * T;
     const y = f.y * T;
@@ -544,6 +547,9 @@ function candleAndScroll(rect: RectFn, x: number, y: number): void {
 }
 
 const GUILD: Record<FurnitureKind, Painter> = {
+  // M12 G3 placeholders (real art lands with G3).
+  'notice-board': (g, f, T, r) => GUILD.board(g, f, T, r),
+  'roster-board': (g, f, T, r) => GUILD.board(g, f, T, r),
   'work-desk': (g, f, T, rect) => {
     const x = f.x * T;
     const y = f.y * T;

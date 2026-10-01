@@ -248,6 +248,12 @@ export const SettingsSchema = z.object({
           tiredAfterSec: z.number().min(30).max(86_400).default(1200),
           /** A single tool running longer than this makes the character dizzy. */
           dizzyToolSec: z.number().min(5).max(3600).default(90),
+          /** A character waiting for you / blocked longer than this starts sweating. */
+          sweatAfterSec: z.number().min(10).max(3600).default(120),
+          /** "On a roll": at least this many tool calls ... */
+          streakTools: z.number().int().min(2).max(100).default(8),
+          /** ... within this window. */
+          streakWindowSec: z.number().min(10).max(600).default(60),
         })
         .prefault({}),
       /** M12: furniture in the canvas opens panels (board → Board, ledger → Log, notice board → Quests, terminal → Settings…). */

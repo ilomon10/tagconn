@@ -1,4 +1,5 @@
 import type * as Phaser from 'phaser';
+import type { ActivityFxKind } from './types';
 
 /**
  * Particle/tween helpers shared by world decor (guild.ts `animate()`) and character-attached
@@ -193,7 +194,7 @@ export function ambientMotes(scene: Phaser.Scene, positions: { x: number; y: num
 /** Dispatches `ThemeDefinition.activityFx` kinds to the matching helper (used by `Character.ts`). */
 export function createActivityFx(
   scene: Phaser.Scene,
-  kind: 'sparkles' | 'bubbles' | 'rune' | 'channel' | 'none' | undefined,
+  kind: ActivityFxKind | undefined,
   x: number,
   y: number,
   enabled: boolean,

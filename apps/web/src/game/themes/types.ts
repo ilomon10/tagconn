@@ -5,7 +5,35 @@
 // port of the pre-M7 office art) and `guild.ts` (the magic guild hall).
 import type { Activity, MULTIVERSE_THEME_ID, OfficeStyle, RoomType, Zone } from '@tagconn/shared';
 import type * as Phaser from 'phaser';
-import type { DecorSlot, GeneratedMap, PlacedFurniture, WallDecorSlot } from '../procgen/types';
+import type { DecorSlot, FurnitureKind, GeneratedMap, PlacedFurniture, WallDecorSlot } from '../procgen/types';
+
+/** Particle effects on a character. M12 adds `streak` (on a roll). Used by ThemeDefinition, fx.ts and Character.ts. */
+export type ActivityFxKind = 'sparkles' | 'bubbles' | 'rune' | 'channel' | 'streak' | 'none';
+
+/** M12 G1 work strain, in display priority order (dizzy wins). */
+export type StrainKind = 'dizzy' | 'sweating' | 'tired' | 'on-a-roll';
+export const STRAIN_PRIORITY: readonly StrainKind[] = ['dizzy', 'sweating', 'tired', 'on-a-roll'];
+
+/** M12 G1 icon shown over a character during an idle antic. */
+export type DramaEmote = 'mug' | 'note' | 'dice' | 'ball' | 'phone' | 'laugh' | 'spark' | 'zz';
+
+export interface DramaAntic {
+  /** kebab-case, unique within one theme's list. */
+  id: string;
+  /** The cast gathers next to ONE of these (the first kind present in the room wins). `[]` = acts in place. */
+  props: readonly FurnitureKind[];
+  /** 1 = solo, 2 = needs a partner in the same room. */
+  cast: 1 | 2;
+  emote?: DramaEmote;
+  /** One exchange is picked per run: `[a]` for solo antics, `[a, b]` (b = the partner's reply) for pairs. Each line <= 48 chars. */
+  lines: readonly (readonly [string] | readonly [string, string])[];
+}
+
+export interface DramaContent {
+  antics: readonly DramaAntic[];
+  /** One line is said (lowest bubble priority) when a strain starts. Each line <= 48 chars. */
+  strain: Record<StrainKind, readonly string[]>;
+}
 
 export interface Palette {
   bg: number;
@@ -92,7 +120,9 @@ export interface ThemeDefinition {
   costumes: Record<string, Costume>; // by role name; `default` key for unknown roles
   activityVerbs: Partial<Record<Activity, string>>; // bubble text when the server bubble is generic
   /** Activity effects (particles) attached to a character. */
-  activityFx?: Partial<Record<Activity, 'sparkles' | 'bubbles' | 'rune' | 'channel' | 'none'>>;
+  activityFx?: Partial<Record<Activity, ActivityFxKind>>;
+  /** M12 G1: idle antics + strain lines. Optional: a theme without it has no drama (rift reuses guild's). */
+  drama?: DramaContent;
   lighting: { dayTint: number; nightTint: number; nightAlpha: number; glowAtNight: boolean };
   floorLabel(index: number, projectName: string): string;
 }
