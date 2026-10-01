@@ -27,6 +27,13 @@ describe('receptionistStore', () => {
     useReceptionistStore.getState().clear();
   });
 
+  it('moveProject re-keys project conversations onto the survivor', () => {
+    useReceptionistStore.getState().setConversations([conversation('c1', { scope: 'project', projectId: 'a' }), conversation('c2')]);
+    useReceptionistStore.getState().moveProject('a', 'b');
+    expect(useReceptionistStore.getState().conversations.c1?.projectId).toBe('b');
+    expect(useReceptionistStore.getState().conversations.c2?.projectId).toBeUndefined();
+  });
+
   it('setConversations replaces the whole map, indexed by id', () => {
     useReceptionistStore.getState().setConversations([conversation('c1'), conversation('c2')]);
     expect(Object.keys(useReceptionistStore.getState().conversations).sort()).toEqual(['c1', 'c2']);

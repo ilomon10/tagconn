@@ -166,9 +166,9 @@ describe('node hook project root helpers (M12)', () => {
     expect(hook.findGit({ PATH: 'C:\\nope', PATHEXT: '.CMD;.BAT' }, 'win32')).toBeUndefined();
   });
 
-  it('gitEnv drops GIT_DIR, GIT_WORK_TREE, GIT_CEILING_DIRECTORIES and GIT_CONFIG_*', () => {
-    const e = hook.gitEnv({ PATH: '/bin', GIT_DIR: 'x', GIT_WORK_TREE: 'x', GIT_CEILING_DIRECTORIES: 'x', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'k', GIT_CONFIG_GLOBAL: '/x', GIT_AUTHOR_NAME: 'a' });
-    expect(Object.keys(e).sort()).toEqual(['GIT_AUTHOR_NAME', 'PATH']);
+  it('gitEnv drops every GIT_* variable (case-insensitive) and keeps the rest', () => {
+    const e = hook.gitEnv({ PATH: '/bin', GIT_DIR: 'x', GIT_WORK_TREE: 'x', GIT_CEILING_DIRECTORIES: 'x', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'k', GIT_CONFIG_GLOBAL: '/x', GIT_AUTHOR_NAME: 'a', GIT_COMMON_DIR: 'x', git_index_file: 'x', HOME: '/h' });
+    expect(Object.keys(e).sort()).toEqual(['HOME', 'PATH']);
   });
 
   it('acceptToplevel: the project dir or an ancestor with a .git entry; never a root or an unrelated dir', () => {
@@ -181,6 +181,24 @@ describe('node hook project root helpers (M12)', () => {
     expect(hook.acceptToplevel('/', '/w/repo', '', 'linux', has)).toBe(false);
     expect(hook.acceptToplevel('/w', '/w/repo', '', 'linux', () => false)).toBe(false); // spoofed: no .git there
     expect(hook.acceptToplevel('C:/Repo', 'c:\\repo\\apps', '', 'win32', has)).toBe(true);
+  });
+
+  it('cacheDirSafe: a real 0700 dir only (not a symlink, not group/other accessible)', () => {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const os = require('node:os') as typeof import('node:os');
+    const base = fs.mkdtempSync(join(os.tmpdir(), 'tagconn-cachedir-'));
+    const ok = join(base, 'ok');
+    mkdirSync(ok, { mode: 0o700 });
+    expect(hook.cacheDirSafe(ok)).toBe(true);
+    const open = join(base, 'open');
+    mkdirSync(open);
+    chmodSync(open, 0o755);
+    expect(hook.cacheDirSafe(open)).toBe(false);
+    fs.symlinkSync(ok, join(base, 'link'));
+    expect(hook.cacheDirSafe(join(base, 'link'))).toBe(false);
+    expect(hook.cacheDirSafe(join(base, 'missing'))).toBe(false);
+    writeFileSync(join(base, 'file'), 'x');
+    expect(hook.cacheDirSafe(join(base, 'file'))).toBe(false);
   });
 
   it('readRootCache tolerates a missing, corrupt or foreign-dir cache', () => {

@@ -95,7 +95,7 @@ export function HeroPanel() {
       if (fallback) setProjectIdRaw(fallback);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, storeProjectId]);
+  }, [open, storeProjectId, storeProjectId !== null && Object.hasOwn(projects, storeProjectId)]);
 
   const requestClose = () => {
     if ((dirty || poolsDirty) && !window.confirm('Discard unsaved changes?')) return;

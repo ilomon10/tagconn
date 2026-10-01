@@ -41,6 +41,8 @@ export interface ReceptionistState {
   removeConversation(id: string): void;
   setMessages(conversationId: string, list: ReceptionistMessage[]): void;
   upsertMessage(m: ReceptionistMessage, max?: number): void;
+  /** A floor merged away: its project-scoped conversations now belong to the survivor. */
+  moveProject(from: string, into: string): void;
   /** Resets everything (panel close in demo mode, or leaving the whole feature). */
   clear(): void;
 }
@@ -98,6 +100,14 @@ export const useReceptionistStore = create<ReceptionistState>()((set) => ({
       const messages = cloneMap(s.messages);
       messages[m.conversationId] = next;
       return { messages };
+    }),
+
+  moveProject: (from, into) =>
+    set((s) => {
+      if (!Object.values(s.conversations).some((c) => c.projectId === from)) return {};
+      const conversations = emptyMap<ReceptionistConversation>();
+      for (const c of Object.values(s.conversations)) conversations[c.id] = c.projectId === from ? { ...c, projectId: into } : c;
+      return { conversations };
     }),
 
   clear: () => set({ conversations: emptyMap(), conversationsLoaded: false, messages: emptyMap() }),

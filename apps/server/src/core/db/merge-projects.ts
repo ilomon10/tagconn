@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { isFoldTarget, isStrictlyUnder, nearestAncestor, normPath, type RootSource } from './paths.js';
@@ -61,7 +61,7 @@ const REPOINT_TABLES = ['sessions', 'agents', 'tasks', 'events', 'runs', 'recept
 /**
  * Merges every non-git floor nested in the confirmed git root `parentId` into it, in one transaction
  * (idempotent: nothing nested = no-op). Rows of the child move to the parent; the parent keeps its
- * name and layout and stays archived only if every merged child was archived too. Heroes take free
+ * name and layout (it is never archived here: an archived parent is not a fold target). Heroes take free
  * slots of the parent: a hero bound to a live agent is always kept (even over the caps); released
  * ones are dropped when `maxPerRole` or `maxPerProject` is reached. Settings overrides hold no
  * project ids, so nothing else references a floor.
@@ -113,8 +113,8 @@ function mergeOne(sqlite: Database.Database, child: ProjectRow, parent: ProjectR
   }
 
   sqlite
-    .prepare(`UPDATE projects SET last_activity_at = MAX(last_activity_at, ?), archived = (archived AND ?) WHERE id = ?`)
-    .run(child.lastActivityAt, child.archived ? 1 : 0, parent.id);
+    .prepare(`UPDATE projects SET last_activity_at = MAX(last_activity_at, ?) WHERE id = ?`)
+    .run(child.lastActivityAt, parent.id);
   sqlite.prepare(`DELETE FROM projects WHERE id = ?`).run(child.id);
   result.merged++;
   result.pairs.push({
@@ -128,14 +128,21 @@ export const MERGE_BACKUPS_KEPT = 3;
 /**
  * `VACUUM INTO <db>.pre-merge-<timestamp>.bak` (a consistent copy even in WAL mode), then prune to the
  * newest {@link MERGE_BACKUPS_KEPT}. Returns the backup path, or undefined for an in-memory DB.
- * Throws when the copy cannot be made, so the caller can skip the merge.
+ * Mode 0600. Throws (after deleting any partial file) when the copy cannot be made, so the caller can skip the merge.
  */
 export function backupBeforeMerge(sqlite: Database.Database, dbPath: string, now = Date.now()): string | undefined {
   if (dbPath === ':memory:' || dbPath === '') return undefined;
   mkdirSync(dirname(dbPath), { recursive: true });
   const stamp = new Date(now).toISOString().replace(/[-:.]/g, '');
   const target = `${dbPath}.pre-merge-${stamp}.bak`;
-  sqlite.prepare(`VACUUM INTO ?`).run(target);
+  const existed = existsSync(target);
+  try {
+    sqlite.prepare(`VACUUM INTO ?`).run(target);
+    chmodSync(target, 0o600);
+  } catch (err) {
+    if (!existed) rmSync(target, { force: true }); // never leave a partial (or wrongly-permissioned) copy behind
+    throw err;
+  }
   const prefix = `${basename(dbPath)}.pre-merge-`;
   const old = readdirSync(dirname(dbPath))
     .filter((f) => f.startsWith(prefix) && f.endsWith('.bak'))

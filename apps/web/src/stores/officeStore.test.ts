@@ -141,6 +141,20 @@ describe('mergeProject (project:merged)', () => {
     expect(next.pinnedPrimary).toEqual({ b: 'a1' });
   });
 
+  it('takes the later lastLiveAt and keeps the live Guild Master pin when both floors are pinned', () => {
+    const s: OfficeData = {
+      ...initialOfficeData(),
+      agents: { a1: agent('a1', { projectId: 'a', status: 'active', sessionId: 's1' }), b1: agent('b1', { projectId: 'b', status: 'done', sessionId: 's2' }) },
+      lastLiveAt: { a: 50, b: 10 },
+      pinnedPrimary: { a: 'a1', b: 'b1' },
+    };
+    const next = apply(s, reducers.mergeProject(s, 'a', 'b'));
+    expect(next.lastLiveAt).toEqual({ b: 50 });
+    expect(next.pinnedPrimary).toEqual({ b: 'a1' });
+    const keep = apply(s, reducers.mergeProject({ ...s, agents: { ...s.agents, b1: { ...s.agents.b1!, status: 'active' } } }, 'a', 'b'));
+    expect(keep.pinnedPrimary).toEqual({ b: 'b1' });
+  });
+
   it('keeps an unrelated selection', () => {
     const s: OfficeData = { ...initialOfficeData(), selectedProjectId: ALL_FLOORS };
     expect(apply(s, reducers.mergeProject(s, 'a', 'b')).selectedProjectId).toBe(ALL_FLOORS);

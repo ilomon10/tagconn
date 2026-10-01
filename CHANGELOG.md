@@ -10,7 +10,7 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 ### Changed
 - A compact top bar with one **☰ Menu** (M): Board (B), Log (L), Quests (Q), Roles (R), Settings (S), Heroes (H), Hall Planner (P), Receptionist (D), Manage floors (F), screen effect, alerts and help. Board, Log, Quests, Roles and Settings now open as panels over the office instead of replacing it; `#board`-style links still work.
 - The web app works on phones and tablets, in portrait and landscape: panels become full-screen or side sheets, the roster becomes a tray, touch targets are larger, and you can pinch to zoom.
-- A floor is now the repository: the hook sends the session's git root, and a session stays on the floor it started on. Older floors for subfolders (e.g. `ovor/apps/platform`) merge into their repository's floor once the hook confirms it is a git root, after a database backup (`office.db.pre-merge-*.bak`). A home or workspace folder never absorbs other floors, and nested git repos keep their own floor.
+- A floor is now the repository: the hook sends the session's git root, and a session stays on the floor it started on. Older floors for subfolders (e.g. `ovor/apps/platform`) merge into their repository's floor once the hook confirms it is a git root, after a database backup (`office.db.pre-merge-*.bak`). Your home folder and the folders directly inside it never absorb other floors, and nested git repos keep their own floor.
 - Hero editor: change a hero's role (once it is released), and give it a different title and look per style (Modern, Guild, Rift) on tabs.
 - The Receptionist is drawn like every other character and dresses for the floor's style (Receptionist / Gatekeeper).
 

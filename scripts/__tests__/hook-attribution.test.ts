@@ -5,7 +5,7 @@
 // `curl` on PATH for sh and a local HTTP server for node (so nothing ever touches the network) and a sandboxed
 // HOME/CLAUDE_PROJECT_DIR (never the real ones - see support/real-paths-guard.ts).
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -181,6 +181,35 @@ describe('office-hook basics', () => {
     await afterBackground();
     expect(kindHeader(readLog())).toBe('git');
     expect(realpathSync(decode(rootHeader(readLog()))!)).toBe(realpathSync(repo));
+  });
+
+  it('clears EVERY GIT_* variable, not just the listed ones (GIT_COMMON_DIR would break git)', async () => {
+    if (!realGit) return;
+    sandbox = await createHookSandbox();
+    const repo = gitSandbox();
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, { CLAUDE_PROJECT_DIR: repo, GIT_COMMON_DIR: '/nonexistent/common', GIT_OBJECT_DIRECTORY: '/nonexistent/objects' });
+    await afterBackground();
+    expect(kindHeader(readLog())).toBe('git');
+  });
+
+  it('does not cache into a root-cache dir that is group/other accessible or a symlink (the header is still sent)', async () => {
+    if (!realGit) return;
+    sandbox = await createHookSandbox();
+    const repo = gitSandbox();
+    const cacheDir = join(sandbox.configDir, 'root-cache');
+    mkdirSync(cacheDir, { mode: 0o755 });
+    chmodSync(cacheDir, 0o755);
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, { CLAUDE_PROJECT_DIR: repo });
+    expect(readdirSync(cacheDir)).toEqual([]);
+
+    rmSync(cacheDir, { recursive: true });
+    const target = mkdtempSync(join(tmpdir(), 'tagconn-cache-target-'));
+    chmodSync(target, 0o700);
+    symlinkSync(target, cacheDir);
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, { CLAUDE_PROJECT_DIR: repo });
+    expect(readdirSync(target)).toEqual([]);
+    await afterBackground();
+    expect(readLog().split('=== invocation ===').filter(Boolean).map(kindHeader)).toEqual(['git', 'git']);
   });
 
   it('rejects a core.worktree spoof (toplevel is an ancestor without a .git): kind dir, project dir as root', async () => {

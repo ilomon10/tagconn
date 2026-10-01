@@ -28,7 +28,7 @@
 // finishing inline, would add filesystem work plus a second POST (up to a whole second)
 // to the latency Claude Code waits on, while a spawn costs ~1 ms in the parent.
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { accessSync, closeSync, constants as fsc, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import net from 'node:net';
 import { homedir } from 'node:os';
@@ -485,12 +485,12 @@ export function findGit(env, platform = process.platform) {
   return undefined;
 }
 
-/** The env git runs with: no repo/worktree/config redirection (GIT_DIR, GIT_WORK_TREE, GIT_CEILING_DIRECTORIES, GIT_CONFIG_*). */
+/** The env git runs with: every GIT_* variable removed (repo/worktree/config redirection and the like). */
 export function gitEnv(env) {
   const e = {};
   for (const [k, v] of Object.entries(env)) {
     const u = k.toUpperCase();
-    if (u === 'GIT_DIR' || u === 'GIT_WORK_TREE' || u === 'GIT_CEILING_DIRECTORIES' || u.startsWith('GIT_CONFIG')) continue;
+    if (u.startsWith('GIT_')) continue;
     e[k] = v;
   }
   return e;
@@ -527,12 +527,22 @@ export function readRootCache(configDir, pdir) {
   }
 }
 
+/** The cache dir must be a real directory (not a symlink), ours, with no group/other bits (POSIX); win32 only checks it is a real dir. */
+export function cacheDirSafe(dir) {
+  const st = lstatOrNull(dir);
+  if (!st || !st.isDirectory() || st.isSymbolicLink()) return false;
+  if (process.platform === 'win32' || typeof process.getuid !== 'function') return true;
+  return st.uid === process.getuid() && (st.mode & 0o077) === 0;
+}
+
 function writeRootCache(configDir, pdir, value) {
   const file = cacheFile(configDir, pdir);
-  const tmp = `${file}.${process.pid}`;
+  const tmp = `${file}.${process.pid}.${randomBytes(6).toString('hex')}`;
   try {
-    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    writeFileSync(tmp, JSON.stringify({ dir: pdir, ...value }), { mode: 0o600, flag: 'w' });
+    const dir = path.dirname(file);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (!cacheDirSafe(dir)) return;
+    writeFileSync(tmp, JSON.stringify({ dir: pdir, ...value }), { mode: 0o600, flag: 'wx' });
     renameSync(tmp, file);
   } catch {
     try {

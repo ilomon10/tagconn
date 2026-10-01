@@ -7,10 +7,12 @@ session's git root, so a session that starts in `repo/apps/web` or later `cd`s t
 `repo` floor, together with its subagents. A session stays on the floor it started on.
 
 When the hook first confirms a folder is a git root, older floors for its subfolders (from before
-v0.5.2) are merged into it. Before the first merge the server saves a copy of the database next to
-it (`office.db.pre-merge-<time>.bak`, newest 3 kept). Only confirmed git roots with at least three
-path parts absorb floors, so a session started in `~` or a plain workspace folder never swallows
-your other repos, and a separate git repo nested inside another keeps its own floor. The dropdown at the top left switches floors and shows
+v0.5.2) are merged into it. Before each merge the server saves a copy of the database next to it
+(`office.db.pre-merge-<time>.bak`, readable only by you, newest 3 kept); to undo a merge, stop the
+server and put that copy back. Only confirmed git roots absorb floors, and never your home folder or
+a folder directly inside it (`~`, `~/Projects`, `C:\Users\you\source`), so a session started in
+`~` or a plain workspace folder never swallows your other repos. A separate git repo nested inside
+another keeps its own floor. The dropdown at the top left switches floors and shows
 a live character count; **Manage** opens [Manage floors](#manage-floors-f). Next to it, a small pill
 shows **Floor N / M — name** with up/down buttons that run the same animated transition as walking
 onto in-scene stairs.

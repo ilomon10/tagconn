@@ -48,11 +48,20 @@ export interface FoldCandidate {
   rootSource: RootSource | null;
 }
 
+/** A home dir or a direct child of one (`/home/u/code`, `/Users/u/Projects`, `/root/x`, `C:\\Users\\u\\code`): a container, never a repo to absorb floors. */
+const HOME_OR_CHILD = [/^\/home\/[^/]+(\/[^/]+)?$/, /^\/users\/[^/]+(\/[^/]+)?$/i, /^\/root(\/[^/]+)?$/, /^[a-z]:\/users\/[^/]+(\/[^/]+)?$/];
+
 /**
- * Only a confirmed git root, not archived and at least 3 deep (so `/home/u`, `~` and `/home` never
- * absorb anything), may absorb other floors.
+ * Only a confirmed git root, not archived, that is not a home dir or a direct child of one (`~`, `~/Projects`,
+ * `~/code`) and is at least 2 deep on POSIX (drive + 2 on Windows), may absorb other floors. So `/srv/app`,
+ * `C:\code\app` and `~/Projects/ovor` qualify.
  */
-export const isFoldTarget = (p: FoldCandidate): boolean => p.rootSource === 'git' && !p.archived && segmentCount(p.cwd) >= 3;
+export const isFoldTarget = (p: FoldCandidate): boolean => {
+  if (p.rootSource !== 'git' || p.archived) return false;
+  const n = normPath(p.cwd);
+  if (HOME_OR_CHILD.some((re) => re.test(n))) return false;
+  return segmentCount(n) >= 2;
+};
 
 /** The nearest fold target strictly containing `cwd`. */
 export function nearestFoldTarget<T extends FoldCandidate>(cwd: string, candidates: readonly T[]): T | undefined {

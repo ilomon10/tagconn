@@ -2,6 +2,7 @@ import { ALL_FLOORS, useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { registerLayoutEvents, useLayoutStore } from '../stores/layoutStore';
 import { registerHeroEvents, useHeroStore } from '../stores/heroStore';
+import { useReceptionistStore } from '../stores/receptionistStore';
 import { emitWithAck, getSocket, heroSocket } from './socket';
 import { startDemo } from './mock';
 import { DEFAULT_ROLES } from './defaultRoles';
@@ -44,9 +45,18 @@ function wireLive() {
   s.on('project:upsert', (p) => office().upsertProject(p));
   s.on('project:merged', ({ from, into }) => {
     office().mergeProject(from, into);
-    useHeroStore.getState().dropProject(from);
-    // The server moved (or dropped) the child's heroes without broadcasting each one: re-read the survivor's.
-    void heroSocket.list({ projectId: into }).then((list) => list.forEach((h) => useHeroStore.getState().upsertHero(h)), () => {});
+    // The server moved the child's heroes without broadcasting each one: re-home them in place, then re-read the survivor's.
+    useHeroStore.getState().moveProject(from, into);
+    useReceptionistStore.getState().moveProject(from, into);
+    const seen = useHeroStore.getState().mutations;
+    void heroSocket.list({ projectId: into }).then(
+      (list) => {
+        // A hero event landed while the list was in flight: the list may be older than it (e.g. undo a hero:remove).
+        if (useHeroStore.getState().mutations !== seen) return;
+        list.forEach((h) => useHeroStore.getState().upsertHero(h));
+      },
+      () => {},
+    );
   });
   s.on('session:upsert', (x) => office().upsertSession(x));
   s.on('agent:upsert', (a) => office().upsertAgent(a));

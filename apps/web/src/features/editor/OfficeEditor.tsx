@@ -297,7 +297,14 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           }
           break;
         case 'escape':
-          if (selectedDoor) store.clearDoorSelection();
+          // The planner's own dialogs close first (conflict is drawn over help).
+          if (conflict) {
+            e.preventDefault();
+            setConflict(null);
+          } else if (helpOpen) {
+            e.preventDefault();
+            setHelpOpen(false);
+          } else if (selectedDoor) store.clearDoorSelection();
           else if (selection.length) store.clearSelection();
           else requestClose();
           break;
@@ -347,7 +354,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
     window.addEventListener('keydown', onKeyDown, true); // capture: see comment above
     return () => window.removeEventListener('keydown', onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, selectedDoor, draft, dirty]);
+  }, [selection, selectedDoor, draft, dirty, helpOpen, conflict]);
 
   if (!draft) {
     return (

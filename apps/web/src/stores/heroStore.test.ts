@@ -25,6 +25,14 @@ describe('heroStore', () => {
     useHeroStore.setState({ heroes: {} });
   });
 
+  it('moveProject re-homes heroes in place and bumps the mutation counter', () => {
+    useHeroStore.getState().setHeroes([hero('h-aaaaaaaa', { projectId: 'x' }), hero('h-bbbbbbbb', { projectId: 'y' })]);
+    const before = useHeroStore.getState().mutations;
+    useHeroStore.getState().moveProject('x', 'y');
+    expect(heroesForProject(useHeroStore.getState().heroes, 'y').length).toBe(2);
+    expect(useHeroStore.getState().mutations).toBeGreaterThan(before);
+  });
+
   it('setHeroes replaces the whole map, indexed by id', () => {
     useHeroStore.getState().setHeroes([hero('h-aaaaaaaa'), hero('h-bbbbbbbb')]);
     expect(Object.keys(useHeroStore.getState().heroes).sort()).toEqual(['h-aaaaaaaa', 'h-bbbbbbbb']);

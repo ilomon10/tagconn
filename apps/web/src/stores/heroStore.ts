@@ -34,10 +34,15 @@ export interface HeroState {
   removeHero(id: string): void;
   /** Drops every hero of a floor that was merged away (the survivors are re-fetched). */
   dropProject(projectId: string): void;
+  /** Re-homes every hero of a merged-away floor onto the survivor, in place. */
+  moveProject(from: string, into: string): void;
+  /** Bumped on every hero mutation (upsert/remove/move); a list fetch started before the latest bump is stale. */
+  mutations: number;
 }
 
 export const useHeroStore = create<HeroState>()((set) => ({
   heroes: emptyHeroMap(),
+  mutations: 0,
   setHeroes: (list) => {
     const heroes = emptyHeroMap();
     for (const h of list) heroes[h.id] = h;
@@ -47,14 +52,20 @@ export const useHeroStore = create<HeroState>()((set) => ({
     set((s) => {
       const heroes = cloneHeroMap(s.heroes);
       heroes[h.id] = h;
-      return { heroes };
+      return { heroes, mutations: s.mutations + 1 };
     }),
   removeHero: (id) =>
     set((s) => {
       if (!Object.hasOwn(s.heroes, id)) return {};
       const heroes = cloneHeroMap(s.heroes);
       delete heroes[id];
-      return { heroes };
+      return { heroes, mutations: s.mutations + 1 };
+    }),
+  moveProject: (from, into) =>
+    set((s) => {
+      const heroes = emptyHeroMap();
+      for (const h of Object.values(s.heroes)) heroes[h.id] = h.projectId === from ? { ...h, projectId: into } : h;
+      return { heroes, mutations: s.mutations + 1 };
     }),
   dropProject: (projectId) =>
     set((s) => {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import type { Project, ProjectRootKind } from '@tagconn/shared';
-import { backupBeforeMerge, isFoldTarget, mergeNestedInto, nearestFoldTarget, normPath, pendingMergeChildren } from '../../core/db/index.js';
+import { backupBeforeMerge, isFoldTarget, mergeNestedInto, nearestFoldTarget, isStrictlyUnder, normPath, pendingMergeChildren } from '../../core/db/index.js';
 import type { Deps } from '../../core/di/index.js';
 import type { HookContext } from '../../core/event-bus/index.js';
 import { HttpError, notFound } from '../../core/http/index.js';
@@ -9,6 +9,8 @@ import type { ProjectsRepository } from './projects.repository.js';
 
 /** Don't re-broadcast a project just because lastActivityAt moved by less than this. */
 const ACTIVITY_BROADCAST_MS = 5_000;
+/** How long merges are skipped after a failed backup. */
+const MERGE_COOLDOWN_MS = 60_000;
 const UNKNOWN_CWD = '(unknown)';
 
 export const slugify = (s: string) =>
@@ -24,7 +26,12 @@ export const projectIdFor = (cwd: string) =>
 export class ProjectsService {
   /** Git roots whose nested floors were already merged (or checked) in this process. */
   private readonly scanned = new Set<string>();
-  private backedUp = false;
+  /** Git roots with a merge queued (or running) on the serial queue. */
+  private readonly queued = new Set<string>();
+  private queueTail: Promise<void> = Promise.resolve();
+  /** After a failed backup, merges are skipped until this time (no retry storm). */
+  private cooldownUntil = 0;
+  private cooldownWarned = false;
 
   constructor(private readonly deps: Deps<'projectsRepository' | 'layoutsRepository' | 'bus' | 'sqlite' | 'config' | 'settings' | 'logger'>) {}
 
@@ -44,7 +51,12 @@ export class ProjectsService {
     const repo = this.deps.projectsRepository;
     const pinned = repo.projectIdOfSession(ctx.sessionId);
     const root = ctx.projectRoot ?? ctx.payload.cwd;
-    const kind: ProjectRootKind | undefined = ctx.projectRoot ? (ctx.projectRootKind ?? 'dir') : undefined;
+    // A git-kind header confirms a root only when the (validated) payload cwd is the root or inside it.
+    const kind: ProjectRootKind | undefined = ctx.projectRoot
+      ? ctx.projectRootKind === 'git' && ctx.payload.cwd && (normPath(ctx.payload.cwd) === normPath(ctx.projectRoot) || isStrictlyUnder(ctx.payload.cwd, ctx.projectRoot))
+        ? 'git'
+        : 'dir'
+      : undefined;
     let id: string;
     let path = root ?? UNKNOWN_CWD;
     if (pinned) {
@@ -92,28 +104,64 @@ export class ProjectsService {
       return;
     }
     const children = pendingMergeChildren(this.deps.sqlite, target.id);
-    if (children.length > 0 && !this.mergeNested(target.id)) return; // backup failed: retry on the next event
-    this.scanned.add(key);
-    // The session's pinned floor may have been one of the merged children.
-    if (!repo.get(ctx.projectId)) ctx.projectId = target.id;
+    if (children.length === 0) {
+      this.scanned.add(key);
+      return;
+    }
+    this.enqueueMerge(key, target.id);
   }
 
-  /** Backs up the DB once per process, then merges. False when the backup failed (nothing was merged). */
+  /** Resolves once every queued merge has run (tests, shutdown). */
+  mergesSettled(): Promise<void> {
+    return this.queueTail;
+  }
+
+  /**
+   * Backup and merge run off the hook request path, one at a time (setImmediate, then a serial promise
+   * chain), so ingest returns at once. The rows of a merged floor are re-pointed in the DB, so a session
+   * pinned to a merged child follows it.
+   */
+  private enqueueMerge(key: string, parentId: string): void {
+    if (this.queued.has(key)) return;
+    this.queued.add(key);
+    this.queueTail = this.queueTail.then(
+      () =>
+        new Promise<void>((resolve) => {
+          setImmediate(() => {
+            try {
+              if (this.mergeNested(parentId)) this.scanned.add(key);
+            } catch (err) {
+              this.deps.logger.warn({ err }, 'project merge failed');
+            } finally {
+              this.queued.delete(key);
+              resolve();
+            }
+          });
+        }),
+    );
+  }
+
+  /** Takes a fresh backup, then merges. False when it was skipped (cooldown after a failed backup); nothing was merged. */
   private mergeNested(parentId: string): boolean {
     const { sqlite, config, settings, logger, bus, projectsRepository } = this.deps;
-    if (!this.backedUp) {
-      try {
-        const file = backupBeforeMerge(sqlite, config.base.storage.dbPath);
-        if (file) logger.info({ file }, 'project merge: database backed up');
-        this.backedUp = true;
-      } catch (err) {
-        logger.warn({ err }, 'project merge skipped: could not back up the database first');
-        return false;
+    const now = Date.now();
+    if (now < this.cooldownUntil) return false;
+    if (pendingMergeChildren(sqlite, parentId).length === 0) return true; // nothing to change: no backup
+    let backup: string | undefined;
+    try {
+      backup = backupBeforeMerge(sqlite, config.base.storage.dbPath, now);
+      this.cooldownWarned = false;
+    } catch (err) {
+      this.cooldownUntil = now + MERGE_COOLDOWN_MS;
+      if (!this.cooldownWarned) {
+        this.cooldownWarned = true;
+        logger.warn({ err }, 'project merge skipped: could not back up the database first (retrying in 60 s)');
       }
+      return false;
     }
     const { maxPerRole, maxPerProject } = settings.get().heroes;
     const res = mergeNestedInto(sqlite, parentId, { maxPerRole, maxPerProject });
-    for (const p of res.pairs) logger.info({ child: p.child.name, childCwd: p.child.cwd, parent: p.parent.cwd }, 'project merge: folded into its git root');
+    for (const p of res.pairs) logger.info({ child: p.child.name, childCwd: p.child.cwd, parent: p.parent.cwd, backup: backup && basename(backup) }, 'project merge: folded into its git root');
     if (res.merged > 0) {
       for (const p of res.pairs) bus.emit('project.merged', { from: p.child.id, into: p.parent.id });
       const parent = projectsRepository.get(parentId);

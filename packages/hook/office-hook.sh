@@ -113,11 +113,11 @@ esac
 # is the repo and not whatever directory the agent `cd`'d into. Untrusted on the server side (it
 # validates both). Hardening:
 #   - git is an ABSOLUTE path found by walking PATH (`tc_which`: a bare name, or `command -v`, with `.`/empty
-#     entries could run a repo-planted stub), run from $HOME with GIT_DIR/GIT_WORK_TREE/GIT_CEILING_DIRECTORIES/GIT_CONFIG_*
+#     entries could run a repo-planted stub), run from $HOME with EVERY GIT_* env var
 #     cleared, bounded by `timeout 0.3` (without `timeout` on PATH, git is skipped: kind=dir).
 #   - the toplevel is accepted only if it holds a .git entry and equals CLAUDE_PROJECT_DIR or is an
 #     ancestor of it (defeats a `core.worktree=/home` spoof); otherwise kind=dir with CLAUDE_PROJECT_DIR.
-#   - the result is cached per CLAUDE_PROJECT_DIR in <config dir>/root-cache (0600, keyed by cksum, the
+#   - the result is cached per CLAUDE_PROJECT_DIR in <config dir>/root-cache (a 0700 dir we own, files 0600, keyed by cksum, the
 #     dir is stored inside to rule out collisions); git runs only on a miss or on SessionStart.
 #   - when git ran, curl's -m shrinks so git + curl stay within ~1 s.
 # No CLAUDE_PROJECT_DIR (or no base64) -> the headers are simply omitted.
@@ -153,8 +153,7 @@ if [ -n "$pdir" ] && [ -d "$pdir" ] && command -v base64 >/dev/null 2>&1; then
       curl_max=0.6
       top=$(
         cd "$HOME" 2>/dev/null || cd / || exit 1
-        for v in $(env | sed -n 's/^\(GIT_CONFIG_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
-        unset GIT_DIR GIT_WORK_TREE GIT_CEILING_DIRECTORIES
+        for v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
         exec "$timeout_bin" 0.3 "$git_bin" -C "$pdir" rev-parse --show-toplevel
       ) 2>/dev/null </dev/null || top=""
       case "$top" in
@@ -173,9 +172,18 @@ if [ -n "$pdir" ] && [ -d "$pdir" ] && command -v base64 >/dev/null 2>&1; then
     if [ -n "$root" ]; then
       (
         umask 077
-        mkdir -p "$configdir/root-cache" 2>/dev/null || exit 0
-        printf '%s\n%s\n%s\n' "$pdir" "$root_kind" "$root" > "$cachef.$$" 2>/dev/null && mv -f "$cachef.$$" "$cachef" 2>/dev/null
-        rm -f "$cachef.$$" 2>/dev/null
+        cdir="$configdir/root-cache"
+        mkdir -p "$cdir" 2>/dev/null || exit 0
+        # Cache only in a real directory (not a symlink) we own with no group/other bits; else skip caching.
+        [ -d "$cdir" ] && [ ! -L "$cdir" ] && [ -O "$cdir" ] || exit 0
+        dmode=$(ls -ld "$cdir" 2>/dev/null | cut -c1-10)
+        case "$dmode" in drwx------) ;; *) exit 0 ;; esac
+        # Exclusive create (noclobber) of a randomly-named temp file, then an atomic rename.
+        rnd=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+        [ -n "$rnd" ] || exit 0
+        tmpf="$cachef.$$.$rnd"
+        ( set -C; printf '%s\n%s\n%s\n' "$pdir" "$root_kind" "$root" > "$tmpf" ) 2>/dev/null && mv -f "$tmpf" "$cachef" 2>/dev/null
+        rm -f "$tmpf" 2>/dev/null
       ) </dev/null >/dev/null 2>&1
     fi
   fi

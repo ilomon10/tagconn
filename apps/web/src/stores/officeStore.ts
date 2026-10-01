@@ -121,7 +121,19 @@ export const reducers = {
     const pinnedPrimary = { ...s.pinnedPrimary };
     const pin = pinnedPrimary[from];
     delete pinnedPrimary[from];
-    if (pin !== undefined && !(into in pinnedPrimary)) pinnedPrimary[into] = pin;
+    if (pin !== undefined) {
+      // Both floors pinned a Guild Master: keep the one whose session is still live, else the survivor's.
+      const live = (id: string | undefined) => {
+        const a = id === undefined ? undefined : s.agents[id];
+        return !!a && a.status !== 'done' && s.sessions[a.sessionId]?.status !== 'ended';
+      };
+      if (!(into in pinnedPrimary) || (!live(pinnedPrimary[into]) && live(pin))) pinnedPrimary[into] = pin;
+    }
+    const lastLiveAt = { ...s.lastLiveAt };
+    if (from in lastLiveAt) {
+      lastLiveAt[into] = Math.max(lastLiveAt[into] ?? 0, lastLiveAt[from]!);
+      delete lastLiveAt[from];
+    }
     return {
       projects,
       sessions: move(s.sessions),
@@ -130,6 +142,7 @@ export const reducers = {
       events: s.events.map((e) => (e.projectId === from ? { ...e, projectId: into } : e)),
       selectedProjectId: s.selectedProjectId === from ? into : s.selectedProjectId,
       pinnedPrimary,
+      lastLiveAt,
     };
   },
   upsertTask: (s: OfficeData, t: Task): Partial<OfficeData> => ({ tasks: { ...s.tasks, [t.id]: t } }),

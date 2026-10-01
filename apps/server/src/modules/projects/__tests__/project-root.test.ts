@@ -1,8 +1,8 @@
 import type { Agent, HookPayload, OfficeSnapshot, Project } from '@tagconn/shared';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROJECT_ROOT_HEADER, PROJECT_ROOT_KIND_HEADER } from '@tagconn/shared';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { App } from '../../../app.js';
 import { buildTestApp, loadFixture, makeTempDir } from '../../../../test/helpers.js';
 import type { HookContext } from '../../../core/event-bus/index.js';
@@ -114,18 +114,35 @@ describe('project pinning, root header and ancestor folding (M12)', () => {
     bus.on('project.merged', (m) => seen.push(`merged:${m.from}>${m.into}`));
     bus.on('project.upserted', (p) => seen.push(`upsert:${p.id}`));
     await start('s1', '/work/p/repo', git('/work/p/repo'));
+    await app.diContainer.cradle.projectsService.mergesSettled();
     const root = (await projectOf('s1'))!;
     expect(await projectOf('s2')).toBe(root);
     expect(seen.slice(-2)).toEqual([`merged:${child}>${root}`, `upsert:${root}`]);
+  });
+
+  it('a git header whose root does not contain the payload cwd is a dir header: it confirms nothing and absorbs nothing', async () => {
+    app = await buildTestApp();
+    await start('s1', '/work/p/repo/apps/web'); // an old nested floor
+    await start('s2', '/elsewhere/x', git('/work/p/repo')); // foreign cwd claims the repo
+    await app.diContainer.cradle.projectsService.mergesSettled();
+    const records = app.diContainer.cradle.projectsRepository.listRecords();
+    expect(records.find((r) => r.cwd === '/work/p/repo')?.rootSource).toBe('dir');
+    expect(records.some((r) => r.cwd === '/work/p/repo/apps/web')).toBe(true); // not merged by the foreign claim
+    await start('s3', '/work/p/repo/apps/web', git('/work/p/repo')); // cwd inside the root: the claim holds
+    await app.diContainer.cradle.projectsService.mergesSettled();
+    expect(app.diContainer.cradle.projectsRepository.listRecords().find((r) => r.cwd === '/work/p/repo')?.rootSource).toBe('git');
+    expect(await cwds()).toEqual(['/work/p/repo']);
   });
 
   it('~ and /home (shallow roots) never absorb, even when a git header confirms them', async () => {
     app = await buildTestApp();
     await start('s1', '/home/u', git('/home/u'));
     await start('s2', '/home/u/proj');
+    await start('s5', '/home/u/code', git('/home/u/code'));
+    await start('s6', '/home/u/code/x');
     await start('s3', '/home', git('/home'));
     await start('s4', '/home/other/proj');
-    expect(await cwds()).toEqual(['/home', '/home/other/proj', '/home/u', '/home/u/proj']);
+    expect(await cwds()).toEqual(['/home', '/home/other/proj', '/home/u', '/home/u/code', '/home/u/code/x', '/home/u/proj']);
   });
 
   it('an archived git root absorbs nothing', async () => {
@@ -175,21 +192,29 @@ describe('project pinning, root header and ancestor folding (M12)', () => {
     const contexts: HookContext[] = [];
     app.diContainer.cradle.bus.on('hook.received', (c) => contexts.push(c));
     await post({ session_id: 'old', cwd: '/work/p/ovor/apps/platform', hook_event_name: 'UserPromptSubmit', prompt: 'x' }, git('/work/p/ovor'));
+    await app.diContainer.cradle.projectsService.mergesSettled();
     const snap = await snapshot();
     expect(snap.projects.map((p) => p.cwd)).toEqual(['/work/p/ovor']);
     expect(snap.sessions.map((s) => s.projectId)).toEqual(snap.sessions.map(() => snap.projects[0]!.id));
-    expect(contexts[0]?.projectId).toBe(snap.projects[0]!.id);
 
     const backups = readdirSync(dbDir).filter((f) => f.includes('.pre-merge-'));
     expect(backups).toHaveLength(1);
     expect(existsSync(join(dbDir, backups[0]!))).toBe(true);
 
-    // A second merge in the same process does not take another backup.
-    await start('o2', '/work/p/two/a');
-    await start('o3', '/work/p/two');
-    await post({ session_id: 'o3', cwd: '/work/p/two', hook_event_name: 'Stop' }, git('/work/p/two'));
+    // A merge later takes its own fresh backup (the file name carries the timestamp, so move the clock).
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 3 * 3_600_000 });
+    try {
+      await start('o2', '/work/p/two/a');
+      await start('o3', '/work/p/two');
+      await post({ session_id: 'o3', cwd: '/work/p/two', hook_event_name: 'Stop' }, git('/work/p/two'));
+      await app.diContainer.cradle.projectsService.mergesSettled();
+    } finally {
+      vi.useRealTimers();
+    }
     expect((await snapshot()).projects.map((p) => p.cwd).sort()).toEqual(['/work/p/ovor', '/work/p/two']);
-    expect(readdirSync(dbDir).filter((f) => f.includes('.pre-merge-'))).toHaveLength(1);
+    const all = readdirSync(dbDir).filter((f) => f.includes('.pre-merge-'));
+    expect(all).toHaveLength(2);
+    for (const f of all) expect(statSync(join(dbDir, f)).mode & 0o077).toBe(0);
   });
 
   it('a git header for an existing project upgrades it in place; a later dir header never downgrades it', async () => {

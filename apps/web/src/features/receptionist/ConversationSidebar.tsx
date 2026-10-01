@@ -39,7 +39,9 @@ export function ConversationSidebar({
   const scopeOptions = projectScopeOptions(projects, allowedProjectDirs);
   const firstAllowed = scopeOptions.find((o) => o.allowed);
   const [scope, setScope] = useState<ReceptionistScope>('general');
-  const [projectId, setProjectId] = useState<string>(firstAllowed?.project.id ?? '');
+  const [pickedProjectId, setProjectId] = useState<string>(firstAllowed?.project.id ?? '');
+  // The picked floor may have been merged away since: fall back to the first allowed one.
+  const projectId = projects.some((p) => p.id === pickedProjectId) ? pickedProjectId : (firstAllowed?.project.id ?? '');
 
   const create = () => {
     if (createBusy) return;

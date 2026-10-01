@@ -54,20 +54,23 @@ describe('path helpers', () => {
     expect(normPath('c:/Repo/app')).toBe(normPath('C:\\repo\\APP'));
     expect(normPath('/caf\u0065\u0301')).toBe('/caf\u00e9');
   });
-  it('segmentCount and isFoldTarget: confirmed git, not archived, >= 3 deep', () => {
+  it('segmentCount and isFoldTarget: confirmed git, not archived, not a home or a child of one', () => {
     expect(segmentCount('/home/u')).toBe(2);
-    expect(segmentCount('/home/u/p')).toBe(3);
     expect(segmentCount('C:\\Users\\u')).toBe(2);
     const t = (cwd: string, extra: Partial<{ archived: boolean; rootSource: 'git' | 'dir' | 'cwd' | null }> = {}) =>
       isFoldTarget({ cwd, archived: false, rootSource: 'git', ...extra });
-    expect(t('/home/u/p')).toBe(true);
-    expect(t('/home/u')).toBe(false);
-    expect(t('/home')).toBe(false);
-    expect(t('/home/u/p', { archived: true })).toBe(false);
-    expect(t('/home/u/p', { rootSource: 'dir' })).toBe(false);
-    expect(t('/home/u/p', { rootSource: null })).toBe(false);
-    expect(t('C:\\Users\\u\\p')).toBe(true);
-    expect(t('C:\\Users')).toBe(false);
+    expect(t('/home/u/Projects/ovor')).toBe(true);
+    expect(t('/srv/app')).toBe(true);
+    expect(t('/w/x/repo')).toBe(true);
+    expect(t('C:\\code\\app')).toBe(true);
+    expect(t('D:\\Users\\u\\Projects\\ovor')).toBe(true);
+    expect(t('/Users/u/dev/app')).toBe(true);
+    for (const shallow of ['/', '/home', '/home/u', '/home/u/Projects', '/home/u/code', '/Users/u', '/Users/u/Projects', '/root', '/root/x', '/srv', '/opt', 'C:\\', 'C:\\code', 'C:\\Users', 'C:\\Users\\u', 'c:\\users\\U\\Code', 'D:\\USERS\\u\\code']) {
+      expect(t(shallow), shallow).toBe(false);
+    }
+    expect(t('/srv/app', { archived: true })).toBe(false);
+    expect(t('/srv/app', { rootSource: 'dir' })).toBe(false);
+    expect(t('/srv/app', { rootSource: null })).toBe(false);
   });
   it('nearestFoldTarget skips non-targets between the child and a git ancestor', () => {
     const rows = [
