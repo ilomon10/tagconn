@@ -367,6 +367,73 @@ export function furnishRoom(type: RoomType, r: Rect, rand: () => number, opts: F
 }
 
 /**
+ * The seats a single item of `kind` at `rect` offers inside `interior` (M12 G4: pinned furniture brings its
+ * own seats). Mirrors `furnishRoom`'s per-kind rules: desks, booths and reading tables sit on the outward
+ * row below (else above); tables ring; benches, lab benches, shelves, racks and counters stand below (else
+ * above), every 2 tiles for the long ones; a console sits to its left; sofas and armchairs sit on themselves.
+ */
+export function seatsFor(kind: FurnitureKind, rect: Rect, interior: Rect): RecipeSeat[] {
+  const out: RecipeSeat[] = [];
+  const x2 = rect.x + rect.w - 1;
+  const y2 = rect.y + rect.h - 1;
+  const iy2 = interior.y + interior.h - 1;
+  const inside = (x: number, y: number) => x >= interior.x && x < interior.x + interior.w && y >= interior.y && y <= iy2;
+  /** The row on the outward side: below the item when it fits, else above. */
+  const outwardY = (): number | null => (y2 + 1 <= iy2 ? y2 + 1 : rect.y - 1 >= interior.y ? rect.y - 1 : null);
+  const along = (seatKind: RecipeSeat['kind'], step: number) => {
+    const y = outwardY();
+    if (y === null) return;
+    for (let x = rect.x; x <= x2; x += step) out.push({ x, y, kind: seatKind });
+  };
+  switch (kind) {
+    case 'work-desk':
+    case 'lead-desk':
+    case 'booth':
+    case 'reading-table':
+      along('sit', 1);
+      break;
+    case 'table': {
+      for (let x = rect.x; x <= x2; x++) {
+        if (inside(x, rect.y - 1)) out.push({ x, y: rect.y - 1, kind: 'sit' });
+        if (inside(x, y2 + 1)) out.push({ x, y: y2 + 1, kind: 'sit' });
+      }
+      for (let y = rect.y; y <= y2; y++) {
+        if (inside(rect.x - 1, y)) out.push({ x: rect.x - 1, y, kind: 'sit' });
+        if (inside(x2 + 1, y)) out.push({ x: x2 + 1, y, kind: 'sit' });
+      }
+      break;
+    }
+    case 'bench':
+    case 'standing-table':
+      along('stand', 1);
+      break;
+    case 'lab-bench':
+    case 'workbench':
+    case 'shelf':
+    case 'shelf-stack':
+    case 'counter':
+      along('stand', 2);
+      break;
+    case 'rack':
+    case 'rack-row': {
+      const y = outwardY();
+      if (y !== null) out.push({ x: rect.x, y, kind: 'stand' });
+      break;
+    }
+    case 'console':
+      if (inside(rect.x - 1, rect.y)) out.push({ x: rect.x - 1, y: rect.y, kind: 'sit' });
+      break;
+    case 'sofa':
+    case 'armchair':
+      for (let y = rect.y; y <= y2; y++) for (let x = rect.x; x <= x2; x++) out.push({ x, y, kind: 'sit' });
+      break;
+    default:
+      break;
+  }
+  return out;
+}
+
+/**
  * Decoration pass (M8 8n): plants/rugs/lamps/crates/banners/wall-art/bins along walls and corners,
  * scaled by `decor` (0..1). Never blocking, and only on cells the caller says are free (not already
  * furniture, a seat, or a door apron). Called after the main recipe and after the reachability retry,

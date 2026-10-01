@@ -15,5 +15,5 @@ export function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-/** Wide, tall viewport: the roster docks as a side column. Below this it becomes a bottom tray. */
-export const ROSTER_DOCK_QUERY = '(min-width: 1024px) and (min-height: 501px)';
+/** A phone, either way up (portrait is narrow, landscape is short): the party bar collapses to a pill and the status card to one row. */
+export const PHONE_QUERY = '(max-width: 639px), (max-height: 500px)';

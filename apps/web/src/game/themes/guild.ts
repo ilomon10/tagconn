@@ -6,7 +6,7 @@ import { paintGuildFloor } from './paint/floors';
 import { paintGuildFurniture } from './paint/furniture';
 import { paintGuildWallDecor } from './paint/wallDecor';
 import { paintGuildBackWall, paintGuildDoor, paintGuildVoid, paintGuildWall } from './paint/walls';
-import type { Costume, ThemeDefinition } from './types';
+import type { Costume, DramaContent, ThemeDefinition } from './types';
 import { ambientMotes, channelAura, portalShimmer, potionBubbles, prefersReducedMotion, runeGlow, torchFlicker } from './fx';
 
 // `Phaser.BlendModes.ADD` (only a type import of `phaser` is safe under vitest's node
@@ -158,6 +158,66 @@ function animate(scene: Phaser.Scene, map: GeneratedMap, opts: { ambient: boolea
   return created;
 }
 
+/** M12 G1: tavern drama (docs/design/game-office.md 2.8). Short, pronoun-free lines (<= 48 chars). Rift reuses it. */
+const GUILD_DRAMA: DramaContent = {
+  antics: [
+    { id: 'ale-toast', props: ['counter', 'table'], cast: 2, emote: 'mug', lines: [
+      ['To a quest well done!', 'And the next one. Cheers!'],
+      ['Another round, innkeeper!', 'Charge the guild tab.'],
+    ] },
+    { id: 'arm-wrestling', props: ['table'], cast: 2, emote: 'spark', lines: [
+      ['Best two of three?', 'Loser polishes the shields.'],
+    ] },
+    { id: 'bards-tale', props: ['fireplace'], cast: 2, emote: 'note', lines: [
+      ['Sing the Ballad of the Great Merge!', 'Only with a hummed chorus.'],
+    ] },
+    { id: 'dice-game', props: ['table'], cast: 2, emote: 'dice', lines: [
+      ['Roll for initiative.', 'Natural twenty!'],
+      ['Double or nothing?', 'Gold is cursed anyway.'],
+    ] },
+    { id: 'sharpening-blade', props: [], cast: 1, emote: 'spark', lines: [
+      ['A sharp blade, a sharp mind.'],
+      ['One more edge, then the dragon.'],
+    ] },
+    { id: 'quest-board-rumour', props: ['notice-board', 'board'], cast: 2, lines: [
+      ['Word is, a hydra lurks in the backlog.', 'Cut one bug, two more appear.'],
+      ['A fresh bounty was posted.', 'Gold, or more tickets?'],
+    ] },
+    { id: 'fireside-nap', props: ['fireplace', 'sofa'], cast: 1, emote: 'zz', lines: [
+      ['Just resting eyes for a moment...'],
+      ['Wake when the portal opens.'],
+    ] },
+    { id: 'potion-tasting', props: ['counter'], cast: 2, emote: 'mug', lines: [
+      ['Tastes of mana and regret.', 'That is the cleaning tonic.'],
+    ] },
+    { id: 'map-squabble', props: ['board', 'table'], cast: 2, lines: [
+      ['The shortcut runs through the swamp.', 'Last time cost three sprints.'],
+    ] },
+    { id: 'tall-tale', props: [], cast: 2, emote: 'laugh', lines: [
+      ['Once slew a bug with one semicolon.', 'And crowned Archmage of Tabs.'],
+    ] },
+    { id: 'hearth-stories', props: ['fireplace'], cast: 2, lines: [
+      ['Remember the outage of the Long Night?', 'Best left unspoken.'],
+    ] },
+    { id: 'shield-polish', props: [], cast: 1, emote: 'spark', lines: [
+      ['Shiny enough to spot every bug.'],
+      ['Dented shield, tidy conscience.'],
+    ] },
+    { id: 'dragon-snore', props: ['fireplace', 'armchair'], cast: 1, emote: 'zz', lines: [
+      ['Dragon dreams are warm and lucrative.'],
+    ] },
+    { id: 'tankard-lament', props: ['counter'], cast: 1, emote: 'mug', lines: [
+      ['The tankard is half empty. Or half quest.'],
+    ] },
+  ],
+  strain: {
+    tired: ['*yawn* A long quest...', 'The candle burns low.', 'A tavern break is overdue.'],
+    dizzy: ['The spell is still channeling...', 'Runes swim before the eyes.', 'So... much... mana...'],
+    sweating: ['Awaiting orders!', 'The gate stays shut without a word!', 'By the gods, decide!'],
+    'on-a-roll': ['The spells flow freely!', 'Victory after victory!', 'Unstoppable!'],
+  },
+};
+
 export const guildTheme: ThemeDefinition = {
   id: 'guild',
   palette: {
@@ -217,6 +277,7 @@ export const guildTheme: ThemeDefinition = {
   costumes: COSTUMES,
   activityVerbs: ACTIVITY_VERBS,
   activityFx: ACTIVITY_FX,
+  drama: GUILD_DRAMA,
   lighting: { dayTint: 0xfff1d6, nightTint: 0x1b1030, nightAlpha: 0.5, glowAtNight: true },
   floorLabel: (index, projectName) => `Floor ${index + 1} · ${projectName}`,
 };

@@ -11,15 +11,17 @@ import { resolveScreenFx, useDisplayPrefsStore } from '../../stores/displayPrefs
 import { useReceptionistStore } from '../../stores/receptionistStore';
 import { useReceptionistUiStore } from '../receptionist/uiStore';
 import { useFloorAgents, useThemedRoleLookup } from '../../lib/hooks';
-import { ROSTER_DOCK_QUERY, useMediaQuery } from '../../lib/useMediaQuery';
+import { PHONE_QUERY, useMediaQuery } from '../../lib/useMediaQuery';
 import { cycleIndex, firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isMultiverseFloor, isTypingTarget, neighborFloor, topProjectFloor } from '../../lib/floors';
 import { layoutForProject, useLayoutStore } from '../../stores/layoutStore';
-import { ZERO_INSETS, combineInsets, insetsFromOverlay } from '../../game/camera/insets';
-import { Roster } from './Roster';
-import { AgentDrawer } from './AgentDrawer';
+import { ZERO_INSETS, combineInsets, insetsFromOverlay, type InsetEdge } from '../../game/camera/insets';
+import { PartyBar } from './hud/PartyBar';
+import { StatusCard } from './hud/StatusCard';
+import { AgentDetailsDialog } from './hud/AgentDetailsDialog';
 import { FloorManager } from './FloorManager';
 import { GmSessionsPopover } from './GmSessionsPopover';
-import { Button } from '../../components/ui';
+import { Button, cx } from '../../components/ui';
+import { useFurnitureTriggers } from './useFurnitureTriggers';
 
 /**
  * Per-project inputs `planMultiverse` needs (docs/design/living-office.md section 6.1), built from
@@ -213,16 +215,18 @@ export function OfficeView({ active }: { active: boolean }) {
   const connection = useOfficeStore((s) => s.connection);
   const overflow = Math.max(0, agents.length - maxCharacters);
   const roleLookup = useThemedRoleLookup();
-  // Wide screens dock the roster beside the canvas; narrower ones get a tray over a full-width canvas.
-  const rosterDocked = useMediaQuery(ROSTER_DOCK_QUERY);
+  // The HUD floats over a full-width canvas: the party bar along the bottom, or on a phone a pill that opens a tray.
+  const phone = useMediaQuery(PHONE_QUERY);
   const [trayOpen, setTrayOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   // M9 8f: what the `[`/`]` cycling hotkeys below announce to screen readers — mirrors the drawer's
-  // own header (`AgentDrawer.tsx`: the bound hero's name, plus the themed title of the agent's floor).
+  // own status card (the bound hero's name, else the themed title of the agent's floor).
   const [announcement, setAnnouncement] = useState('');
 
   const closePanel = () => {
     setSelected(null);
     setFollow(false);
+    setDetailsOpen(false);
   };
 
   const showToast = (label: string) => {
@@ -255,6 +259,7 @@ export function OfficeView({ active }: { active: boolean }) {
   }, []);
 
   useGameBridge(game);
+  useFurnitureTriggers(game);
 
   // Stairs (docs/design/guild-hall.md section 6; M8 8h living-office.md section 6.3): take the
   // neighboring floor in `office.floorOrder`, or do nothing at an end. The Multiverse is just
@@ -334,13 +339,12 @@ export function OfficeView({ active }: { active: boolean }) {
   }, [game]);
 
   // M9 8f: `[`/`]` cycle the character selection through this floor's visible agents, in the same
-  // order the Roster shows them (`useFloorAgents()`'s `agents` array — `Roster` only filters it for
-  // off-canvas actors, it never reorders it), wrapping at the ends (`cycleIndex`). Nothing selected
+  // order the party bar shows them (`useFloorAgents()`'s `agents` array, which the bar only filters for
+  // off-canvas actors and never reorders), wrapping at the ends (`cycleIndex`). Nothing selected
   // yet: `]` starts at the first agent, `[` at the last. Same guards as the floor hotkeys above
   // (ignored while typing or while a modal covers the screen); selecting goes through the same
-  // `setSelected`/`focus` path a roster or scene click uses, so the character glows and the drawer
-  // opens identically. The announced label mirrors the drawer's header (`AgentDrawer.tsx`): the
-  // bound hero's name, else the plain role title.
+  // `setSelected`/`focus` path a chip or scene click uses, so the character glows and the status
+  // card shows identically. The announced label mirrors the card: the bound hero's name, else the themed role title.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== '[' && e.key !== ']') return;
@@ -426,11 +430,13 @@ export function OfficeView({ active }: { active: boolean }) {
     if (active) window.dispatchEvent(new Event('resize'));
   }, [active, game]);
 
-  // Report the occupied edges of every floating panel over the canvas (the agent drawer, the open
-  // roster tray: anything marked `data-camera-overlay`) as camera safe-insets, so the map can still be
+  // Report the occupied edges of every floating panel over the canvas (the status card, the party bar,
+  // the open phone tray: anything marked `data-camera-overlay`) as camera safe-insets, so the map can still be
   // panned into the part of the canvas left unobscured and a selected agent is centred in the visible
-  // area. The drawer is a right drawer or a bottom sheet depending on the viewport, so it is
-  // re-measured on resize; insets clear — with the scene animating the camera back — once all close.
+  // area. The attribute's value is an edge hint for panels that do not span the canvas (the card is
+  // narrow, the bar is centred); a bare attribute is inferred. Re-measured when panels come or go and on
+  // resize; insets clear (with the scene animating the camera back) once all close.
+  const noAgents = agents.length === 0;
   useEffect(() => {
     if (!game) return;
     const wrapEl = wrap.current;
@@ -441,7 +447,7 @@ export function OfficeView({ active }: { active: boolean }) {
     }
     const measure = () => {
       const box = wrapEl.getBoundingClientRect();
-      game.setSafeInsets(combineInsets(overlays.map((el) => insetsFromOverlay(box, el.getBoundingClientRect()))));
+      game.setSafeInsets(combineInsets(overlays.map((el) => insetsFromOverlay(box, el.getBoundingClientRect(), undefined, (el.dataset.cameraOverlay || undefined) as InsetEdge | undefined))));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -452,7 +458,7 @@ export function OfficeView({ active }: { active: boolean }) {
       ro.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [game, selected, trayOpen, rosterDocked]);
+  }, [game, selected, trayOpen, detailsOpen, phone, noAgents]);
 
   // Esc closes the panel, unless the user is mid-typing in a text field (a checkbox like the
   // Follow toggle, or a button, has no text to lose, so Esc still closes from there).
@@ -497,7 +503,26 @@ export function OfficeView({ active }: { active: boolean }) {
       </div>
       <div ref={wrap} className="relative min-w-0 flex-1 bg-ink-900">
         <div ref={host} className="absolute inset-0 touch-none" />
-        <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-2">
+        {selected && !(phone && trayOpen) && (
+          <StatusCard
+            agent={agents.find((a) => a.id === selected)}
+            compact={phone}
+            follow={follow}
+            onFollowChange={setFollow}
+            onDetails={() => setDetailsOpen(true)}
+            onClose={closePanel}
+          />
+        )}
+        {/* Top centre: the toast and the notices share one column, kept clear of the status card
+            (to its right where there is room, below its compact row on a phone). */}
+        <div
+          className={cx(
+            'pointer-events-none absolute inset-x-3 flex flex-col items-center gap-2',
+            selected && phone && !trayOpen ? 'top-[4.75rem]' : 'top-3',
+            selected && !phone && 'pl-[19rem]',
+          )}
+        >
+          {toast && <span className="rounded-full bg-ink-850/95 px-3 py-1.5 text-xs font-semibold text-ink-100 shadow-lg">{toast}</span>}
           {overflow > 0 && (
             <span className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-amber-500/90 px-2.5 py-1 text-[11px] font-semibold text-ink-950 shadow">
               +{overflow} more not shown (max {maxCharacters})
@@ -530,11 +555,6 @@ export function OfficeView({ active }: { active: boolean }) {
             </span>
           </div>
         )}
-        {toast && (
-          <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
-            <span className="rounded-full bg-ink-850/95 px-3 py-1.5 text-xs font-semibold text-ink-100 shadow-lg">{toast}</span>
-          </div>
-        )}
         <div className="absolute bottom-3 left-3 flex gap-1">
           <Button variant="subtle" onClick={() => game?.zoomBy(1.2)} aria-label="Zoom in">
             +
@@ -546,17 +566,11 @@ export function OfficeView({ active }: { active: boolean }) {
             Fit
           </Button>
         </div>
-        {selected && (
-          <AgentDrawer
-            agentId={selected}
-            onClose={closePanel}
-            follow={follow}
-            onFollowChange={setFollow}
-          />
-        )}
-        {!rosterDocked && <Roster variant="tray" agents={agents} selectedId={selected} onSelect={selectAgent} open={trayOpen} onOpenChange={setTrayOpen} hidePill={selected !== null} />}
+        <PartyBar agents={agents} selectedId={selected} onSelect={selectAgent} phone={phone} trayOpen={trayOpen} onTrayOpenChange={setTrayOpen} />
       </div>
-      {rosterDocked && <Roster agents={agents} selectedId={selected} onSelect={selectAgent} />}
+      {selected && detailsOpen && (
+        <AgentDetailsDialog agentId={selected} onClose={() => setDetailsOpen(false)} compact={phone} follow={follow} onFollowChange={setFollow} />
+      )}
       {pickerOpen && <FloorManager onClose={() => setPickerOpen(false)} />}
       {gmSessionsProjectId && (
         <GmSessionsPopover

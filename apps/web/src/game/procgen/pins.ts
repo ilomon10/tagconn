@@ -1,0 +1,114 @@
+// apps/web/src/game/procgen/pins.ts  (M12 G4, docs/design/game-office.md section 5.2)
+//
+// Pure helpers for `LayoutRoom.furniture` (items the user locked in place in the Hall Planner):
+// which kinds may be pinned, whether a kind blocks walking, and the absolute-coordinate pins one room
+// contributes to `generate.ts`'s room loop. Pins are placed before the procedural recipe and are never
+// removed by the reachability retry.
+import type { LayoutIssue, LayoutRoom } from '@tagconn/shared';
+import type { RecipeItem } from './recipes';
+import type { FurnitureKind, Rect } from './types';
+
+/** Whether a kind blocks walking, matching what `recipes.ts` / `backWall.ts` / `triggers.ts` place it as. Exhaustive. */
+export const KIND_BLOCKING: Record<FurnitureKind, boolean> = {
+  'work-desk': true,
+  'lead-desk': true,
+  table: true,
+  board: true,
+  workbench: true,
+  booth: true,
+  rack: true,
+  shelf: true,
+  sofa: false,
+  armchair: false,
+  rug: false,
+  mat: false,
+  counter: true,
+  plant: false,
+  centerpiece: true,
+  pedestal: true,
+  sigil: false,
+  'stairs-up': true,
+  'stairs-down': true,
+  'rack-row': true,
+  console: true,
+  'lab-bench': true,
+  equipment: true,
+  'shelf-stack': true,
+  'reading-table': true,
+  'standing-table': true,
+  'reception-desk': true,
+  bench: true,
+  lamp: false,
+  crate: false,
+  'wall-art': false,
+  bin: false,
+  cabinet: true,
+  chair: false,
+  banner: false,
+  printer: true,
+  fridge: true,
+  'water-cooler': true,
+  'filing-cabinet': true,
+  'coffee-machine': true,
+  bookcase: true,
+  fireplace: true,
+  'coat-rack': true,
+  'supply-stack': true,
+  cage: true,
+  'notice-board': true,
+  'roster-board': true,
+};
+
+/** Every kind except the stairs (their landing is owned by `generate.ts`). */
+export function isPinnableKind(kind: string): kind is FurnitureKind {
+  return Object.prototype.hasOwnProperty.call(KIND_BLOCKING, kind) && kind !== 'stairs-up' && kind !== 'stairs-down';
+}
+
+export interface ResolvedPins {
+  items: (RecipeItem & { pinned: true })[];
+  issues: LayoutIssue[];
+}
+
+/**
+ * Absolute-coord pins for one room. `interior` is the room's absolute interior rect and `aprons` the
+ * "x,y" keys of its door aprons. Skips (with a `pinned-invalid` WARNING) unknown kinds, items outside the
+ * interior, and items overlapping an earlier pin. Covering a door apron is kept but reported
+ * `pinned-blocks` (warning). Never throws.
+ */
+export function resolvePins(
+  room: Pick<LayoutRoom, 'id' | 'name' | 'type' | 'furniture'>,
+  interior: Rect,
+  aprons: ReadonlySet<string>,
+): ResolvedPins {
+  const items: ResolvedPins['items'] = [];
+  const issues: LayoutIssue[] = [];
+  const pins = room.furniture;
+  if (!pins?.length) return { items, issues };
+  const name = room.name ?? room.type;
+  const taken = new Set<string>();
+  let coversApron = false;
+  for (const f of pins) {
+    if (!isPinnableKind(f.kind)) {
+      issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} is not a known furniture kind and was skipped.`, roomIds: [room.id] });
+      continue;
+    }
+    const abs: Rect = { x: interior.x + f.x, y: interior.y + f.y, w: f.w, h: f.h };
+    if (f.x + f.w > interior.w || f.y + f.h > interior.h) {
+      issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} sits outside the room and was skipped.`, roomIds: [room.id] });
+      continue;
+    }
+    const cells: string[] = [];
+    for (let y = abs.y; y < abs.y + abs.h; y++) for (let x = abs.x; x < abs.x + abs.w; x++) cells.push(`${x},${y}`);
+    if (cells.some((c) => taken.has(c))) {
+      issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} overlaps another locked item and was skipped.`, roomIds: [room.id] });
+      continue;
+    }
+    for (const c of cells) taken.add(c);
+    if (KIND_BLOCKING[f.kind] && cells.some((c) => aprons.has(c))) coversApron = true;
+    items.push({ kind: f.kind, ...abs, blocking: KIND_BLOCKING[f.kind], variant: f.variant ?? 0, pinned: true });
+  }
+  if (coversApron) {
+    issues.push({ severity: 'warning', code: 'pinned-blocks', message: `${name}: locked furniture covers a door.`, roomIds: [room.id] });
+  }
+  return { items, issues };
+}

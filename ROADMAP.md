@@ -212,18 +212,20 @@ role can't change while bound, fixes ship first.
   - [x] F2+F3+F5 Scene: themed titles everywhere in the scene, selection beacon + off-screen arrow, Receptionist as a real Character, pinch zoom [Developer: game]
   - [x] F4 Heroes UI: name pools accept space/Enter, role select (disabled while bound), per-style tabs, Rift preview [Developer: heroes]
   - [x] F6 Shell: compact top bar + ☰ menu, overlay panels, responsive phone/tablet, floor-style titles in React [Developer: shell]
-  - [~] Gate 1: QA (7/7 pass; Esc on Heroes/Receptionist/after Save, Receptionist + planner on phones) + review (High: automatic destructive merge) + security (High: Windows bare `git` lookup; Med: `~`/`C:\` ancestors, `core.worktree` spoof) → fixes [x]: merge/fold only into confirmed git roots (`root_source`, ≥3 segments, backup, live `project:merged`), hook absolute git + cleared env + toplevel must contain the project dir + cache, cwd validation, overlay Esc stack, phone layouts, scene lows, rift tint; supervisor backoff test de-flaked → re-review [x] (code: 3 Med, security: 1 Med: token holder could force a merge into `~/Projects`) → final fixes [x]: home dirs + direct children never absorb, git header needs cwd inside it, fresh 0600 backup per merge off the request path with a 60 s failure cooldown, safe root cache + all `GIT_*` cleared, merged-floor handling in Heroes/Receptionist/stores → v0.5.2
+  - [x] Gate 1: QA (7/7 pass; Esc on Heroes/Receptionist/after Save, Receptionist + planner on phones) + review (High: automatic destructive merge) + security (High: Windows bare `git` lookup; Med: `~`/`C:\` ancestors, `core.worktree` spoof) → fixes [x]: merge/fold only into confirmed git roots (`root_source`, ≥3 segments, backup, live `project:merged`), hook absolute git + cleared env + toplevel must contain the project dir + cache, cwd validation, overlay Esc stack, phone layouts, scene lows, rift tint; supervisor backoff test de-flaked → re-review [x] (code: 3 Med, security: 1 Med: token holder could force a merge into `~/Projects`) → final fixes [x]: home dirs + direct children never absorb, git header needs cwd inside it, fresh 0600 backup per merge off the request path with a 60 s failure cooldown, safe root cache + all `GIT_*` cleared, merged-floor handling in Heroes/Receptionist/stores → v0.5.2
 - Wave 2 (features → v0.6.0)
-  - [ ] G1 Drama: idle banter per style, tired/dizzy/sweat emotes, `toolStartedAt`
-  - [ ] G2 HUD: party bar, RPG status card, Details dialog
-  - [ ] G3 Furniture triggers: board/ledger/notice board/terminal/banner/reception desk open panels
-  - [ ] G4 Furniture locking: pins in procgen, Hall Planner drag-to-lock, release
+  - [x] W2 design `docs/design/game-office.md` [Architect] + W2-0 contract (drama settings/types, `notice-board`/`roster-board`, `furnitureClick`) [Developer]
+  - [x] G1 Drama: T1 content + rules (14 antics per style, strain lines, seeded pickers) · T2 engine (DramaDirector, Character strain/emote API, 12 icons, `streak` fx, drama label tier) [Developers]
+  - [x] G2 HUD (T3): party bar of portraits, RPG status card (mana/XP/strain), Details dialog, phone pill + tray; the docked roster and side drawer are gone [Developer]
+  - [x] G3 Furniture triggers (T4 layer + art, T5 one trigger item per action per floor, reception desk placed when missing) [Developers]
+  - [x] G4 Furniture locking: T5 pins in procgen (placed first, never removed, `seatsFor`) · T6 Hall Planner Furniture tool (F): drag to lock, Release, Lock all, undo/redo [Developers]
+  - [x] W2-W PM wiring: DramaDirector + FurnitureTriggerLayer in OfficeScene, `useFurnitureTriggers` in OfficeView; pin checks are warnings so a stale pin never drops a floor to the default layout
   - [ ] Gate 2: QA + review + security + docs → v0.6.0
 
 ## Backlog
 
 - [ ] Flaky under the full turbo run only: one `apps/web/src/lib/socket.test.ts` case timed out once at 11.7 s (passes alone and in 2 full web reruns); find the real-timer case and make it deterministic
-- [ ] Flaky under load (full turbo run): supervisor `service.test.ts` timing cases ("SIGTERM first… tree kill"); server `heroes.test.ts` "takes over a long-idle live subagent's hero…" failed once in the full turbo run (passes alone); procgen bsp 128x96 300-seed cases time out at 60 s when headless Chrome is left running
+- [ ] Flaky under load (full turbo run): server `runs.lifecycle.test.ts` "L7: when run:start is rejected…"; supervisor `service.test.ts` timing cases ("SIGTERM first… tree kill"); server `heroes.test.ts` "takes over a long-idle live subagent's hero…" failed once in the full turbo run (passes alone); procgen bsp 128x96 300-seed cases time out at 60 s when headless Chrome is left running
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 
 ## Releases

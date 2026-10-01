@@ -100,13 +100,20 @@ export interface EdgeRect {
   left: number;
 }
 
+export type InsetEdge = 'top' | 'right' | 'bottom' | 'left';
+
 /**
  * Derive the safe insets a single floating overlay occupies over its container, from bounding
- * rects. Assumes the overlay is docked flush to one edge and spans the full length of the
- * perpendicular axis (a right-docked panel, a bottom sheet, a left toolbar, ...); anything within
- * `edgeSlop` px of an edge counts as touching it.
+ * rects. With `edge` given, that edge is inset by the overlay's extent from it whatever the overlay's
+ * shape (the status card and the party bar do not span an axis). Without it, the overlay is assumed
+ * to be docked flush to one edge and to span the full length of the perpendicular axis (a right-docked
+ * panel, a bottom sheet, a left toolbar, ...); anything within `edgeSlop` px of an edge counts as touching it.
  */
-export function insetsFromOverlay(container: EdgeRect, overlay: EdgeRect, edgeSlop = 2): SafeInsets {
+export function insetsFromOverlay(container: EdgeRect, overlay: EdgeRect, edgeSlop = 2, edge?: InsetEdge): SafeInsets {
+  if (edge === 'top') return { ...ZERO_INSETS, top: Math.max(0, overlay.bottom - container.top) };
+  if (edge === 'bottom') return { ...ZERO_INSETS, bottom: Math.max(0, container.bottom - overlay.top) };
+  if (edge === 'left') return { ...ZERO_INSETS, left: Math.max(0, overlay.right - container.left) };
+  if (edge === 'right') return { ...ZERO_INSETS, right: Math.max(0, container.right - overlay.left) };
   const touchesTop = overlay.top <= container.top + edgeSlop;
   const touchesBottom = overlay.bottom >= container.bottom - edgeSlop;
   const touchesLeft = overlay.left <= container.left + edgeSlop;

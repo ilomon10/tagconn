@@ -53,6 +53,9 @@ describe('resolveShortcut', () => {
     expect(resolveShortcut(key({ key: 'r' }))).toEqual({ type: 'tool', tool: 'room' });
     expect(resolveShortcut(key({ key: 's' }))).toEqual({ type: 'tool', tool: 'stairs' });
     expect(resolveShortcut(key({ key: 'd' }))).toEqual({ type: 'tool', tool: 'doors' });
+    expect(resolveShortcut(key({ key: 'f' }))).toEqual({ type: 'tool', tool: 'furniture' });
+    expect(resolveShortcut(key({ key: 'F' }))).toEqual({ type: 'tool', tool: 'furniture' });
+    expect(resolveShortcut(key({ key: 'f', ctrlKey: true }))).toBeNull();
     expect(resolveShortcut(key({ key: 'h' }))).toEqual({ type: 'tool', tool: 'hand' });
     expect(resolveShortcut(key({ key: ' ' }))).toEqual({ type: 'tool', tool: 'hand' });
     expect(resolveShortcut(key({ key: 's', ctrlKey: true }))).toEqual({ type: 'save' });

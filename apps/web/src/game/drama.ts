@@ -1,8 +1,8 @@
 // M12 G1 drama: pure rules (docs/design/game-office.md sections 1.4 and 2.4). W2-0 ships the final
-// constants and signatures; task T1 replaces the stub bodies below.
+// constants and signatures; the bodies below are task T1's.
 import type { Agent, Settings } from '@tagconn/shared';
 import type { FurnitureKind } from './procgen/types';
-import type { DramaAntic, DramaContent, DramaEmote, StrainKind, ThemeDefinition } from './themes/types';
+import { STRAIN_PRIORITY, type DramaAntic, type DramaContent, type DramaEmote, type StrainKind, type ThemeDefinition } from './themes/types';
 
 export type DramaSettings = Settings['office']['drama'];
 
@@ -13,6 +13,9 @@ export const EMOTE_ICON: Record<DramaEmote, string> = {
   mug: 'icon-mug', note: 'icon-note', dice: 'icon-dice', ball: 'icon-ball', phone: 'icon-phone', laugh: 'icon-laugh', spark: 'icon-sparkle', zz: 'icon-zz',
 };
 export const EMPTY_DRAMA: DramaContent = { antics: [], strain: { dizzy: [], sweating: [], tired: [], 'on-a-roll': [] } };
+
+const PAIR_CHANCE = 0.7;
+const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** FNV-1a 32-bit (same as Character.ts:45 and seats.ts:6). */
 export function dramaHash(s: string): number {
@@ -38,8 +41,8 @@ export function dramaBucket(nowMs: number, idleChatSec: number): number {
 }
 
 /** Delay until the next drama attempt on a floor: idleChatSec * 1000 * (0.5 .. 1.5), seeded by (floorKey, bucket). */
-export function nextDramaDelayMs(_floorKey: string, _bucket: number, idleChatSec: number): number {
-  return idleChatSec * 1000; // stub (T1)
+export function nextDramaDelayMs(floorKey: string, bucket: number, idleChatSec: number): number {
+  return idleChatSec * 1000 * (0.5 + dramaRng(`${floorKey}|delay|${bucket}`)());
 }
 
 export interface DramaCandidate { key: string; roomId: string; x: number; y: number }
@@ -49,29 +52,70 @@ export interface DramaCast { roomId: string; keys: readonly [string] | readonly 
  * (the two closest by Manhattan distance, ties by key) when 2+ candidates and the seeded coin says "pair"
  * (p = 0.7), else a solo. Deterministic for the same inputs regardless of candidate order.
  */
-export function pickCast(_candidates: readonly DramaCandidate[], _busyRoomIds: ReadonlySet<string>, _seed: string): DramaCast | null {
-  return null; // stub (T1)
+export function pickCast(candidates: readonly DramaCandidate[], busyRoomIds: ReadonlySet<string>, seed: string): DramaCast | null {
+  const byRoom = new Map<string, DramaCandidate[]>();
+  for (const c of candidates) {
+    if (busyRoomIds.has(c.roomId)) continue;
+    const list = byRoom.get(c.roomId);
+    if (list) list.push(c);
+    else byRoom.set(c.roomId, [c]);
+  }
+  const roomIds = [...byRoom.keys()].sort(cmp);
+  if (roomIds.length === 0) return null;
+  const rng = dramaRng(seed);
+  const roomId = roomIds[Math.floor(rng() * roomIds.length)]!;
+  const list = byRoom.get(roomId)!.sort((a, b) => cmp(a.key, b.key));
+  const pair = rng() < PAIR_CHANCE;
+  if (!pair || list.length < 2) return { roomId, keys: [list[Math.floor(rng() * list.length)]!.key] };
+  let best: [DramaCandidate, DramaCandidate] = [list[0]!, list[1]!];
+  let bestD = Infinity;
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i]!;
+      const b = list[j]!;
+      const d = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+      if (d < bestD) {
+        bestD = d;
+        best = [a, b];
+      }
+    }
+  }
+  return { roomId, keys: [best[0].key, best[1].key] };
 }
 
 /** A seeded antic with `cast === castSize` whose `props` is empty or intersects `roomProps`. */
-export function pickAntic(_content: DramaContent, _roomProps: ReadonlySet<FurnitureKind>, _castSize: 1 | 2, _seed: string): DramaAntic | null {
-  return null; // stub (T1)
+export function pickAntic(content: DramaContent, roomProps: ReadonlySet<FurnitureKind>, castSize: 1 | 2, seed: string): DramaAntic | null {
+  const ok = content.antics
+    .filter((a) => a.cast === castSize && (a.props.length === 0 || a.props.some((p) => roomProps.has(p))))
+    .sort((a, b) => cmp(a.id, b.id));
+  if (ok.length === 0) return null;
+  return ok[Math.floor(dramaRng(seed)() * ok.length)]!;
 }
 
 /** A seeded exchange of `antic.lines`. */
-export function pickExchange(antic: DramaAntic, _seed: string): readonly [string] | readonly [string, string] {
-  return antic.lines[0] ?? ['']; // stub (T1)
+export function pickExchange(antic: DramaAntic, seed: string): readonly [string] | readonly [string, string] {
+  if (antic.lines.length === 0) return [''];
+  return antic.lines[Math.floor(dramaRng(seed)() * antic.lines.length)]!;
 }
 
 export type StrainInput = Pick<Agent, 'status' | 'activity' | 'startedAt' | 'updatedAt' | 'toolStartedAt'>;
 /** Rules in section 2.4. `null` when calm, done, or `cfg.enabled` is false. */
-export function strainFor(_agent: StrainInput, _nowMs: number, _cfg: DramaSettings, _onARoll: boolean): StrainKind | null {
-  return null; // stub (T1)
+export function strainFor(agent: StrainInput, nowMs: number, cfg: DramaSettings, onARoll: boolean): StrainKind | null {
+  if (!cfg.enabled || agent.status === 'done') return null;
+  const hit: Record<StrainKind, boolean> = {
+    dizzy: agent.toolStartedAt !== undefined && nowMs - agent.toolStartedAt >= cfg.dizzyToolSec * 1000,
+    sweating: (agent.status === 'waiting' || agent.status === 'blocked') && nowMs - agent.updatedAt >= cfg.sweatAfterSec * 1000,
+    tired: agent.status === 'active' && agent.activity !== 'idle' && nowMs - agent.startedAt >= cfg.tiredAfterSec * 1000,
+    'on-a-roll': onARoll && agent.status === 'active',
+  };
+  return STRAIN_PRIORITY.find((k) => hit[k]) ?? null;
 }
 
 /** A seeded strain line, or null when the list is empty. */
-export function strainLine(_content: DramaContent, _kind: StrainKind, _seed: string): string | null {
-  return null; // stub (T1)
+export function strainLine(content: DramaContent, kind: StrainKind, seed: string): string | null {
+  const lines = content.strain[kind];
+  if (lines.length === 0) return null;
+  return lines[Math.floor(dramaRng(seed)() * lines.length)]!;
 }
 
 /** `theme.drama ?? EMPTY_DRAMA`. */
@@ -79,12 +123,37 @@ export function dramaFor(theme: Pick<ThemeDefinition, 'drama'>): DramaContent {
   return theme.drama ?? EMPTY_DRAMA;
 }
 
+/** Longest `streakWindowSec` the settings allow; older samples can never matter. */
+const STREAK_KEEP_MS = 600_000;
+
 /** "On a roll": records (toolCount, time) samples per agent; a tool-count drop (a new agent reusing an id) resets it. */
 export class StreakTracker {
-  observe(_agentId: string, _toolCount: number, _nowMs: number): void {} // stub (T1)
-  /** True when toolCount rose by >= cfg.streakTools within the last cfg.streakWindowSec. */
-  isOnARoll(_agentId: string, _nowMs: number, _cfg: Pick<DramaSettings, 'streakTools' | 'streakWindowSec'>): boolean {
-    return false; // stub (T1)
+  private readonly samples = new Map<string, { count: number; at: number }[]>();
+
+  observe(agentId: string, toolCount: number, nowMs: number): void {
+    let list = this.samples.get(agentId);
+    const last = list?.[list.length - 1];
+    if (last && toolCount < last.count) list = undefined;
+    if (!list) {
+      list = [];
+      this.samples.set(agentId, list);
+    }
+    const tail = list[list.length - 1];
+    if (!tail || tail.count !== toolCount) list.push({ count: toolCount, at: nowMs });
+    while (list.length > 1 && nowMs - list[0]!.at > STREAK_KEEP_MS) list.shift();
   }
-  forget(_agentId: string): void {} // stub (T1)
+
+  /** True when toolCount rose by >= cfg.streakTools within the last cfg.streakWindowSec. */
+  isOnARoll(agentId: string, nowMs: number, cfg: Pick<DramaSettings, 'streakTools' | 'streakWindowSec'>): boolean {
+    const list = this.samples.get(agentId);
+    const newest = list?.[list.length - 1];
+    if (!list || !newest) return false;
+    const from = nowMs - cfg.streakWindowSec * 1000;
+    const base = list.find((s) => s.at >= from);
+    return base !== undefined && newest.count - base.count >= cfg.streakTools;
+  }
+
+  forget(agentId: string): void {
+    this.samples.delete(agentId);
+  }
 }

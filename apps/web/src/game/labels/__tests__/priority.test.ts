@@ -28,6 +28,12 @@ describe('sortByPriority', () => {
     expect(order.map((s) => s.id)).toEqual(['newest', 'mid', 'older']);
   });
 
+  it('sorts a drama bubble after plain others, however recent, but never above waiting/selected', () => {
+    const drama = { ...sub('drama', false, false, 999), drama: true };
+    const order = sortByPriority([drama, sub('other', false, false, 1), sub('wait', false, true, 1), sub('sel', true, false, 1)]);
+    expect(order.map((s) => s.id)).toEqual(['sel', 'wait', 'other', 'drama']);
+  });
+
   it('breaks exact ties by id, stably', () => {
     const order = sortByPriority([sub('z', false, false, 5), sub('a', false, false, 5)]);
     expect(order.map((s) => s.id)).toEqual(['a', 'z']);

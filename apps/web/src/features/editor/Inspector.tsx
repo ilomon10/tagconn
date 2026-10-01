@@ -8,11 +8,13 @@ import {
   type FurnishDensity,
   type LayoutRoom,
   type OfficeLayoutInput,
+  type PinnedFurniture,
   type RoomFurnish,
   type RoomType,
 } from '@tagconn/shared';
 import type { ThemeDefinition } from '../../game/themes';
 import { Button, Checkbox, Field, Input, Select } from '../../components/ui';
+import type { FurnitureSelection } from '../../stores/editorStore';
 
 const int = (v: string, fallback: number) => {
   const n = Number.parseInt(v, 10);
@@ -267,6 +269,86 @@ function DoorsFields({ room, onAutoDoors, onSeal }: { room: LayoutRoom; onAutoDo
   );
 }
 
+/** Label for a furniture kind ("work-desk" -> "Work desk"). */
+const kindLabel = (kind: string) => {
+  const t = kind.replace(/-/g, ' ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+/** Locked furniture of the selected room (M12): "N locked", Lock all, Release all. */
+function LockedFurnitureFields({
+  room,
+  lockable,
+  onLockAll,
+  onReleaseAll,
+}: {
+  room: LayoutRoom;
+  lockable: number;
+  onLockAll: () => void;
+  onReleaseAll: () => void;
+}) {
+  const locked = room.furniture?.length ?? 0;
+  return (
+    <div className="space-y-2 border-t border-ink-700 p-2.5">
+      <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-ink-400">
+        <span>Furniture</span>
+        <span className="normal-case text-ink-300">{locked} locked</span>
+      </div>
+      <div className="flex gap-2">
+        <Button
+          className="flex-1"
+          disabled={lockable === 0 || locked >= LAYOUT_LIMITS.maxPinnedPerRoom}
+          onClick={onLockAll}
+          title="Locks every generated item where it stands, so generation keeps them"
+        >
+          Lock all
+        </Button>
+        <Button className="flex-1" variant="ghost" disabled={locked === 0} onClick={onReleaseAll} title="Hands every locked item back to procedural generation">
+          Release all
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** The selected furniture item: kind, interior-relative position and size, Locked/Generated, Lock / Release. */
+function FurnitureItemFields({
+  room,
+  selection,
+  onLock,
+  onRelease,
+}: {
+  room: LayoutRoom;
+  selection: FurnitureSelection;
+  onLock: (pin: PinnedFurniture) => void;
+  onRelease: (index: number) => void;
+}) {
+  const pinned = 'pinIndex' in selection;
+  const item = pinned ? room.furniture?.[selection.pinIndex] : selection.generated;
+  if (!item) return null;
+  return (
+    <div className="space-y-2 border-t border-ink-700 p-2.5">
+      <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-ink-400">
+        <span>Selected item</span>
+        <span className={pinned ? 'normal-case text-amber-300' : 'normal-case text-ink-300'}>{pinned ? '\u{1F512} Locked' : 'Generated'}</span>
+      </div>
+      <div className="text-[12px] text-ink-100">{kindLabel(item.kind)}</div>
+      <div className="font-mono text-[11px] text-ink-400">
+        at {item.x}, {item.y} · {item.w} x {item.h}
+      </div>
+      {pinned ? (
+        <Button className="w-full" onClick={() => onRelease(selection.pinIndex)} title="Delete / Backspace">
+          Release to procedural
+        </Button>
+      ) : (
+        <Button className="w-full" variant="primary" onClick={() => onLock(item)}>
+          Lock in place
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /** The selected room's fields: type, name, walled, exact x/y/w/h, plus (M8 8n) furnishing and doors. */
 function RoomFields({
   room,
@@ -277,8 +359,20 @@ function RoomFields({
   onResetFurnish,
   onAutoDoors,
   onSealRoom,
+  selectedFurniture,
+  lockableCount,
+  onLockFurniture,
+  onReleaseFurniture,
+  onLockAll,
+  onReleaseAll,
 }: {
   room: LayoutRoom;
+  selectedFurniture: FurnitureSelection | null;
+  lockableCount: number;
+  onLockFurniture: (pin: PinnedFurniture) => void;
+  onReleaseFurniture: (index: number) => void;
+  onLockAll: () => void;
+  onReleaseAll: () => void;
   furnishDefaults: OfficeLayoutInput['furnishDefaults'];
   onChange: (patch: Partial<Omit<LayoutRoom, 'id'>>) => void;
   onFurnish: (patch: Partial<RoomFurnish>) => void;
@@ -329,6 +423,10 @@ function RoomFields({
           </Field>
         </div>
       </div>
+      {room.type !== 'stairs' && selectedFurniture && selectedFurniture.roomId === room.id && (
+        <FurnitureItemFields room={room} selection={selectedFurniture} onLock={onLockFurniture} onRelease={onReleaseFurniture} />
+      )}
+      {room.type !== 'stairs' && <LockedFurnitureFields room={room} lockable={lockableCount} onLockAll={onLockAll} onReleaseAll={onReleaseAll} />}
       {furnishable && (
         <FurnishFields room={room} layoutDefaults={furnishDefaults} onFurnish={onFurnish} onReroll={onRerollFurnish} onReset={onResetFurnish} />
       )}
@@ -349,7 +447,19 @@ export function Inspector({
   onResetFurnish,
   onAutoDoors,
   onSealRoom,
+  selectedFurniture,
+  lockableCount,
+  onLockFurniture,
+  onReleaseFurniture,
+  onLockAll,
+  onReleaseAll,
 }: {
+  selectedFurniture: FurnitureSelection | null;
+  lockableCount: number;
+  onLockFurniture: (roomId: string, pin: PinnedFurniture) => void;
+  onReleaseFurniture: (roomId: string, index: number) => void;
+  onLockAll: (roomId: string) => void;
+  onReleaseAll: (roomId: string) => void;
   draft: OfficeLayoutInput;
   theme: ThemeDefinition;
   selectedRoom: LayoutRoom | undefined;
@@ -376,6 +486,12 @@ export function Inspector({
           onResetFurnish={() => onResetFurnish(selectedRoom.id)}
           onAutoDoors={() => onAutoDoors(selectedRoom.id)}
           onSealRoom={() => onSealRoom(selectedRoom.id)}
+          selectedFurniture={selectedFurniture}
+          lockableCount={lockableCount}
+          onLockFurniture={(pin) => onLockFurniture(selectedRoom.id, pin)}
+          onReleaseFurniture={(index) => onReleaseFurniture(selectedRoom.id, index)}
+          onLockAll={() => onLockAll(selectedRoom.id)}
+          onReleaseAll={() => onReleaseAll(selectedRoom.id)}
         />
       ) : (
         <div className="p-2.5 text-[11px] text-ink-400">

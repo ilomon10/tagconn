@@ -128,6 +128,14 @@ const NEW_KIND_SHAPES: Record<
 // M8 8p: every standing appliance at its real footprint width (`APPLIANCE_SPECS`, h is always 1).
 const APPLIANCE_KINDS = Object.keys(APPLIANCE_SPECS) as ApplianceKind[];
 
+// M12 G3 trigger furniture: 1 row deep at its placed widths, painted flat and against a north wall.
+const TRIGGER_SHAPES: { kind: FurnitureKind; w: number }[] = [
+  { kind: 'notice-board', w: 1 },
+  { kind: 'roster-board', w: 1 },
+  { kind: 'notice-board', w: 2 },
+  { kind: 'roster-board', w: 2 },
+];
+
 function wallDecorFixture(kind: WallDecorKind, span: number, variant: number): WallDecorSlot {
   return { kind, x: 2, y: 5, span, roomId: 'r1', variant };
 }
@@ -249,6 +257,24 @@ describe.each(THEMES)('%s theme painters', (name, theme) => {
         theme.paintFurniture(g, f, T);
         const minY = Math.min(...rects.map((r) => r.y));
         expect(minY).toBeGreaterThanOrEqual(f.y * T - (against ? MAX_OVERDRAW_PX : 0));
+      }
+    }
+  });
+
+  it('paints the trigger boards inside their footprint, tall only against a north wall (<= MAX_OVERDRAW_PX)', () => {
+    const T = 16;
+    for (const { kind, w } of TRIGGER_SHAPES) {
+      for (const against of [false, true]) {
+        for (let variant = 0; variant < 4; variant++) {
+          const f: PlacedFurniture = { x: 2, y: 5, w, h: 1, kind, blocking: true, roomId: 'r1', roomType: 'desks', variant, againstNorthWall: against };
+          const { g, rects } = makeBoundsGraphics();
+          theme.paintFurniture(g, f, T);
+          expect(rects.length).toBeGreaterThan(3);
+          expect(Math.min(...rects.map((r) => r.x))).toBeGreaterThanOrEqual(f.x * T - 1);
+          expect(Math.max(...rects.map((r) => r.x + r.w))).toBeLessThanOrEqual((f.x + w) * T + 1);
+          expect(Math.min(...rects.map((r) => r.y))).toBeGreaterThanOrEqual(f.y * T - (against ? MAX_OVERDRAW_PX : 0));
+          expect(Math.max(...rects.map((r) => r.y + r.h))).toBeLessThanOrEqual((f.y + 1) * T + 1);
+        }
       }
     }
   });

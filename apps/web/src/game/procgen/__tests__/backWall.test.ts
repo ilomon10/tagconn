@@ -26,11 +26,11 @@ function applianceCells(map: GeneratedMap): Set<string> {
 
 /**
  * Parity sweep (docs/design/back-wall.md section 2.5): `generateMap(layout)` (backWall on, the
- * default) compared against `generateMap(layout, { backWall: false })` (== pre-8p output).
+ * default) compared against `generateMap(layout, { backWall: false, triggers: false })` (== pre-8p output).
  */
 function assertParity(layout: OfficeLayout, label: string): void {
-  const withWalls = generateMap(layout);
-  const without = generateMap(layout, { backWall: false });
+  const withWalls = generateMap(layout, { triggers: false });
+  const without = generateMap(layout, { backWall: false, triggers: false });
   const applianceKeys = applianceCells(withWalls);
 
   // Nothing but appliance placement should ever put backWall:false in error where backWall:true
@@ -233,7 +233,7 @@ describe('backWall parity (docs/design/back-wall.md section 2.5)', () => {
   ];
   for (const [name, layout] of FIXTURES) {
     it(`fixture: ${name}`, () => {
-      expect(hasLayoutErrors(generateMap(layout, { backWall: false }).issues)).toBe(false);
+      expect(hasLayoutErrors(generateMap(layout, { backWall: false, triggers: false }).issues)).toBe(false);
       assertParity(layout, name);
     });
   }

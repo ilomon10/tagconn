@@ -71,6 +71,19 @@ export const CHARACTER_BITMAPS: Record<string, Bitmap> = {
   'icon-zz': { rows: ['zzzz', '  z ', ' z  ', 'zzzz'], palette: { z: 0x9fc8ff }, outline: 0x10182a },
   'icon-check': { rows: ['     g', '    gg', 'g  gg ', 'ggggg ', ' gg   '], palette: { g: 0x6cf08a }, outline: 0x0a2410 },
   'icon-term': { rows: ['g   ', ' g  ', 'g ww'], palette: { g: 0x6cf08a, w: 0xf2ecff }, outline: 0x0a1410 },
+  // M12 G1 drama: strain icons and antic emotes (<= 7x7 before the outline).
+  'icon-dizzy-1': { rows: ['y   y', ' y y ', '  y  ', ' y y ', 'y   y'], palette: { y: 0xffe45a }, outline: 0x2a2410 },
+  'icon-dizzy-2': { rows: ['  y  ', 'y y y', ' yyy ', 'y y y', '  y  '], palette: { y: 0xffe45a }, outline: 0x2a2410 },
+  'icon-dizzy-3': { rows: [' y  y', '  yy ', 'yyyyy', '  yy ', ' y  y'], palette: { y: 0xffe45a }, outline: 0x2a2410 },
+  'icon-sweat': { rows: ['  b  ', '  b  ', ' bbb ', 'bbwbb', 'bbbbb', ' bbb '], palette: { b: 0x4fa8ff, w: 0xcfe9ff }, outline: 0x0a1a2e },
+  'icon-yawn': { rows: ['  oooo', ' o  o ', ' o  o ', ' o  o ', '  oo  '], palette: { o: 0xf2ecff }, outline: 0x1c1826 },
+  'icon-fire': { rows: ['   o  ', '  oo  ', ' ooyo ', 'ooyyoo', 'ooyyoo', ' oooo '], palette: { o: 0xff7a1f, y: 0xffd84a }, outline: 0x2a0e04 },
+  'icon-mug': { rows: ['wwwww ', 'wwwwww', 'wwwww ', ' www  '], palette: { w: 0xf5f5f5 }, outline: 0x241c10 },
+  'icon-note': { rows: ['  nnnn', '  n  n', '  n   ', 'nnn   ', 'nnn   '], palette: { n: 0xc9a6ff }, outline: 0x1c1030 },
+  'icon-dice': { rows: ['wwwww', 'wkwkw', 'wwkww', 'wkwkw', 'wwwww'], palette: { w: 0xf5f5f5, k: 0x333333 }, outline: 0x1c1826 },
+  'icon-ball': { rows: ['    ww', 'pp  ww', 'ppp   ', ' pp   ', ' b    '], palette: { w: 0xffffff, p: 0xd9534f, b: 0x8a5a2b }, outline: 0x1c1826 },
+  'icon-phone': { rows: [' kkk ', 'kbbbk', 'kbbbk', 'kbbbk', ' kkk '], palette: { k: 0x55596b, b: 0x8fd3ff }, outline: 0x10121a },
+  'icon-laugh': { rows: ['h h   ', 'h h   ', 'hhh a ', 'h h a ', 'h h aa'], palette: { h: 0xffd84a, a: 0xffa94a }, outline: 0x2a2410 },
 };
 
 function withOutline(b: Bitmap): string[] {

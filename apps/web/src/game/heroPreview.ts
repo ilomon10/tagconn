@@ -1,6 +1,8 @@
 import type { HeroAppearance } from '@tagconn/shared';
+import { HERO_HAIR_COLORS, HERO_SKIN_TONES } from '@tagconn/shared';
+import { dramaHash } from './drama';
 import { resolveHeroCostume } from './heroLook';
-import { CHARACTER_BITMAPS, type Bitmap } from './textures';
+import { CHARACTER_BITMAPS, HAIR_STYLES, type Bitmap } from './textures';
 import { CLOAK_BITMAP, GOGGLES_BITMAP, HAT_BITMAPS, STAFF_BITMAPS } from './themes/costumes';
 import type { Costume } from './themes/types';
 
@@ -107,4 +109,40 @@ export function paintHeroPreview(ctx: CanvasRenderingContext2D, opts: HeroPrevie
   }
 
   for (const part of parts) blit(ctx, part, scale, originX, originY);
+}
+
+/** Bitmap px the feet drop for a bust: the legs fall below the frame and the body's hem meets its bottom edge. */
+export const BUST_SHIFT_Y = 3;
+
+/**
+ * `paintHeroPreview` for the HUD portraits (docs/design/game-office.md section 3.3). `bust` shifts the
+ * origin so the head and shoulders fill the frame (the legs are clipped by the canvas); `full` is the
+ * plain preview. Frames: a bust is about 22x20 bitmap px with the feet at (11, 20), a full body 24x26 with them at (12, 25).
+ */
+export function paintPortrait(ctx: CanvasRenderingContext2D, opts: HeroPreviewOptions & { crop: 'bust' | 'full' }): void {
+  const { crop, ...rest } = opts;
+  if (crop === 'full') return paintHeroPreview(ctx, rest);
+  const scale = rest.scale ?? 1;
+  paintHeroPreview(ctx, { ...rest, originX: rest.originX ?? 16 * scale, originY: (rest.originY ?? 22 * scale) + BUST_SHIFT_Y * scale });
+}
+
+/**
+ * The look the scene gives an actor with no bound hero: `Character`'s constructor picks skin and hair
+ * colour from the FNV-1a hash of the actor key (`h % n`, `(h >>> 3) % n`), and `setLook` the hair style
+ * from the role's sprite number. `actorKey` is `agent:<id>`, or `gm:<projectId>` for a floor-wide main agent.
+ * Everything else stays `auto`/null, so the theme's costume and the role colour dress it.
+ */
+export function anonymousAppearance(actorKey: string, sprite: number): HeroAppearance {
+  const h = dramaHash(actorKey);
+  return {
+    skin: HERO_SKIN_TONES[h % HERO_SKIN_TONES.length]!,
+    hairStyle: Math.abs(sprite) % HAIR_STYLES,
+    hairColor: HERO_HAIR_COLORS[(h >>> 3) % HERO_HAIR_COLORS.length]!,
+    outfitColor: null,
+    hat: 'auto',
+    hatColor: null,
+    prop: 'auto',
+    accessory: 'auto',
+    accessoryColor: null,
+  };
 }

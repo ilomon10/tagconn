@@ -1,34 +1,23 @@
-import { useMemo, useRef, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useOfficeStore } from '../../stores/officeStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useHeroPanelStore } from '../heroes/store';
-import { useNow, useThemedRoleLookup } from '../../lib/hooks';
+import { useNow } from '../../lib/hooks';
 import { clock, elapsed, formatTokens } from '../../lib/format';
 import { contextRatio, contextWindowFor } from '../../lib/tokens';
-import { useModalFocus } from '../../lib/useModalFocus';
-import { Badge, Button, Checkbox, Dot } from '../../components/ui';
+import { Badge, Button } from '../../components/ui';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[88px_1fr] gap-2 py-1 text-[11px]">
+    <div className="grid grid-cols-[96px_1fr] gap-2 py-1 text-[11px]">
       <dt className="text-ink-400">{label}</dt>
       <dd className="min-w-0 break-words text-ink-100">{children}</dd>
     </div>
   );
 }
 
-export function AgentDrawer({
-  agentId,
-  onClose,
-  follow,
-  onFollowChange,
-}: {
-  agentId: string;
-  onClose: () => void;
-  /** Whether the camera should keep this agent centered in view while it moves. */
-  follow: boolean;
-  onFollowChange: (follow: boolean) => void;
-}) {
+/** The full agent record (the body of `AgentDetailsDialog`): everything the status card leaves out. */
+export function AgentDetails({ agentId }: { agentId: string }) {
   const agent = useOfficeStore((s) => s.agents[agentId]);
   const events = useOfficeStore((s) => s.events);
   const tasks = useOfficeStore((s) => s.tasks);
@@ -36,47 +25,19 @@ export function AgentDrawer({
   const project = useOfficeStore((s) => (agent ? s.projects[agent.projectId] : undefined));
   const heroes = useHeroStore((s) => s.heroes);
   const openHeroEditor = useHeroPanelStore((s) => s.openHeroEditor);
-  const lookup = useThemedRoleLookup();
   const now = useNow();
   const recent = useMemo(() => events.filter((e) => e.agentId === agentId).slice(-12).reverse(), [events, agentId]);
   const myTasks = useMemo(() => Object.values(tasks).filter((t) => t.assigneeAgentId === agentId), [tasks, agentId]);
   // M8 8i: the hero (persistent named character, docs/design/living-office.md) currently bound to
-  // this agent, if any — heroes are broadcast to every client, so a plain scan of the store is cheap.
+  // this agent, if any: heroes are broadcast to every client, so a plain scan of the store is cheap.
   const hero = useMemo(() => Object.values(heroes).find((h) => h.boundAgentId === agentId), [heroes, agentId]);
 
-  // M9 8f: not a modal (the map stays clickable behind it, so no Tab trap) — but opening it should
-  // still move focus onto the drawer, and give it back to whatever had it once the drawer closes.
-  const containerRef = useRef<HTMLElement | null>(null);
-  const headingRef = useRef<HTMLHeadingElement | null>(null);
-  useModalFocus(true, containerRef, { initialFocusRef: headingRef });
-
-  // Same label as the roster row: hero title, edited role title, else this agent's floor-style title.
-  const role = lookup(agent?.role, { projectId: agent?.projectId, hero });
   return (
-    // Docked to the right on tablets, desktops and phones in landscape; a bottom sheet on a phone in portrait. Either way
-    // this is a plain edge-docked panel with its own scroll — no full-screen backdrop, so the rest
-    // of the canvas stays clickable and draggable.
-    <aside
-      ref={containerRef}
-      data-camera-overlay
-      className="anim-sheet absolute inset-x-0 bottom-0 z-10 flex max-h-[60%] flex-col rounded-t-xl border-t border-ink-700 bg-ink-850/95 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur dialog:inset-x-auto dialog:inset-y-0 dialog:right-0 dialog:max-h-none dialog:w-80 dialog:rounded-none dialog:border-l dialog:border-t-0 dialog:pb-0 side:inset-x-auto side:inset-y-0 side:right-0 side:max-h-none side:w-[min(20rem,55%)] side:rounded-none side:border-l side:border-t-0"
-    >
-      <header className="flex items-center gap-2 border-b border-ink-700 px-3 py-2">
-        <Dot color={role.color} />
-        <h2 ref={headingRef} tabIndex={-1} className="truncate text-sm font-semibold">
-          {agent ? (hero ? `${hero.name} · ${role.themedTitle}` : role.themedTitle) : 'Agent left'}
-        </h2>
-        <div className="ml-auto flex items-center gap-2">
-          {agent && <Checkbox checked={follow} onChange={onFollowChange} label="Follow" />}
-          <Button variant="ghost" onClick={onClose} aria-label="Close details">
-            ✕
-          </Button>
-        </div>
-      </header>
+    <>
       {!agent ? (
-        <p className="p-4 text-xs text-ink-400">This agent has left the office.</p>
+        <p className="p-4 text-xs text-ink-300">This agent has left the office.</p>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+        <div className="h-full overflow-y-auto px-4 py-3">
           <dl className="divide-y divide-ink-700/60">
             {hero && (
               <Row label="Hero">
@@ -156,6 +117,6 @@ export function AgentDrawer({
           )}
         </div>
       )}
-    </aside>
+    </>
   );
 }

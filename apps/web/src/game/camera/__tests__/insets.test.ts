@@ -182,6 +182,36 @@ describe('insetsFromOverlay', () => {
   });
 });
 
+describe('insetsFromOverlay with an edge hint', () => {
+  const container = { top: 0, right: 800, bottom: 600, left: 0 };
+
+  it('insets the top by a narrow card that does not span the width', () => {
+    expect(insetsFromOverlay(container, { top: 12, right: 300, bottom: 140, left: 12 }, 2, 'top')).toEqual({ ...ZERO_INSETS, top: 140 });
+  });
+
+  it('insets the bottom by a centred bar that touches neither side', () => {
+    expect(insetsFromOverlay(container, { top: 520, right: 600, bottom: 588, left: 200 }, 2, 'bottom')).toEqual({ ...ZERO_INSETS, bottom: 80 });
+  });
+
+  it('supports left and right', () => {
+    expect(insetsFromOverlay(container, { top: 100, right: 200, bottom: 300, left: 0 }, 2, 'left')).toEqual({ ...ZERO_INSETS, left: 200 });
+    expect(insetsFromOverlay(container, { top: 100, right: 800, bottom: 300, left: 700 }, 2, 'right')).toEqual({ ...ZERO_INSETS, right: 100 });
+  });
+
+  it('measures from the container, not the page', () => {
+    expect(insetsFromOverlay({ top: 50, right: 800, bottom: 650, left: 0 }, { top: 60, right: 300, bottom: 190, left: 10 }, 2, 'top').top).toBe(140);
+  });
+
+  it('never goes negative when the overlay is outside the container', () => {
+    expect(insetsFromOverlay(container, { top: -90, right: 300, bottom: -10, left: 0 }, 2, 'top').top).toBe(0);
+  });
+
+  it('keeps the inference when no edge is given', () => {
+    expect(insetsFromOverlay(container, { top: 300, right: 800, bottom: 600, left: 0 })).toEqual({ ...ZERO_INSETS, bottom: 300 });
+    expect(insetsFromOverlay(container, { top: 12, right: 300, bottom: 140, left: 12 })).toEqual(ZERO_INSETS);
+  });
+});
+
 describe('combineInsets', () => {
   it('is zero for no overlays', () => {
     expect(combineInsets([])).toEqual(ZERO_INSETS);

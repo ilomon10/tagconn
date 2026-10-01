@@ -1,6 +1,7 @@
-import { generateHeroAppearance, HERO_ACCESSORIES, HERO_HATS, HERO_PROPS, heroSeed } from '@tagconn/shared';
+import { generateHeroAppearance, HERO_ACCESSORIES, HERO_HAIR_COLORS, HERO_HATS, HERO_PROPS, HERO_SKIN_TONES, heroSeed, HeroAppearanceSchema } from '@tagconn/shared';
 import { describe, expect, it } from 'vitest';
-import { paintHeroPreview } from './heroPreview';
+import { anonymousAppearance, BUST_SHIFT_Y, paintHeroPreview, paintPortrait } from './heroPreview';
+import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, hexToNumber } from './textures';
 import type { Costume } from './themes/types';
 
 /** A stub `CanvasRenderingContext2D` — just enough of the 2D API for `paintHeroPreview` to draw
@@ -101,5 +102,73 @@ describe('paintHeroPreview', () => {
     paintHeroPreview(at100.ctx, { appearance, themeCostume: MODERN_COSTUME, roleColor: 0x223344, scale: 1, originX: 100, originY: 100 });
     expect(at100.fake.calls[0]!.x - at0.fake.calls[0]!.x).toBe(100);
     expect(at100.fake.calls[0]!.y - at0.fake.calls[0]!.y).toBe(100);
+  });
+});
+
+describe('paintPortrait', () => {
+  const appearance = generateHeroAppearance(heroSeed('proj-1', 'developer', 0));
+  const opts = { appearance, themeCostume: MODERN_COSTUME, roleColor: 0x223344, scale: 2 };
+
+  it('full is the plain preview', () => {
+    const a = fakeCtx();
+    const b = fakeCtx();
+    paintPortrait(a.ctx, { ...opts, crop: 'full' });
+    paintHeroPreview(b.ctx, opts);
+    expect(a.fake.calls).toEqual(b.fake.calls);
+  });
+
+  it('bust drops the origin so the head and shoulders fill the frame', () => {
+    const a = fakeCtx();
+    const b = fakeCtx();
+    paintPortrait(a.ctx, { ...opts, crop: 'bust' });
+    paintHeroPreview(b.ctx, opts);
+    expect(a.fake.calls.length).toBe(b.fake.calls.length);
+    expect(a.fake.calls[0]!.y - b.fake.calls[0]!.y).toBe(BUST_SHIFT_Y * 2);
+    expect(a.fake.calls[0]!.x).toBe(b.fake.calls[0]!.x);
+  });
+
+  it('bust shifts an explicit origin too', () => {
+    const a = fakeCtx();
+    const b = fakeCtx();
+    paintPortrait(a.ctx, { ...opts, originX: 10, originY: 40, crop: 'bust' });
+    paintHeroPreview(b.ctx, { ...opts, originX: 10, originY: 40 });
+    expect(a.fake.calls[0]!.y - b.fake.calls[0]!.y).toBe(BUST_SHIFT_Y * 2);
+  });
+});
+
+describe('anonymousAppearance', () => {
+  // The same FNV-1a as `Character.ts` `hash` (Phaser-bound, so replicated here as the reference).
+  const characterHash = (s: string): number => {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+    return h >>> 0;
+  };
+
+  it('picks the skin and hair the scene draws for the same actor key', () => {
+    for (const key of ['agent:main:abc', 'agent:sub-1', 'gm:proj-1', 'agent:', 'agent:\u00e9\u00e8']) {
+      const h = characterHash(key);
+      const a = anonymousAppearance(key, 0);
+      expect(hexToNumber(a.skin)).toBe(SKIN_TONES[h % SKIN_TONES.length]);
+      expect(hexToNumber(a.hairColor)).toBe(HAIR_COLORS[(h >>> 3) % HAIR_COLORS.length]);
+    }
+  });
+
+  it('takes the hair style from the role sprite, wrapped like the scene does', () => {
+    expect(anonymousAppearance('agent:x', 3).hairStyle).toBe(3);
+    expect(anonymousAppearance('agent:x', HAIR_STYLES + 2).hairStyle).toBe(2);
+    expect(anonymousAppearance('agent:x', -1).hairStyle).toBe(1 % HAIR_STYLES);
+  });
+
+  it('is a valid appearance with auto dressing and the palette colours', () => {
+    const a = anonymousAppearance('agent:y', 5);
+    expect(HeroAppearanceSchema.safeParse(a).success).toBe(true);
+    expect([a.hat, a.prop, a.accessory]).toEqual(['auto', 'auto', 'auto']);
+    expect(a.outfitColor).toBeNull();
+    expect(HERO_SKIN_TONES).toContain(a.skin);
+    expect(HERO_HAIR_COLORS).toContain(a.hairColor);
+  });
+
+  it('is deterministic', () => {
+    expect(anonymousAppearance('agent:z', 1)).toEqual(anonymousAppearance('agent:z', 1));
   });
 });

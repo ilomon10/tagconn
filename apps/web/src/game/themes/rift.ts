@@ -220,6 +220,7 @@ export const riftTheme: ThemeDefinition = {
   costumes: riftCostumes(guildTheme.costumes),
   activityVerbs: guildTheme.activityVerbs,
   activityFx: guildTheme.activityFx,
+  drama: guildTheme.drama,
   lighting: { dayTint: 0xd6d0ff, nightTint: 0x0b0820, nightAlpha: 0.55, glowAtNight: true },
   floorLabel: () => 'The Multiverse',
 };

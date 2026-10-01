@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { LayoutRoom, OfficeLayout } from '@tagconn/shared';
+import { validateLayout, type LayoutRoom, type OfficeLayout } from '@tagconn/shared';
 import { DEFAULT_LAYOUT } from '@tagconn/shared';
 import { genRoomId, useEditorStore } from './editorStore';
 
@@ -455,5 +455,176 @@ describe('editorStore', () => {
         expect(useEditorStore.getState().selectedDoor).toBeNull();
       });
     });
+  });
+});
+
+describe('editorStore furniture pins (M12)', () => {
+  beforeEach(closeStore);
+  // Room 'a': 6x5 at 0,0 -> explicitly walled desks, interior 4x3.
+  const p = (over: Partial<import('@tagconn/shared').PinnedFurniture> = {}) => ({ kind: 'plant', x: 0, y: 0, w: 1, h: 1, ...over });
+  const s = () => useEditorStore.getState();
+  const pins = () => s().draft?.rooms[0]?.furniture;
+  const load = (r: Partial<LayoutRoom> = {}) => s().load(layout({ rooms: [room({ walled: true, ...r })] }));
+
+  it('lockFurniture adds a pin in one undo step and selects it; identical pins are a no-op', () => {
+    load();
+    s().lockFurniture('a', p({ x: 1, y: 1 }));
+    expect(pins()).toEqual([p({ x: 1, y: 1 })]);
+    expect(s().history).toHaveLength(1);
+    expect(s().selectedFurniture).toEqual({ roomId: 'a', pinIndex: 0 });
+    s().lockFurniture('a', p({ x: 1, y: 1 }));
+    expect(pins()).toHaveLength(1);
+    expect(s().history).toHaveLength(1);
+    s().undo();
+    expect(pins()).toBeUndefined();
+    expect(s().selectedFurniture).toBeNull();
+    s().redo();
+    expect(pins()).toHaveLength(1);
+  });
+
+  it('refuses a pin outside the interior or overlapping another', () => {
+    load({ furniture: [p()] });
+    s().lockFurniture('a', p({ x: 4 }));
+    s().lockFurniture('a', p({ kind: 'lamp' }));
+    expect(pins()).toHaveLength(1);
+  });
+
+  it('drag = pinDirect + setPinPos in one gesture / one undo entry', () => {
+    load();
+    s().beginGesture();
+    const i = s().pinDirect('a', p({ x: 1, y: 1 }));
+    s().setPinPos('a', i, { x: 2, y: 1 });
+    s().setPinPos('a', i, { x: 3, y: 2 });
+    s().setPinPos('a', i, { x: 99, y: 99 }); // clamped to the interior (4x3)
+    s().endGesture();
+    expect(pins()).toEqual([p({ x: 3, y: 2 })]);
+    expect(s().history).toHaveLength(1);
+    s().undo();
+    expect(pins()).toBeUndefined();
+  });
+
+  it('setPinPos refuses an overlap: the pin stays at its last valid spot', () => {
+    load({ furniture: [p({ x: 0, y: 0 }), p({ kind: 'lamp', x: 3, y: 0 })] });
+    s().beginGesture();
+    s().setPinPos('a', 1, { x: 2, y: 0 });
+    s().setPinPos('a', 1, { x: 0, y: 0 }); // overlaps pin 0
+    s().endGesture();
+    expect(pins()?.[1]).toMatchObject({ x: 2, y: 0 });
+  });
+
+  it('setPinPos refuses an explicit door apron', () => {
+    // door n offset 2 -> interior x 1, y 0
+    load({ doors: [{ side: 'n', offset: 2 }], furniture: [p({ x: 0, y: 1 })] });
+    s().nudgePin('a', 0, 1, -1); // would land on (1,0)
+    expect(pins()?.[0]).toMatchObject({ x: 0, y: 1 });
+    s().nudgePin('a', 0, 0, 1);
+    expect(pins()?.[0]).toMatchObject({ x: 0, y: 2 });
+  });
+
+  it('nudgePin clamps to the interior, commits once, and a blocked nudge adds no history', () => {
+    load({ furniture: [p({ x: 3, y: 0 })] });
+    s().nudgePin('a', 0, 5, 0); // clamped at x=3: no change
+    expect(s().history).toHaveLength(0);
+    s().nudgePin('a', 0, -5, 2);
+    expect(pins()?.[0]).toMatchObject({ x: 0, y: 2 });
+    expect(s().history).toHaveLength(1);
+    s().undo();
+    expect(pins()?.[0]).toMatchObject({ x: 3, y: 0 });
+  });
+
+  it('releasePin removes it, clears the selection, and undoes', () => {
+    load({ furniture: [p(), p({ kind: 'lamp', x: 2 })] });
+    s().selectFurniture({ roomId: 'a', pinIndex: 1 });
+    s().releasePin('a', 1);
+    expect(pins()).toEqual([p()]);
+    expect(s().selectedFurniture).toBeNull();
+    s().undo();
+    expect(pins()).toHaveLength(2);
+    s().releasePin('a', 0);
+    s().releasePin('a', 0);
+    expect(pins()).toBeUndefined(); // empty list collapses back to fully procedural
+  });
+
+  it('lockAll appends valid, non-overlapping pins in one commit; releaseAll clears them in one commit', () => {
+    load({ furniture: [p()] });
+    s().lockAll('a', [p(), p({ kind: 'lamp', x: 2 }), p({ kind: 'bin', x: 2 }), p({ kind: 'bin', x: 9 })]);
+    expect(pins()?.map((x) => x.kind)).toEqual(['plant', 'lamp']);
+    expect(s().history).toHaveLength(1);
+    s().releaseAll('a');
+    expect(pins()).toBeUndefined();
+    expect(s().history).toHaveLength(2);
+    s().undo();
+    expect(pins()).toHaveLength(2);
+    s().undo();
+    expect(pins()).toHaveLength(1);
+  });
+
+  it('lockAll respects the per-room cap', () => {
+    load({ w: 20, h: 20 });
+    const many = Array.from({ length: 60 }, (_, i) => p({ x: i % 18, y: Math.floor(i / 18) }));
+    s().lockAll('a', many);
+    expect(pins()).toHaveLength(48);
+  });
+
+  it('resizing the room prunes pins that fall outside; a drag restores them when grown back', () => {
+    load({ furniture: [p({ x: 3, y: 2 }), p({ kind: 'lamp' })] });
+    s().updateRoom('a', { w: 4, h: 4 }); // interior 2x2
+    expect(pins()).toEqual([p({ kind: 'lamp' })]);
+    s().undo();
+    expect(pins()).toHaveLength(2);
+
+    s().beginGesture();
+    s().resizeRoomTo('a', { w: 4 });
+    expect(pins()).toEqual([p({ kind: 'lamp' })]);
+    s().resizeRoomTo('a', { w: 6 });
+    s().endGesture();
+    expect(pins()).toHaveLength(2);
+  });
+
+  it('changing type / walled keeps only pins inside the new interior', () => {
+    load({ type: 'lounge', walled: false, furniture: [p({ x: 5, y: 4 })] }); // open room: interior is 6x5
+    s().updateRoom('a', { walled: true }); // interior 4x3
+    expect(pins()).toBeUndefined();
+  });
+
+  it('a draft never fails validateLayout because of pins after any of these edits', () => {
+    load({ furniture: [p({ x: 3, y: 2 }), p({ kind: 'lamp', x: 1, y: 1 })] });
+    s().updateRoom('a', { w: 5, h: 4 });
+    s().updateRoom('a', { doors: [{ side: 'n', offset: 2 }] });
+    s().nudgePin('a', 0, -2, -2);
+    const issues = validateLayout(s().draft!);
+    expect(issues.filter((i) => i.code === 'pinned-invalid')).toEqual([]);
+  });
+
+  it('reroll and furnish reset keep pins; moving or duplicating a room carries them', () => {
+    load({ furniture: [p({ x: 1, y: 1 })] });
+    s().rerollRoomSeed('a');
+    s().resetRoomFurnish('a');
+    expect(pins()).toEqual([p({ x: 1, y: 1 })]);
+    s().select(['a']);
+    s().nudgeSelection(2, 1);
+    expect(pins()).toEqual([p({ x: 1, y: 1 })]);
+    s().duplicateRooms(['a']);
+    expect(s().draft?.rooms[1]?.furniture).toEqual([p({ x: 1, y: 1 })]);
+  });
+
+  it('a furniture pick follows undo, tool changes and room removal', () => {
+    load({ furniture: [p()] });
+    s().setTool('furniture');
+    s().selectFurniture({ roomId: 'a', pinIndex: 0 });
+    expect(s().selection).toEqual(['a']);
+    s().setTool('select');
+    expect(s().selectedFurniture).toBeNull();
+    s().setTool('furniture');
+    s().selectFurniture({ roomId: 'a', pinIndex: 0 });
+    s().removeRooms(['a']);
+    expect(s().selectedFurniture).toBeNull();
+  });
+
+  it('is read-only on a builtin', () => {
+    s().load(layout({ builtin: true, rooms: [room()] }));
+    s().lockFurniture('a', p());
+    expect(s().pinDirect('a', p())).toBe(-1);
+    expect(pins()).toBeUndefined();
   });
 });

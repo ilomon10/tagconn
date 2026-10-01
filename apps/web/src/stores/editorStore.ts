@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { LAYOUT_LIMITS, type DoorSpec, type LayoutBackground, type LayoutRoom, type OfficeLayout, type OfficeLayoutInput, type OfficeStyle, type RoomFurnish, type RoomType } from '@tagconn/shared';
+import { LAYOUT_LIMITS, type DoorSpec, type LayoutBackground, type LayoutRoom, type OfficeLayout, type OfficeLayoutInput, type OfficeStyle, type PinnedFurniture, type RoomFurnish, type RoomType } from '@tagconn/shared';
+import { clampPinPos, pinFits, prunePins } from '../features/editor/pins';
 
 /**
  * Hall Planner draft state (7e-A, docs/design/guild-hall.md section 5). The draft is an
@@ -13,7 +14,19 @@ import { LAYOUT_LIMITS, type DoorSpec, type LayoutBackground, type LayoutRoom, t
  * exactly one entry (the pre-drag snapshot) if anything actually changed.
  */
 
-export type EditorTool = 'select' | 'room' | 'stairs' | 'hand' | 'doors';
+export type EditorTool = 'select' | 'room' | 'stairs' | 'hand' | 'doors' | 'furniture';
+
+/** The Furniture tool's pick: a pin (index into the room's `furniture`) or a generated item not locked yet (interior-relative). */
+export type FurnitureSelection = { roomId: string; pinIndex: number } | { roomId: string; generated: PinnedFurniture };
+
+/** Drops a furniture selection that no longer points at anything (room gone, pin removed, e.g. after undo). */
+function reconcileFurnitureSelection(draft: OfficeLayoutInput | null, sel: FurnitureSelection | null): FurnitureSelection | null {
+  if (!sel || !draft) return null;
+  const room = draft.rooms.find((r) => r.id === sel.roomId);
+  if (!room) return null;
+  if ('pinIndex' in sel && !room.furniture?.[sel.pinIndex]) return null;
+  return sel;
+}
 
 const HISTORY_LIMIT = 100;
 
@@ -81,6 +94,8 @@ export interface EditorState {
   selection: string[];
   /** The door tool's current pick: a room id + index into that room's now-explicit `doors` list. */
   selectedDoor: { roomId: string; index: number } | null;
+  /** The Furniture tool's current pick (M12); see `FurnitureSelection`. */
+  selectedFurniture: FurnitureSelection | null;
   tool: EditorTool;
   /** Room type the Room tool stamps next (remembers the last pick; Stairs tool forces 'stairs'). */
   pendingRoomType: RoomType;
@@ -130,6 +145,23 @@ export interface EditorState {
   setDoorRect(roomId: string, index: number, rect: Partial<Pick<DoorSpec, 'offset' | 'width'>>): void;
   selectDoor(roomId: string, index: number): void;
   clearDoorSelection(): void;
+
+  /** Selects a furniture item (and its room); `null` clears just the furniture pick. */
+  selectFurniture(sel: FurnitureSelection | null): void;
+  /** Locks a generated item as a pin (one commit); no-op if an identical pin exists, it does not fit, or the cap is reached. Selects the new pin. */
+  lockFurniture(roomId: string, pin: PinnedFurniture): void;
+  /** Gesture-only (pair with `beginGesture()`/`endGesture()`): appends the pin without a history entry and returns its index (the existing index if identical; -1 if refused). */
+  pinDirect(roomId: string, pin: PinnedFurniture): number;
+  /** Gesture-only: moves a pin, clamped to the interior; a position that overlaps another pin or an explicit door apron is refused (the pin stays). */
+  setPinPos(roomId: string, index: number, pos: { x: number; y: number }): void;
+  /** One-commit keyboard nudge of a pin, clamped to the interior; refused if it would overlap or block a door. */
+  nudgePin(roomId: string, index: number, dx: number, dy: number): void;
+  /** Releases a pin back to procedural generation (one commit); clears the selection if it pointed at it. */
+  releasePin(roomId: string, index: number): void;
+  /** Locks many generated items at once (one commit); invalid or overlapping ones are skipped, the cap holds. */
+  lockAll(roomId: string, pins: PinnedFurniture[]): void;
+  /** Releases every pin of the room (one commit). */
+  releaseAll(roomId: string): void;
   /** Replaces the whole draft as one undo step (e.g. "Surprise me"). Keeps id/name unless overridden. */
   replaceDraft(input: OfficeLayoutInput): void;
   /** Converts a read-only builtin draft into an editable, unsaved copy ("Duplicate to edit"). */
@@ -158,7 +190,13 @@ export interface EditorState {
 export const useEditorStore = create<EditorState>()((set, get) => {
   /** Push `prev` onto the undo history (capped) and clear redo — call before installing a new draft. */
   const commit = (prev: OfficeLayoutInput, next: OfficeLayoutInput) =>
-    set((s) => ({ draft: next, history: cap([...s.history, prev], HISTORY_LIMIT), future: [], dirty: true }));
+    set((s) => ({
+      draft: next,
+      history: cap([...s.history, prev], HISTORY_LIMIT),
+      future: [],
+      dirty: true,
+      selectedFurniture: reconcileFurnitureSelection(next, s.selectedFurniture),
+    }));
 
   const mutateRooms = (fn: (rooms: LayoutRoom[]) => LayoutRoom[]) => {
     const s = get();
@@ -168,6 +206,10 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     commit(prev, next);
   };
 
+  /** Replaces one room's pin list as one commit; `undefined`/empty clears it. */
+  const setPins = (roomId: string, pins: PinnedFurniture[] | undefined) =>
+    mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, furniture: pins?.length ? pins : undefined } : r)));
+
   return {
     draft: null,
     originalId: undefined,
@@ -176,6 +218,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     dirty: false,
     selection: [],
     selectedDoor: null,
+    selectedFurniture: null,
     tool: 'select',
     pendingRoomType: 'desks',
     history: [],
@@ -191,6 +234,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         dirty: false,
         selection: [],
         selectedDoor: null,
+        selectedFurniture: null,
         tool: 'select',
         history: [],
         future: [],
@@ -206,6 +250,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         dirty: true,
         selection: [],
         selectedDoor: null,
+        selectedFurniture: null,
         tool: 'select',
         history: [],
         future: [],
@@ -221,6 +266,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         dirty: false,
         selection: [],
         selectedDoor: null,
+        selectedFurniture: null,
         tool: 'select',
         history: [],
         future: [],
@@ -241,7 +287,8 @@ export const useEditorStore = create<EditorState>()((set, get) => {
 
     addRoom: (room) => mutateRooms((rooms) => [...rooms, room]),
 
-    updateRoom: (id, patch) => mutateRooms((rooms) => rooms.map((r) => (r.id === id ? { ...r, ...patch } : r))),
+    // Pins that no longer fit the changed room (size, type, walled, doors) are dropped, so a draft never fails validateLayout over them.
+    updateRoom: (id, patch) => mutateRooms((rooms) => rooms.map((r) => (r.id === id ? prunePins({ ...r, ...patch }) : r))),
 
     removeRooms: (ids) => {
       const remove = new Set(ids);
@@ -249,6 +296,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       set((s) => ({
         selection: s.selection.filter((id) => !remove.has(id)),
         selectedDoor: s.selectedDoor && remove.has(s.selectedDoor.roomId) ? null : s.selectedDoor,
+        selectedFurniture: s.selectedFurniture && remove.has(s.selectedFurniture.roomId) ? null : s.selectedFurniture,
       }));
     },
 
@@ -347,6 +395,100 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     selectDoor: (roomId, index) => set({ selectedDoor: { roomId, index } }),
     clearDoorSelection: () => set({ selectedDoor: null }),
 
+    selectFurniture: (sel) => set(sel ? { selectedFurniture: sel, selection: [sel.roomId], selectedDoor: null } : { selectedFurniture: null }),
+
+    lockFurniture: (roomId, pin) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room) return;
+      const pins = room.furniture ?? [];
+      const same = pins.findIndex((p) => p.kind === pin.kind && p.x === pin.x && p.y === pin.y && p.w === pin.w && p.h === pin.h);
+      if (same >= 0) {
+        set({ selectedFurniture: { roomId, pinIndex: same } });
+        return;
+      }
+      if (pins.length >= LAYOUT_LIMITS.maxPinnedPerRoom || !pinFits(room, pin)) return;
+      setPins(roomId, [...pins, pin]);
+      set({ selectedFurniture: { roomId, pinIndex: pins.length } });
+    },
+
+    pinDirect: (roomId, pin) => {
+      const s = get();
+      if (!s.draft || s.builtin) return -1;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room) return -1;
+      const pins = room.furniture ?? [];
+      const same = pins.findIndex((p) => p.kind === pin.kind && p.x === pin.x && p.y === pin.y && p.w === pin.w && p.h === pin.h);
+      if (same >= 0) return same;
+      if (pins.length >= LAYOUT_LIMITS.maxPinnedPerRoom || !pinFits(room, pin)) return -1;
+      set({
+        draft: { ...s.draft, rooms: s.draft.rooms.map((r) => (r.id === roomId ? { ...r, furniture: [...pins, pin] } : r)) },
+        selectedFurniture: { roomId, pinIndex: pins.length },
+      });
+      return pins.length;
+    },
+
+    setPinPos: (roomId, index, pos) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      const pin = room?.furniture?.[index];
+      if (!room || !pin) return;
+      const at = clampPinPos(room, pin, pos);
+      if ((at.x === pin.x && at.y === pin.y) || !pinFits(room, { ...pin, ...at }, index)) return;
+      set({
+        draft: {
+          ...s.draft,
+          rooms: s.draft.rooms.map((r) => (r.id === roomId ? { ...r, furniture: r.furniture!.map((p, i) => (i === index ? { ...p, ...at } : p)) } : r)),
+        },
+      });
+    },
+
+    nudgePin: (roomId, index, dx, dy) => {
+      const s = get();
+      if (!s.draft || s.builtin || (dx === 0 && dy === 0)) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      const pin = room?.furniture?.[index];
+      if (!room || !pin) return;
+      const at = clampPinPos(room, pin, { x: pin.x + dx, y: pin.y + dy });
+      if ((at.x === pin.x && at.y === pin.y) || !pinFits(room, { ...pin, ...at }, index)) return;
+      setPins(roomId, room.furniture!.map((p, i) => (i === index ? { ...p, ...at } : p)));
+    },
+
+    releasePin: (roomId, index) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room?.furniture?.[index]) return;
+      setPins(roomId, room.furniture.filter((_, i) => i !== index));
+      set((st) => (st.selectedFurniture && st.selectedFurniture.roomId === roomId && 'pinIndex' in st.selectedFurniture ? { selectedFurniture: null } : {}));
+    },
+
+    lockAll: (roomId, pins) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room) return;
+      let probe = room;
+      for (const pin of pins) {
+        const cur = probe.furniture ?? [];
+        if (cur.length >= LAYOUT_LIMITS.maxPinnedPerRoom) break;
+        if (cur.some((p) => p.kind === pin.kind && p.x === pin.x && p.y === pin.y && p.w === pin.w && p.h === pin.h) || !pinFits(probe, pin)) continue;
+        probe = { ...probe, furniture: [...cur, pin] };
+      }
+      if (probe.furniture?.length === room.furniture?.length) return;
+      setPins(roomId, probe.furniture);
+    },
+
+    releaseAll: (roomId) => {
+      const s = get();
+      const room = s.draft?.rooms.find((r) => r.id === roomId);
+      if (!room?.furniture?.length) return;
+      setPins(roomId, undefined);
+      set((st) => (st.selectedFurniture?.roomId === roomId ? { selectedFurniture: null } : {}));
+    },
+
     duplicateRooms: (ids) => {
       const want = new Set(ids);
       const s = get();
@@ -362,7 +504,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const s = get();
       if (!s.draft || s.builtin) return;
       commit(s.draft, input);
-      set({ selection: [], selectedDoor: null });
+      set({ selection: [], selectedDoor: null, selectedFurniture: null });
     },
 
     duplicateAsEditable: (newName) => {
@@ -378,6 +520,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         future: [],
         gestureBaseline: null,
         selectedDoor: null,
+        selectedFurniture: null,
       });
     },
 
@@ -386,10 +529,11 @@ export const useEditorStore = create<EditorState>()((set, get) => {
 
     select: (ids, additive) =>
       set((s) =>
-        additive ? { selection: [...new Set([...s.selection, ...ids])] } : { selection: [...new Set(ids)], selectedDoor: null },
+        additive ? { selection: [...new Set([...s.selection, ...ids])] } : { selection: [...new Set(ids)], selectedDoor: null, selectedFurniture: null },
       ),
     clearSelection: () => set({ selection: [] }),
-    setTool: (tool) => set((s) => ({ tool, selectedDoor: tool === 'doors' ? s.selectedDoor : null })),
+    setTool: (tool) =>
+      set((s) => ({ tool, selectedDoor: tool === 'doors' ? s.selectedDoor : null, selectedFurniture: tool === 'furniture' ? s.selectedFurniture : null })),
     setPendingRoomType: (type) => set({ pendingRoomType: type }),
 
     beginGesture: () => {
@@ -408,7 +552,11 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     resizeRoomTo: (id, rect) => {
       const s = get();
       if (!s.draft || s.builtin) return;
-      set({ draft: { ...s.draft, rooms: s.draft.rooms.map((r) => (r.id === id ? { ...r, ...rect } : r)) } });
+      // Prune from the pre-drag pins so shrinking and growing back within one drag restores them.
+      const base = s.gestureBaseline?.rooms.find((r) => r.id === id)?.furniture;
+      set({
+        draft: { ...s.draft, rooms: s.draft.rooms.map((r) => (r.id === id ? prunePins({ ...r, ...rect }, base ?? r.furniture) : r)) },
+      });
     },
 
     endGesture: () => {
@@ -423,7 +571,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     cancelGesture: () => {
       const s = get();
       if (!s.gestureBaseline) return;
-      set({ draft: s.gestureBaseline, gestureBaseline: null });
+      set({ draft: s.gestureBaseline, gestureBaseline: null, selectedFurniture: reconcileFurnitureSelection(s.gestureBaseline, s.selectedFurniture) });
     },
 
     nudgeSelection: (dx, dy) => {
@@ -439,13 +587,25 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const s = get();
       if (s.history.length === 0 || !s.draft) return;
       const prevDraft = s.history[s.history.length - 1]!;
-      set({ draft: prevDraft, history: s.history.slice(0, -1), future: cap([s.draft, ...s.future], HISTORY_LIMIT), dirty: true });
+      set({
+        draft: prevDraft,
+        history: s.history.slice(0, -1),
+        future: cap([s.draft, ...s.future], HISTORY_LIMIT),
+        dirty: true,
+        selectedFurniture: reconcileFurnitureSelection(prevDraft, s.selectedFurniture),
+      });
     },
     redo: () => {
       const s = get();
       if (s.future.length === 0 || !s.draft) return;
       const nextDraft = s.future[0]!;
-      set({ draft: nextDraft, future: s.future.slice(1), history: cap([...s.history, s.draft], HISTORY_LIMIT), dirty: true });
+      set({
+        draft: nextDraft,
+        future: s.future.slice(1),
+        history: cap([...s.history, s.draft], HISTORY_LIMIT),
+        dirty: true,
+        selectedFurniture: reconcileFurnitureSelection(nextDraft, s.selectedFurniture),
+      });
     },
   };
 });

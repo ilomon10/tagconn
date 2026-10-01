@@ -25,6 +25,8 @@ export interface LabelSubject {
   selected: boolean;
   /** waiting-for-you or blocked: kept ahead of "others", still shown when collapsed elsewhere applies LOD. */
   waiting: boolean;
+  /** M12: an idle-antic/strain bubble; ranked last so it collapses first and never displaces a real one. */
+  drama?: boolean;
   /** Higher = more recently active; the tiebreak among plain "others" (docs: "most recent > others"). */
   recency: number;
 }

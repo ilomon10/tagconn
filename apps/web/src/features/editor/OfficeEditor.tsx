@@ -9,6 +9,7 @@ import { draftAsLayout, useEditorStore, type EditorTool } from '../../stores/edi
 import { assignLayout, classifySaveLayoutError, deleteLayout, refreshLayouts, saveLayout } from '../../lib/layoutCommands';
 import { resolveShortcut, type KeyLike } from './shortcuts';
 import { autoDoorsForRoom } from './reachability';
+import { pinsForLockAll } from './pins';
 import { canSaveLayout, sealedRoomWarnings } from './saveGate';
 import { PlanCanvas } from './PlanCanvas';
 import { Inspector } from './Inspector';
@@ -22,11 +23,12 @@ const TOOLS: { tool: EditorTool; label: string; hotkey: string }[] = [
   { tool: 'room', label: 'Room', hotkey: 'R' },
   { tool: 'stairs', label: 'Stairs', hotkey: 'S' },
   { tool: 'doors', label: 'Doors', hotkey: 'D' },
+  { tool: 'furniture', label: 'Furniture', hotkey: 'F' },
   { tool: 'hand', label: 'Hand', hotkey: 'H / Space' },
 ];
 
 const HELP_LINES = [
-  ['V / R / S / D / H', 'Select / Room / Stairs / Doors / Hand tool'],
+  ['V / R / S / D / F / H', 'Select / Room / Stairs / Doors / Furniture / Hand tool'],
   ['Drag (Room/Stairs)', 'Draw a room; release to pick its type'],
   ['1-9, 0', 'Pick a room type from the popover'],
   ['Click / Shift+click', 'Select / add to selection'],
@@ -41,12 +43,16 @@ const HELP_LINES = [
   ['Doors tool: drag its end handle', 'Resize it (width 1-3)'],
   ['Doors tool: select + Delete', 'Remove a door'],
   ['Doors tool: select + Arrows', 'Nudge a door along its wall'],
+  ['Furniture tool: drag an item', 'Move it; this locks it in place (generation keeps it there)'],
+  ['Furniture tool: click an item', 'Select it; the Inspector can lock or release it'],
+  ['Furniture tool: select + Arrows', 'Nudge a locked item (Shift = 5 tiles)'],
+  ['Furniture tool: select + Delete', 'Release a locked item back to procedural generation'],
   ['Ctrl/Cmd+Z', 'Undo'],
   ['Ctrl/Cmd+Shift+Z or Ctrl+Y', 'Redo'],
   ['Ctrl/Cmd+G', 'Surprise me (random layout)'],
   ['P', 'Toggle the styled preview'],
   ['Ctrl/Cmd+S', 'Save (blocked while errors exist)'],
-  ['Esc', 'Cancel the popover, then clear the door/room selection, then close'],
+  ['Esc', 'Cancel the popover, then clear the furniture/door/room selection, then close'],
 ];
 
 /**
@@ -57,7 +63,7 @@ const HELP_LINES = [
  */
 export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void; targetProjectId?: string }) {
   const store = useEditorStore();
-  const { draft, selection, selectedDoor, tool, history, future, dirty, builtin, originalId, originalUpdatedAt } = store;
+  const { draft, selection, selectedDoor, selectedFurniture, tool, history, future, dirty, builtin, originalId, originalUpdatedAt } = store;
   const layouts = useLayoutStore((s) => s.layouts);
   const settings = useSettingsStore((s) => s.settings);
   const selectedProjectId = useOfficeStore((s) => s.selectedProjectId);
@@ -288,7 +294,11 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           store.redo();
           break;
         case 'delete':
-          if (selectedDoor) {
+          if (tool === 'furniture') {
+            // The Furniture tool never deletes rooms: Delete releases the selected pin, else nothing.
+            e.preventDefault();
+            if (selectedFurniture && 'pinIndex' in selectedFurniture) store.releasePin(selectedFurniture.roomId, selectedFurniture.pinIndex);
+          } else if (selectedDoor) {
             e.preventDefault();
             store.removeDoor(selectedDoor.roomId, selectedDoor.index);
           } else if (selection.length) {
@@ -304,7 +314,8 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           } else if (helpOpen) {
             e.preventDefault();
             setHelpOpen(false);
-          } else if (selectedDoor) store.clearDoorSelection();
+          } else if (selectedFurniture) store.selectFurniture(null);
+          else if (selectedDoor) store.clearDoorSelection();
           else if (selection.length) store.clearSelection();
           else requestClose();
           break;
@@ -333,7 +344,11 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           if (action.tool === 'stairs') store.setPendingRoomType('stairs');
           break;
         case 'nudge':
-          if (selectedDoor) {
+          if (selectedFurniture) {
+            // A furniture pick owns the arrows: a locked item moves, a generated one does nothing (never the room).
+            e.preventDefault();
+            if ('pinIndex' in selectedFurniture) store.nudgePin(selectedFurniture.roomId, selectedFurniture.pinIndex, action.dx, action.dy);
+          } else if (selectedDoor) {
             e.preventDefault();
             const room = draft?.rooms.find((r) => r.id === selectedDoor.roomId);
             const door = room?.doors?.[selectedDoor.index];
@@ -354,7 +369,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
     window.addEventListener('keydown', onKeyDown, true); // capture: see comment above
     return () => window.removeEventListener('keydown', onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, selectedDoor, draft, dirty, helpOpen, conflict]);
+  }, [selection, selectedDoor, selectedFurniture, tool, draft, dirty, helpOpen, conflict]);
 
   if (!draft) {
     return (
@@ -459,7 +474,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
               title={`${t.label} (${t.hotkey})`}
               onClick={() => store.setTool(t.tool)}
               className={
-                'flex w-11 flex-col items-center rounded-md py-1.5 text-[10px] ' +
+                'flex w-12 flex-col items-center rounded-md py-1.5 text-[10px] ' +
                 (tool === t.tool ? 'bg-cozy text-ink-950' : 'text-ink-300 hover:bg-ink-800')
               }
             >
@@ -503,6 +518,12 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           onResetFurnish={(id) => store.resetRoomFurnish(id)}
           onAutoDoors={(id) => store.setRoomDoors(id, undefined)}
           onSealRoom={(id) => store.sealRoom(id)}
+          selectedFurniture={selectedFurniture}
+          lockableCount={selectedRoom ? pinsForLockAll(generatedMap, selectedRoom).length : 0}
+          onLockFurniture={(roomId, pin) => store.lockFurniture(roomId, pin)}
+          onReleaseFurniture={(roomId, index) => store.releasePin(roomId, index)}
+          onLockAll={(id) => selectedRoom && store.lockAll(id, pinsForLockAll(generatedMap, selectedRoom))}
+          onReleaseAll={(id) => store.releaseAll(id)}
         />
         </div>
       </div>

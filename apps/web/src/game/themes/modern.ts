@@ -5,7 +5,7 @@ import { paintModernFloor } from './paint/floors';
 import { paintModernFurniture } from './paint/furniture';
 import { paintModernWallDecor } from './paint/wallDecor';
 import { paintModernBackWall, paintModernDoor, paintModernVoid, paintModernWall } from './paint/walls';
-import type { Costume, ThemeDefinition } from './types';
+import type { Costume, DramaContent, ThemeDefinition } from './types';
 import { SHIPPED_ROLE_TITLES } from './shippedTitles';
 
 /** A straight port of the pre-M7 office: `renderMap.ts` colours and furniture art, `ZONE_LABELS`
@@ -37,6 +37,73 @@ const ROLE_TITLES: Record<string, string> = { ...SHIPPED_ROLE_TITLES, receptioni
 const NO_COSTUME: Costume = {};
 // The Receptionist NPC (`npc:receptionist`) gets a fixed smart-casual outfit; every agent role stays plain.
 const COSTUMES: Record<string, Costume> = { default: NO_COSTUME, receptionist: { robe: 0x3f6a8f } };
+
+/** M12 G1: office drama (docs/design/game-office.md 2.8). Short, pronoun-free lines (<= 48 chars). */
+const MODERN_DRAMA: DramaContent = {
+  antics: [
+    { id: 'water-cooler-gossip', props: ['water-cooler'], cast: 2, lines: [
+      ['Did the refactor news reach the cooler?', 'Which refactor? There are three.'],
+      ['Standup ran forty minutes today.', 'Was that a sit-down?'],
+    ] },
+    { id: 'coffee-run', props: ['coffee-machine'], cast: 1, emote: 'mug', lines: [
+      ['Coffee number four.'],
+      ['This machine has better uptime than prod.'],
+    ] },
+    { id: 'coffee-chat', props: ['coffee-machine'], cast: 2, emote: 'mug', lines: [
+      ['Decaf?', 'Deploys do not run on decaf.'],
+      ['Fresh pot, fresh bugs.', 'Cheers to that.'],
+    ] },
+    { id: 'ping-pong', props: ['table'], cast: 2, emote: 'ball', lines: [
+      ['Best of three?', 'Loser fixes the flaky test.'],
+      ['Spin serve!', 'Not in the spec.'],
+    ] },
+    { id: 'stretching', props: [], cast: 1, emote: 'spark', lines: [
+      ['Stretch break. Spine is deprecated.'],
+      ['Ten squats, then one more ticket.'],
+    ] },
+    { id: 'phone-scrolling', props: ['sofa', 'armchair'], cast: 1, emote: 'phone', lines: [
+      ['Just checking the build... and memes.'],
+      ['Someone starred the repo!'],
+    ] },
+    { id: 'who-broke-the-build', props: ['board'], cast: 2, emote: 'laugh', lines: [
+      ['Who broke the build?', 'Not here. git blame says... oh.'],
+      ['CI is red again.', 'Ever tried going green?'],
+    ] },
+    { id: 'desk-plant-chat', props: ['plant'], cast: 1, lines: [
+      ['Fern is the only one who listens.'],
+      ['Photosynthesis looks so relaxing.'],
+    ] },
+    { id: 'fridge-mystery', props: ['fridge'], cast: 2, lines: [
+      ['Whose yogurt is this?', 'The label says "do not deploy".'],
+      ['Lunch vanished again.', 'The fridge keeps no secrets.'],
+    ] },
+    { id: 'donut-alert', props: ['counter'], cast: 2, emote: 'mug', lines: [
+      ['Donuts in the kitchen!', 'Birthday, or a release?'],
+    ] },
+    { id: 'tabs-vs-spaces', props: [], cast: 2, emote: 'laugh', lines: [
+      ['Tabs.', 'Spaces. Fight on.'],
+      ['Dark mode or light mode?', 'Trick question.'],
+    ] },
+    { id: 'weekend-plans', props: ['sofa'], cast: 2, lines: [
+      ['Plans for the weekend?', 'Finally reading the docs.'],
+      ['Weekend? Sounds like a feature freeze.', 'Merge nothing, rest everything.'],
+    ] },
+    { id: 'whiteboard-doodle', props: ['board'], cast: 1, emote: 'spark', lines: [
+      ['Architecture diagram: now with extra boxes.'],
+      ['Arrows everywhere. Clarity nowhere.'],
+    ] },
+    { id: 'standing-desk-wobble', props: [], cast: 1, lines: [
+      ['Standing desk is up. Motivation is not.'],
+      ['Sit, stand, repeat. Same bugs either way.'],
+    ] },
+  ],
+  strain: {
+    tired: ['*yawn*', 'Is Friday here yet?', 'One more ticket...'],
+    dizzy: ['Still compiling...', 'Taking forever...', 'The room is spinning.'],
+    sweating: ['Waiting on a verdict...', 'A decision is needed here!', 'Blocked. Sweating bullets.'],
+    'on-a-roll': ['On a roll!', 'Ship!', 'In the zone.'],
+  },
+};
 
 export const modernTheme: ThemeDefinition = {
   id: 'modern',
@@ -109,6 +176,7 @@ export const modernTheme: ThemeDefinition = {
   costumes: COSTUMES,
   activityVerbs: {},
   activityFx: {},
+  drama: MODERN_DRAMA,
   lighting: { dayTint: 0xffffff, nightTint: 0x0b1030, nightAlpha: 0.42, glowAtNight: false },
   floorLabel: (index, projectName) => `Floor ${index + 1} — ${projectName}`,
 };

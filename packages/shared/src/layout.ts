@@ -390,6 +390,8 @@ export function validateLayout(layout: LayoutGeometry): LayoutIssue[] {
   }
 
   // Pinned furniture (M12): inside the interior, no overlaps between pins, never on a door span.
+  // Warnings, not errors: the generator skips a bad pin, so a stale pin never makes a floor fall back to
+  // DEFAULT_LAYOUT (the Hall Planner prunes pins on every room edit).
   for (const r of rooms) {
     if (!r.furniture?.length) continue;
     const name = r.name ?? r.type;
@@ -397,14 +399,14 @@ export function validateLayout(layout: LayoutGeometry): LayoutIssue[] {
     const placed: TileRect[] = [];
     for (const f of r.furniture) {
       if (f.x + f.w > inner.w || f.y + f.h > inner.h) {
-        err('pinned-invalid', `${name}: a locked ${f.kind} sits outside the room.`, [r.id]);
+        warn('pinned-invalid', `${name}: a locked ${f.kind} sits outside the room.`, [r.id]);
         continue;
       }
       if (placed.some((p) => rectsIntersect(p, f))) {
-        err('pinned-invalid', `${name}: two locked items overlap.`, [r.id]);
+        warn('pinned-invalid', `${name}: two locked items overlap.`, [r.id]);
       }
       if (isRoomWalled(r) && r.doors && pinOnDoorApron(r, f)) {
-        err('pinned-invalid', `${name}: a locked ${f.kind} blocks a door.`, [r.id]);
+        warn('pinned-invalid', `${name}: a locked ${f.kind} blocks a door.`, [r.id]);
       }
       placed.push(f);
     }

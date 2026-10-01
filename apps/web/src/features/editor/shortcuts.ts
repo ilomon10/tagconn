@@ -77,6 +77,7 @@ export function resolveShortcut(e: KeyLike): ShortcutAction | null {
   if (lower === 'r') return { type: 'tool', tool: 'room' };
   if (lower === 's') return { type: 'tool', tool: 'stairs' };
   if (lower === 'd') return { type: 'tool', tool: 'doors' };
+  if (lower === 'f') return { type: 'tool', tool: 'furniture' };
   if (lower === 'h' || key === ' ') return { type: 'tool', tool: 'hand' };
 
   if (/^[0-9]$/.test(key)) {

@@ -6,6 +6,7 @@ import { isDragMove } from '../../game/camera/drag';
 import { zoomAboutPoint } from '../../game/camera/zoom';
 import { genRoomId, useEditorStore } from '../../stores/editorStore';
 import { autoDoorsForRoom } from './reachability';
+import { clampPinPos, hitFurnitureAt, isPinnableItem, pinFromPlaced, pinToWorld, unpinnableReason, type FurnitureHit } from './pins';
 import { RoomTypePicker } from './RoomTypePicker';
 
 /** World pixels per tile at zoom = 1 (this is a schematic 2D plan, not the game's 16px tiles). */
@@ -48,6 +49,8 @@ type Mode =
   | { kind: 'move'; lastTile: { x: number; y: number }; moved: boolean }
   | { kind: 'resize'; roomId: string; handle: Handle; anchor: Rect }
   | { kind: 'move-door'; roomId: string; index: number }
+  // Furniture tool: `index` is null until the first real drag materializes a generated item into a pin.
+  | { kind: 'move-furniture'; roomId: string; index: number | null; hit: FurnitureHit; startTile: { x: number; y: number }; origin: { x: number; y: number } }
   | { kind: 'resize-door'; roomId: string; index: number; handle: DoorHandle; anchor: DoorSpec };
 
 /** This room's doors as currently drawn: explicit if the layout has one, else the generator's auto
@@ -124,12 +127,14 @@ export function PlanCanvas({
   flashRoomIds: string[];
 }) {
   const store = useEditorStore();
-  const { draft, selection, selectedDoor, tool, pendingRoomType, builtin } = store;
+  const { draft, selection, selectedDoor, selectedFurniture, tool, pendingRoomType, builtin } = store;
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [view, setView] = useState({ zoom: 1, scrollX: 0, scrollY: 0 });
   const [drawRect, setDrawRect] = useState<Rect | null>(null);
   const [pendingPick, setPendingPick] = useState<{ rect: Rect; screen: { x: number; y: number } } | null>(null);
+  /** Furniture tool hover feedback: a reason the item under the cursor cannot be locked (cursor not-allowed + hint). */
+  const [furnitureHint, setFurnitureHint] = useState<string | null>(null);
   const modeRef = useRef<Mode>({ kind: 'none' });
   const downRef = useRef<{ screen: { x: number; y: number }; moved: boolean } | null>(null);
 
@@ -235,7 +240,8 @@ export function PlanCanvas({
         }
       }
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      for (const f of generatedMap.furniture) ctx.fillRect(originX + f.x * T, originY + f.y * T, f.w * T, f.h * T);
+      // Pinned items are drawn from the draft below (amber); skip the generator's copy so they don't double up.
+      for (const f of generatedMap.furniture) if (!f.pinned) ctx.fillRect(originX + f.x * T, originY + f.y * T, f.w * T, f.h * T);
       for (const seat of Object.values(generatedMap.zones).flatMap((z) => z.seats)) {
         ctx.fillStyle = seat.kind === 'sit' ? '#4ff0d0' : '#b07aff';
         ctx.beginPath();
@@ -318,6 +324,42 @@ export function PlanCanvas({
         ctx.font = `${Math.max(9, Math.min(13, T * 0.28))}px sans-serif`;
         const label = room.name ?? theme.roomNames[room.type];
         ctx.fillText(label, fx + 4, fy + 14);
+      }
+    }
+
+    // Locked furniture (M12): amber with a padlock in the top-right corner; the selected item is outlined.
+    for (const room of draft.rooms) {
+      const inner = roomInterior(room);
+      room.furniture?.forEach((pin, index) => {
+        const r = pinToWorld(pin, inner);
+        const px = originX + r.x * T;
+        const py = originY + r.y * T;
+        ctx.fillStyle = 'rgba(245,192,122,0.8)';
+        ctx.fillRect(px, py, r.w * T, r.h * T);
+        ctx.strokeStyle = '#8a5a14';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(px + 0.5, py + 0.5, r.w * T - 1, r.h * T - 1);
+        if (T >= 10) {
+          const g = Math.max(8, Math.min(T * 0.7, 14));
+          ctx.fillStyle = '#1a1724';
+          ctx.font = `${g}px sans-serif`;
+          ctx.textAlign = 'right';
+          ctx.fillText('\u{1F512}', px + r.w * T - 1, py + g);
+          ctx.textAlign = 'start';
+        }
+        if (selectedFurniture && 'pinIndex' in selectedFurniture && selectedFurniture.roomId === room.id && selectedFurniture.pinIndex === index) {
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(px - 1, py - 1, r.w * T + 2, r.h * T + 2);
+        }
+      });
+      if (selectedFurniture && 'generated' in selectedFurniture && selectedFurniture.roomId === room.id) {
+        const g = selectedFurniture.generated;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(originX + (inner.x + g.x) * T - 1, originY + (inner.y + g.y) * T - 1, g.w * T + 2, g.h * T + 2);
+        ctx.setLineDash([]);
       }
     }
 
@@ -547,6 +589,36 @@ export function PlanCanvas({
       modeRef.current = { kind: 'none' };
       return;
     }
+    if (tool === 'furniture') {
+      const hit = hitFurnitureAt(generatedMap, draft.rooms, tile);
+      if (!hit) {
+        // Empty floor selects the room (so Lock all / Release all are one click away) and clears the item pick.
+        const room = hitRoom(tile);
+        store.selectFurniture(null);
+        if (room) store.select([room.id]);
+        else store.clearSelection();
+        modeRef.current = { kind: 'none' };
+        return;
+      }
+      const inner = roomInterior(hit.room);
+      if (hit.pinIndex !== null) store.selectFurniture({ roomId: hit.room.id, pinIndex: hit.pinIndex });
+      else if (isPinnableItem(hit.item)) store.selectFurniture({ roomId: hit.room.id, generated: pinFromPlaced(hit.item, inner) });
+      else {
+        store.selectFurniture(null);
+        store.select([hit.room.id]);
+        modeRef.current = { kind: 'none' };
+        return;
+      }
+      modeRef.current = {
+        kind: 'move-furniture',
+        roomId: hit.room.id,
+        index: hit.pinIndex,
+        hit,
+        startTile: tile,
+        origin: { x: hit.item.x - inner.x, y: hit.item.y - inner.y },
+      };
+      return;
+    }
     // Select tool.
     const handleHit = hitHandle(screen);
     if (handleHit) {
@@ -570,6 +642,36 @@ export function PlanCanvas({
       downRef.current.moved = isDragMove(screen.x - downRef.current.screen.x, screen.y - downRef.current.screen.y);
     }
     const mode = modeRef.current;
+    if (tool === 'furniture' && mode.kind === 'none' && !builtin) {
+      const hit = hitFurnitureAt(generatedMap, draft.rooms, toWorldTile(screen.x, screen.y));
+      const reason = hit && hit.pinIndex === null ? unpinnableReason(hit.item) : null;
+      if (reason !== furnitureHint) setFurnitureHint(reason);
+    }
+    if (mode.kind === 'move-furniture') {
+      if (!downRef.current?.moved) return;
+      const tile = toWorldTile(screen.x, screen.y);
+      const room = draft.rooms.find((r) => r.id === mode.roomId);
+      if (!room) return;
+      let index = mode.index;
+      if (index === null) {
+        // First real drag of a generated item: materialize it and move it in ONE undo step.
+        store.beginGesture();
+        index = store.pinDirect(mode.roomId, pinFromPlaced(mode.hit.item, roomInterior(room)));
+        if (index < 0) {
+          modeRef.current = { kind: 'none' };
+          store.endGesture();
+          return;
+        }
+        modeRef.current = { ...mode, index };
+      } else if (!useEditorStore.getState().gestureBaseline) {
+        store.beginGesture();
+      }
+      const fresh = useEditorStore.getState().draft?.rooms.find((r) => r.id === mode.roomId);
+      const pin = fresh?.furniture?.[index];
+      if (!fresh || !pin) return;
+      store.setPinPos(mode.roomId, index, clampPinPos(fresh, pin, { x: mode.origin.x + tile.x - mode.startTile.x, y: mode.origin.y + tile.y - mode.startTile.y }));
+      return;
+    }
     if (mode.kind === 'pan') {
       const dx = (screen.x - mode.startScreen.x) / view.zoom;
       const dy = (screen.y - mode.startScreen.y) / view.zoom;
@@ -649,8 +751,8 @@ export function PlanCanvas({
       }
       return;
     }
-    if (mode.kind === 'move' || mode.kind === 'resize' || mode.kind === 'move-door' || mode.kind === 'resize-door') {
-      store.endGesture();
+    if (mode.kind === 'move' || mode.kind === 'resize' || mode.kind === 'move-door' || mode.kind === 'resize-door' || mode.kind === 'move-furniture') {
+      store.endGesture(); // a click on furniture never began a gesture, so this is a no-op for it
       return;
     }
     if (mode.kind === 'none' && !wasDrag && tool === 'select') {
@@ -674,9 +776,13 @@ export function PlanCanvas({
         className={
           tool === 'hand'
             ? 'cursor-grab active:cursor-grabbing'
-            : tool === 'room' || tool === 'stairs' || tool === 'doors'
-              ? 'cursor-crosshair'
-              : 'cursor-default'
+            : tool === 'furniture'
+              ? furnitureHint
+                ? 'cursor-not-allowed'
+                : 'cursor-pointer'
+              : tool === 'room' || tool === 'stairs' || tool === 'doors'
+                ? 'cursor-crosshair'
+                : 'cursor-default'
         }
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -698,6 +804,11 @@ export function PlanCanvas({
           }}
           onCancel={() => setPendingPick(null)}
         />
+      )}
+      {tool === 'furniture' && furnitureHint && (
+        <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-ink-900/90 px-2 py-1 text-[11px] text-amber-200">
+          {furnitureHint}
+        </div>
       )}
       {builtin && (
         <div className="pointer-events-none absolute inset-x-0 top-0 bg-amber-900/80 px-3 py-1 text-center text-[11px] text-amber-100">

@@ -65,6 +65,44 @@ function paintCrystalAppliance(g: Phaser.GameObjects.Graphics, f: PlacedFurnitur
   rect(CRYSTAL_EDGE, x + w - 1, top, 1, h, 0.3);
 }
 
+/** M12 G3 trigger furniture: a wall-standing crystal slab with a glowing glyph. `kind` picks the glyph
+ *  (notice-board: stacked bounty shards; roster-board: a small constellation). Tall only when `againstNorthWall`. */
+function paintCrystalGlyph(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn): void {
+  const x = f.x * T;
+  const y = f.y * T;
+  const w = f.w * T;
+  const top = f.againstNorthWall ? y - 8 : y + 1;
+  const bottom = y + 13;
+  const accent = pick(RIFT_ACCENTS, f.variant);
+  const mx = x + w / 2;
+  rect(0x000000, x + 1, y + 14, w - 2, 2, 0.2);
+  rect(VOID_DARK, x + 1, bottom, w - 2, 2);
+  rect(CRYSTAL, x + 1, top, w - 2, bottom - top);
+  rect(lighten(CRYSTAL, 0.2), x + 1, top, w - 2, 1, 0.6);
+  rect(CRYSTAL_EDGE, x + 1, top, 1, bottom - top, 0.4);
+  rect(CRYSTAL_EDGE, x + w - 2, top, 1, bottom - top, 0.4);
+  const midY = Math.floor((top + bottom) / 2);
+  if (f.kind === 'roster-board') {
+    // constellation: four stars joined by faint lines
+    const pts: [number, number][] = [[mx - 4, midY - 3], [mx, midY + 1], [mx + 4, midY - 2], [mx + 1, midY - 5]];
+    rect(accent, mx - 3, midY - 2, 3, 1, 0.35);
+    rect(accent, mx + 1, midY - 1, 3, 1, 0.35);
+    for (const [px, py] of pts) {
+      rect(lighten(accent, 0.4), px, py, 1, 1);
+      rect(accent, px - 1, py, 3, 1, 0.45);
+    }
+  } else {
+    // bounty shards: three diamonds of different heights
+    for (let i = 0; i < 3; i++) {
+      const sx = mx - 4 + i * 4;
+      const sy = midY - 3 + (i % 2) * 2;
+      rect(accent, sx, sy, 2, 4, 0.85);
+      rect(lighten(accent, 0.4), sx, sy, 1, 2, 0.8);
+      rect(accent, sx - 1, sy + 1, 4, 1, 0.4);
+    }
+  }
+}
+
 function paintRiftStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn, up: boolean): void {
   const x = f.x * T;
   const y = f.y * T;
@@ -77,9 +115,9 @@ function paintRiftStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: 
 }
 
 const RIFT: Record<FurnitureKind, Painter> = {
-  // M12 G3 placeholders (real art lands with G3).
-  'notice-board': paintCrystalAppliance,
-  'roster-board': paintCrystalAppliance,
+  // M12 G3 trigger furniture (see `paintCrystalGlyph`).
+  'notice-board': paintCrystalGlyph,
+  'roster-board': paintCrystalGlyph,
   'work-desk': paintCrystalBlock,
   'lead-desk': paintCrystalBlock,
   table: paintCrystalBlock,

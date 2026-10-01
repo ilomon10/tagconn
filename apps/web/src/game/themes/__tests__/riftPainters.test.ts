@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ROOM_TYPES, ZONES, type RoomType } from '@tagconn/shared';
-import { APPLIANCE_SPECS, type ApplianceKind } from '../../procgen/backWallSpec';
+import { APPLIANCE_SPECS, MAX_OVERDRAW_PX, type ApplianceKind } from '../../procgen/backWallSpec';
 import type { FurnitureKind, PlacedFurniture, WallDecorKind, WallDecorSlot } from '../../procgen/types';
 import { guildTheme } from '../guild';
 import { riftTheme } from '../rift';
@@ -177,6 +177,26 @@ describe('rift theme painters (implements every FurnitureKind/RoomType exhaustiv
         const f: PlacedFurniture = { x: 2, y: 5, w, h: 1, kind, blocking: true, roomId: 'r1', roomType: 'desks', variant, againstNorthWall: true };
         expect(() => riftTheme.paintFurniture(g, f, 16)).not.toThrow();
         expect(calls.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('paints the trigger boards (M12 G3) inside their footprint, tall only against a north wall', () => {
+    const T = 16;
+    for (const kind of ['notice-board', 'roster-board'] as const) {
+      for (const w of [1, 2]) {
+        for (const against of [false, true]) {
+          for (let variant = 0; variant < 4; variant++) {
+            const f: PlacedFurniture = { x: 2, y: 5, w, h: 1, kind, blocking: true, roomId: 'r1', roomType: 'desks', variant, againstNorthWall: against };
+            const { g, rects } = makeBoundsGraphics();
+            riftTheme.paintFurniture(g, f, T);
+            expect(rects.length).toBeGreaterThan(3);
+            expect(Math.min(...rects.map((r) => r.x))).toBeGreaterThanOrEqual(f.x * T - 1);
+            expect(Math.max(...rects.map((r) => r.x + r.w))).toBeLessThanOrEqual((f.x + w) * T + 1);
+            expect(Math.min(...rects.map((r) => r.y))).toBeGreaterThanOrEqual(f.y * T - (against ? MAX_OVERDRAW_PX : 0));
+            expect(Math.max(...rects.map((r) => r.y + r.h))).toBeLessThanOrEqual((f.y + 1) * T + 1);
+          }
+        }
       }
     }
   });

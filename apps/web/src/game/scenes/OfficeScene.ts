@@ -46,6 +46,8 @@ import { ReducedMotionWatcher } from '../camera/reducedMotion';
 import { receptionistLookKey } from '../receptionistLook';
 import { counterScale, labelVisible, layoutLabels, type LabelSubject } from '../labels';
 import { PostFxController } from '../postfx/PostFxController';
+import { DramaDirector } from './dramaDirector';
+import { FurnitureTriggerLayer } from './furnitureTriggerLayer';
 
 /** M8 8e: how often the bubble/label layout (`game/labels`) is recomputed — a throttle, not every
  *  frame, since it's a many-subject greedy placement and labels don't need to react per-pixel. */
@@ -259,6 +261,10 @@ export class OfficeScene extends Phaser.Scene {
   private realmZoneSprites: RealmZoneSprite[] = [];
   /** M8 8o: color grading/vignette/scanlines/bloom-light-layer, see `game/postfx/PostFxController`. */
   private postFx!: PostFxController;
+  /** M12 G1: idle antics and work-strain emotes (docs/design/game-office.md section 2). */
+  private drama!: DramaDirector;
+  /** M12 G3: furniture that opens panels (section 4). */
+  private triggers!: FurnitureTriggerLayer;
   private tooltip!: Phaser.GameObjects.Text;
   private characters = new Map<ActorKey, Character>();
   /** W3b/M12: one fixed NPC per floor (the Nexus's own plaza is an `'entrance'`-type room too, so it gets
@@ -355,6 +361,27 @@ export class OfficeScene extends Phaser.Scene {
     // here, before the first `buildWorld` — its `renderVisuals()` already tries to seed the light
     // layer (a no-op until `setOfficeState`'s first pass has settings to read).
     this.postFx = new PostFxController(this);
+    this.drama = new DramaDirector({
+      map: () => this.map,
+      finder: () => this.finder,
+      seats: () => this.seats,
+      actors: () => this.characters,
+      agents: () => this.state?.agents ?? [],
+      themeFor: (c) =>
+        c.realmIndex !== null && this.multiversePlan
+          ? getTheme(this.multiversePlan.realms.find((r) => r.index === c.realmIndex)?.style ?? MULTIVERSE_THEME_ID)
+          : this.theme,
+      office: () => this.state?.settings.office,
+      floorKey: () => this.floorKey ?? '',
+      reducedMotion: () => this.reducedMotion.value,
+    });
+    this.triggers = new FurnitureTriggerLayer(this, {
+      showTooltip: (text) => this.showTooltip(text),
+      hideTooltip: () => this.hideTooltip(),
+      canClick: () => !this.inputLocked && !this.drag?.moved && !this.pinchGuard && !this.arrowPress,
+      emit: (a) => this.events.emit('furnitureClick', a),
+      reducedMotion: () => this.reducedMotion.value,
+    });
     this.buildWorld(DEFAULT_LAYOUT, 'guild', null);
     this.night = this.add.rectangle(0, 0, this.worldW, this.worldH, 0x0b1030, 0).setOrigin(0).setDepth(90_000);
     this.setupCamera();
@@ -371,6 +398,8 @@ export class OfficeScene extends Phaser.Scene {
       this.postFx.destroy();
       this.receptionist?.destroyAll();
       this.receptionistDeskFront?.destroy();
+      this.drama.destroy();
+      this.triggers.destroy();
     });
     this.onReady?.(this);
   }
@@ -395,8 +424,10 @@ export class OfficeScene extends Phaser.Scene {
     this.realmScopes = multiverse ? this.buildRealmScopes(multiverse) : new Map();
     this.finder = new PathFinder(this.map.walkable);
     this.seats = new SeatAllocator(this.map);
+    this.drama.reset();
     this.renderVisuals();
     this.buildStairsInteractive();
+    this.triggers.build(this.map, style, this.state?.settings.office.furnitureTriggers ?? true);
     this.buildRealmZones();
     // M9 8f: a rebuild replaces every zone at its un-scaled size, so the current zoom's minimum
     // click-target growth (see `updateZoneHitSizes`) needs reapplying right away rather than
@@ -429,6 +460,7 @@ export class OfficeScene extends Phaser.Scene {
     this.renderVisuals();
     this.refreshStairsAvailability();
     this.rebuildReceptionist();
+    this.triggers.setStyle(style);
   }
 
   /** W3b/M12: (re)creates the floor's Receptionist at `pickReceptionistSpot`'s tile — on a full
@@ -728,6 +760,7 @@ export class OfficeScene extends Phaser.Scene {
    * frame from `update()` when the zoom has actually changed.
    */
   private updateZoneHitSizes(zoom: number) {
+    this.triggers.updateHitSizes(zoom);
     const T = this.map.tileSize;
     const stairsScale = hitScaleFor(T, zoom);
     for (const { zone } of this.stairsSprites) {
@@ -1044,9 +1077,11 @@ export class OfficeScene extends Phaser.Scene {
     this.applyLighting();
     this.postFx.applySettings(office.shaders, effectiveStyle, prefersReducedMotion(), state.screenFx);
     this.applyReceptionistLook();
+    this.triggers.setEnabled(office.furnitureTriggers ?? true);
 
     const instant = this.floorKey !== state.floorKey;
     if (instant) {
+      this.drama.reset();
       for (const c of this.characters.values()) c.destroyAll();
       this.characters.clear();
       this.seats.clear();
@@ -1054,6 +1089,7 @@ export class OfficeScene extends Phaser.Scene {
     }
 
     this.updateCast(state, rebuild || instant);
+    this.drama.afterCast(Date.now());
     const beacon = office.selectionBeacon ?? true;
     for (const c of this.characters.values()) c.setBeaconEnabled(beacon);
     this.applyFocusDim();
@@ -1393,6 +1429,7 @@ export class OfficeScene extends Phaser.Scene {
         box: c.bubbleSize,
         selected: key === this.selectedKey,
         waiting,
+        drama: c.hasDramaBubble,
         recency: c.boundAgentId ? (this.state?.agents.find((a) => a.id === c.boundAgentId)?.updatedAt ?? 0) : 0,
       });
     }
@@ -1538,6 +1575,8 @@ export class OfficeScene extends Phaser.Scene {
       if (hitZoomChanged) this.receptionist.setHitScale(this.currentHitScale);
       this.receptionist.update(time, delta, speed);
     }
+    this.drama.update(time, delta);
+    this.triggers.update(time, this.cameras.main);
     this.updateBeacon(zoom);
     // M9 8f deferred: under reduced motion, snap to the follow target every frame instead of
     // lerping toward it — `reducedMotion.value` is a cached read, not a per-frame `matchMedia` call.

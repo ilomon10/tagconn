@@ -15,7 +15,7 @@ import {
   type Zone,
 } from '@tagconn/shared';
 import { flagAgainstNorthWall, isEligibleForBackWall, placeAppliances, planNorthWall } from './backWall';
-import { TALL_AGAINST_WALL_KINDS } from './backWallSpec';
+import { APPLIANCE_SPECS, TALL_AGAINST_WALL_KINDS } from './backWallSpec';
 import { astarVoid, carveCorridor, findExitCandidates, type ExitCandidate } from './corridors';
 import {
   doorOffsetAndWidth,
@@ -28,11 +28,14 @@ import {
   type DoorSpan,
   type Side,
 } from './doors';
-import { decorateRoom, furnishRoom, type FurnishOptions, type RecipeItem } from './recipes';
+import { resolvePins } from './pins';
+import { decorateRoom, furnishRoom, seatsFor, type FurnishOptions, type RecipeItem, type RecipeSeat } from './recipes';
 import { buildRegionAtGrid, buildRoomToRegion, findRegions, findVoidAreas, reachableFrom, regionCentroid, type Region } from './regions';
 import { rngFor, randInt } from './rng';
+import { assignTriggers } from './triggers';
 import type {
   DecorSlot,
+  FurnitureAction,
   Door,
   GeneratedMap,
   GeneratedRoom,
@@ -52,6 +55,17 @@ export const TILE = 16;
 
 const key = (p: Point) => `${p.x},${p.y}`;
 const manhattan = (a: Point, b: Point) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+
+/** First occurrence of each seat tile wins (a pinned item's seat may land on a recipe seat). */
+function dedupeSeats(seats: readonly RecipeSeat[]): RecipeSeat[] {
+  const seen = new Set<string>();
+  return seats.filter((s) => {
+    const k = `${s.x},${s.y}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
 
 function grid<T>(cols: number, rows: number, fill: T): T[][] {
   return Array.from({ length: rows }, () => new Array<T>(cols).fill(fill));
@@ -167,9 +181,10 @@ interface OpenedDoor {
  * `opts.backWall` (M8 8p, default true) is an internal knob only, never a user setting: `false`
  * reproduces the exact pre-8p output (no appliances, no `againstNorthWall` flags, no `northWall`
  * slots) and exists purely so the parity sweep in `__tests__/backWall.test.ts` can compare the two
- * (docs/design/back-wall.md section 2.5).
+ * (docs/design/back-wall.md section 2.5). `opts.triggers` (M12, default true) likewise: `false` skips the
+ * trigger-furniture pass (procgen/triggers.ts), so parity tests can compare against the pre-trigger output.
  */
-export function generateMap(layout: OfficeLayout, opts?: { backWall?: boolean }): GeneratedMap {
+export function generateMap(layout: OfficeLayout, opts?: { backWall?: boolean; triggers?: boolean }): GeneratedMap {
   const issues = validateLayout(layout);
   if (hasLayoutErrors(issues)) {
     const fallback = build(DEFAULT_LAYOUT, [], opts);
@@ -178,7 +193,7 @@ export function generateMap(layout: OfficeLayout, opts?: { backWall?: boolean })
   return build(layout, issues, opts);
 }
 
-function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: { backWall?: boolean }): GeneratedMap {
+function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: { backWall?: boolean; triggers?: boolean }): GeneratedMap {
   const cols = layout.width;
   const rows = layout.height;
   const seed = layout.seed >>> 0;
@@ -491,7 +506,10 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
   }
 
   // --- 8 & 9. furniture, seats, stairs ------------------------------------------------------------
-  const furniture: (RecipeItem & { roomId: string; roomType: RoomType; againstNorthWall?: boolean })[] = [];
+  type PlacedItem = RecipeItem & { roomId: string; roomType: RoomType; againstNorthWall?: boolean; pinned?: true; trigger?: FurnitureAction };
+  const furniture: PlacedItem[] = [];
+  /** Rooms that carry locked furniture (M12), for the `pinned-blocks` warning in the global verify. */
+  const pinnedRoomIds = new Set<string>();
   const stairs: StairsSpot[] = [];
   const generatedRooms: GeneratedRoom[] = [];
 
@@ -511,6 +529,9 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     const reserved = apronsByRoom.get(room.id) ?? new Set<string>();
 
     if (room.type === 'stairs') {
+      if (roomSpecById.get(room.id)?.furniture?.length) {
+        issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${room.name ?? room.type}: locked furniture is ignored in a stairs room.`, roomIds: [room.id] });
+      }
       const w = interior.w;
       const startX = interior.x + Math.max(0, Math.floor((w - 2) / 2));
       // Prefer the interior's top row, but never cover a door/corridor apron (that would seal the
@@ -556,6 +577,13 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     }
 
     if (room.type === 'hall') {
+      // Decor only: pins are placed (never blocking, no seats) so a hall can hold locked props.
+      const hallSpec = roomSpecById.get(room.id);
+      if (hallSpec?.furniture?.length) {
+        const hallPins = resolvePins(hallSpec, interior, reserved);
+        issues.push(...hallPins.issues);
+        for (const item of hallPins.items) furniture.push({ ...item, blocking: false, roomId: room.id, roomType: room.type });
+      }
       generatedRooms.push({
         id: room.id,
         type: room.type,
@@ -586,18 +614,33 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     const roomRand = rngFor(seed, furnish?.seed !== undefined ? `room:${room.id}:${furnish.seed}` : `room:${room.id}`);
     const recipe = furnishRoom(room.type, interior, roomRand, opts);
     const blocked = new Set<string>();
-    const keptItems: (RecipeItem & { roomId: string; roomType: RoomType; againstNorthWall?: boolean })[] = [];
+    const keptItems: PlacedItem[] = [];
+    // M12: locked furniture goes first, into `keptItems`/`blocked`, and its cells (blocking or soft) are
+    // off limits to the recipe.
+    const pins = spec ? resolvePins(spec, interior, reserved) : { items: [], issues: [] };
+    issues.push(...pins.issues);
+    const pinnedCells = new Set<string>();
+    const pinSeats: RecipeSeat[] = [];
+    for (const pin of pins.items) {
+      keptItems.push({ ...pin, roomId: room.id, roomType: room.type });
+      for (const c of rectCells(pin)) {
+        pinnedCells.add(key(c));
+        if (pin.blocking) blocked.add(key(c));
+      }
+      pinSeats.push(...seatsFor(pin.kind, pin, interior));
+    }
+    if (pins.items.length) pinnedRoomIds.add(room.id);
     for (const item of recipe.furniture) {
       const cells = rectCells({ x: item.x, y: item.y, w: item.w, h: item.h });
       const fits =
         item.w > 0 &&
         item.h > 0 &&
-        cells.every((c) => insideRect(c, interior) && !reserved.has(key(c)) && !blocked.has(key(c)));
+        cells.every((c) => insideRect(c, interior) && !reserved.has(key(c)) && !blocked.has(key(c)) && !pinnedCells.has(key(c)));
       if (!fits) continue;
       keptItems.push({ ...item, roomId: room.id, roomType: room.type });
       if (item.blocking) for (const c of cells) blocked.add(key(c));
     }
-    let seats: Seat[] = recipe.seats
+    let seats: Seat[] = (pinSeats.length ? dedupeSeats([...recipe.seats, ...pinSeats]) : recipe.seats)
       .filter((s) => insideRect(s, interior) && !reserved.has(key(s)) && !blocked.has(key(s)))
       .map((s) => ({ x: s.x, y: s.y, zone: isZoneRoomType(room.type) ? room.type : 'entrance', roomId: room.id, kind: s.kind }));
 
@@ -672,15 +715,19 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
         settledCleanly = true;
         break;
       }
+      // Locked furniture is never removed by the retry (M12).
       let lastBlockingIdx = -1;
       for (let i = keptItems.length - 1; i >= 0; i--) {
-        if (keptItems[i]!.blocking) {
+        if (keptItems[i]!.blocking && !keptItems[i]!.pinned) {
           lastBlockingIdx = i;
           break;
         }
       }
       if (lastBlockingIdx === -1) {
         settledCleanly = true;
+        if (keptItems.some((it) => it.pinned && it.blocking)) {
+          issues.push({ severity: 'warning', code: 'pinned-blocks', message: `${room.name ?? room.type}: locked furniture blocks part of the room.`, roomIds: [room.id] });
+        }
         break;
       }
       const removed = keptItems.splice(lastBlockingIdx, 1)[0]!;
@@ -725,7 +772,9 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       }
       flagAgainstNorthWall(keptItems, interior.y, tiles);
       for (const item of keptItems) {
-        if (item.y !== interior.y || !item.againstNorthWall || !TALL_AGAINST_WALL_KINDS.has(item.kind)) continue;
+        if (item.y !== interior.y || !item.againstNorthWall) continue;
+        // Locked appliances / boards stand against the wall too, so wall decor must leave their columns.
+        if (!TALL_AGAINST_WALL_KINDS.has(item.kind) && !(item.pinned && (item.kind in APPLIANCE_SPECS || item.kind === 'notice-board' || item.kind === 'roster-board'))) continue;
         for (let x = item.x; x < item.x + item.w; x++) tallColumns.add(x);
       }
     }
@@ -755,6 +804,12 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       tiles: [], // filled by the global verify pass below
       labelAt: { x: interior.x, y: interior.y },
     });
+  }
+
+  // M12 G3: make sure each panel action has exactly one trigger item (marks existing furniture, places a
+  // missing one in the entrance or a lounge when it fits). Before blocking is applied so reachability sees it.
+  if (genOpts?.triggers ?? true) {
+    assignTriggers({ rooms: generatedRooms, furniture, tiles, apronsByRoom, tallColumnsByRoom, seed });
   }
 
   // Apply blocking furniture to the walkable grid.
@@ -798,6 +853,9 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       issues.push({ severity: 'warning', code: 'unreachable-seat', message: `Some seats in room "${gr.name ?? gr.id}" are unreachable from the spawn and were dropped.`, roomIds: [gr.id] });
     }
     if (tilesInRoom.length === 0) {
+      if (pinnedRoomIds.has(gr.id)) {
+        issues.push({ severity: 'warning', code: 'pinned-blocks', message: `${gr.name ?? gr.id}: locked furniture blocks part of the room.`, roomIds: [gr.id] });
+      }
       issues.push({ severity: 'error', code: 'unreachable-room', message: `No tile in room "${gr.name ?? gr.id}" is reachable from the spawn.`, roomIds: [gr.id] });
       continue;
     }

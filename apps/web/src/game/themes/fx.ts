@@ -52,12 +52,22 @@ function autoClean(scene: Phaser.Scene, container: Phaser.GameObjects.Container,
 }
 
 /** Gold sparkles popping above a point, e.g. above the hands while typing, or a `done` burst. */
-export function sparkles(scene: Phaser.Scene, x: number, y: number, enabled: boolean, burst = false): Phaser.GameObjects.Container {
+export function sparkles(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  enabled: boolean,
+  burst = false,
+  /** M12 `streak`: optional tint and a faster per-spark cadence (ms) for the non-burst loop. */
+  style?: { tint?: number; cadence?: number },
+): Phaser.GameObjects.Container {
   const c = scene.add.container(x, y);
   if (!enabled) return c;
   ensureFxTextures(scene);
   const count = burst ? 8 : 3;
   const dots = Array.from({ length: count }, () => scene.add.image(0, 0, 'icon-sparkle').setScale(0.5).setAlpha(0));
+  if (style?.tint !== undefined) dots.forEach((d) => d.setTint(style.tint!));
+  const cadence = style?.cadence ?? 250;
   c.add(dots);
   dots.forEach((d, i) => {
     const angle = burst ? (i / count) * Math.PI * 2 : -Math.PI / 2 + (Math.random() - 0.5) * 0.6;
@@ -67,8 +77,8 @@ export function sparkles(scene: Phaser.Scene, x: number, y: number, enabled: boo
       x: Math.cos(angle) * dist,
       y: Math.sin(angle) * dist,
       alpha: { from: 0, to: 1 },
-      duration: burst ? 500 : 250,
-      delay: i * (burst ? 60 : 250),
+      duration: burst ? 500 : cadence,
+      delay: i * (burst ? 60 : cadence),
       repeat: burst ? 0 : -1,
       yoyo: false,
       onComplete: () => d.setAlpha(0),
@@ -208,6 +218,9 @@ export function createActivityFx(
       return runeGlow(scene, x, y, enabled);
     case 'channel':
       return channelAura(scene, x, y, enabled);
+    case 'streak':
+      // M12 "on a roll": warm orange sparks, faster than the plain typing sparkles.
+      return sparkles(scene, x, y, enabled, false, { tint: 0xff8a2a, cadence: 130 });
     default:
       return scene.add.container(x, y);
   }

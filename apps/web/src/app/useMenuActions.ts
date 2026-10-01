@@ -23,13 +23,14 @@ export function useScreenEffect() {
   return { disabled: !shadersEnabled, on: resolved.on, effect: resolved.effect, toggle: () => setScreenOn(!resolved.on), setEffect: setScreenEffect, reset };
 }
 
+export type PanelActionId = 'board' | 'log' | 'quests' | 'roles' | 'settings' | 'heroes' | 'receptionist';
+
 /**
- * Everything the top bar's menu can do, as one `run` per action id. The menu rows and the global
- * hotkey listener below both go through this, so a key press and a tap always do the same thing.
+ * The panel-opening actions, shared by the menu and the in-office furniture triggers (M12 G3).
  * Heroes opens on the current floor (or the first floor in stairs order for the Multiverse);
  * the Receptionist goes through the same admin guard it always did.
  */
-export function useMenuActions({ onOpenPlanner, onManageFloors, onToggleMenu }: { onOpenPlanner: () => void; onManageFloors: () => void; onToggleMenu: () => void }) {
+export function usePanelActions(): Record<PanelActionId, { run: () => void; disabled: boolean }> {
   const projects = useOfficeStore((s) => s.projects);
   const selected = useOfficeStore((s) => s.selectedProjectId);
   const floorOrder = useSettingsStore((s) => s.settings.office.floorOrder);
@@ -37,19 +38,31 @@ export function useMenuActions({ onOpenPlanner, onManageFloors, onToggleMenu }: 
   const openReceptionist = useReceptionistUiStore((s) => s.openPanel);
   const openOverlay = useOverlayStore((s) => s.openOverlay);
   const { guard } = useRequireAdmin();
-  const screen = useScreenEffect();
   const heroFloor = defaultHeroFloor(projects, selected, floorOrder);
 
-  const actions: Record<MenuActionId, { run: () => void; disabled: boolean }> = {
-    menu: { run: onToggleMenu, disabled: false },
+  return {
     board: { run: () => openOverlay('board'), disabled: false },
     log: { run: () => openOverlay('log'), disabled: false },
     quests: { run: () => openOverlay('quests'), disabled: false },
     roles: { run: () => openOverlay('roles'), disabled: false },
     settings: { run: () => openOverlay('settings'), disabled: false },
     heroes: { run: () => heroFloor && openHeroes(heroFloor), disabled: !heroFloor },
-    planner: { run: onOpenPlanner, disabled: false },
     receptionist: { run: () => guard(() => openReceptionist()), disabled: false },
+  };
+}
+
+/**
+ * Everything the top bar's menu can do, as one `run` per action id. The menu rows and the global
+ * hotkey listener below both go through this, so a key press and a tap always do the same thing.
+ */
+export function useMenuActions({ onOpenPlanner, onManageFloors, onToggleMenu }: { onOpenPlanner: () => void; onManageFloors: () => void; onToggleMenu: () => void }) {
+  const panels = usePanelActions();
+  const screen = useScreenEffect();
+
+  const actions: Record<MenuActionId, { run: () => void; disabled: boolean }> = {
+    ...panels,
+    menu: { run: onToggleMenu, disabled: false },
+    planner: { run: onOpenPlanner, disabled: false },
     screen: { run: screen.toggle, disabled: screen.disabled },
     floors: { run: onManageFloors, disabled: false },
   };

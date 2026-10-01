@@ -2,10 +2,11 @@ import * as Phaser from 'phaser';
 import type { Activity, AgentStatus } from '@tagconn/shared';
 import type { ActorKey } from '../cast';
 import { INITIAL_LIFECYCLE, type LifecycleFrame } from '../actorLifecycle';
+import { DIZZY_FRAMES, EMOTE_ICON, STRAIN_ICON } from '../drama';
 import type { Point } from '../procgen/types';
 import type { Size } from '../labels';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '../textures';
-import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, prefersReducedMotion, staffTextureKey, type ActivityFxKind, type Costume } from '../themes';
+import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, prefersReducedMotion, staffTextureKey, type ActivityFxKind, type Costume, type DramaEmote, type StrainKind } from '../themes';
 
 export interface CharacterLook {
   color: number;
@@ -97,6 +98,10 @@ export class Character extends Phaser.GameObjects.Container {
   private handR: Phaser.GameObjects.Image;
   private prop: Phaser.GameObjects.Image;
   private icon: Phaser.GameObjects.Image;
+  /** M12 strain overlay (dizzy/sweat/yawn/flame), beside the head so it shows with a `?` / `!`. */
+  private strainIcon: Phaser.GameObjects.Image;
+  /** M12 "on a roll" sparks (a second fx container beside the activity `fx`). */
+  private strainFx: Phaser.GameObjects.Container;
   private cloak: Phaser.GameObjects.Image;
   private hat: Phaser.GameObjects.Image;
   private goggles: Phaser.GameObjects.Image;
@@ -132,7 +137,15 @@ export class Character extends Phaser.GameObjects.Container {
   private seated = false;
   private waveUntil = 0;
   private bubbleUntil = 0;
+  /** What is drawn in the bubble right now (server text or a drama line). */
   private lastBubble = '';
+  /** M12: the last text the server sent, so a re-sent unchanged server bubble does not wipe a drama line. */
+  private lastServerBubble = '';
+  /** M12: the visible bubble is a drama line (`sayDrama`); the label engine ranks it last. */
+  private dramaBubble = false;
+  private dramaEmote: DramaEmote | null = null;
+  private strainKind: StrainKind | null = null;
+  private strainAnimated = false;
   /** Whichever of `setBubble`'s own timer logic currently wants the bubble on screen, independent
    *  of the M8 8e LOD gate below — the two are ANDed together in `applyBubbleVisible`. */
   private bubbleWantsShow = false;
@@ -219,7 +232,9 @@ export class Character extends Phaser.GameObjects.Container {
     ]);
     this.icon = scene.add.image(0, -19, 'icon-dots-3').setOrigin(0.5, 1).setVisible(false);
     this.fx = scene.add.container(0, -8);
-    this.add([this.canvasGlow, this.shadow, this.legs, this.upper, this.icon, this.fx]);
+    this.strainIcon = scene.add.image(6, -17, STRAIN_ICON.dizzy).setOrigin(0.5, 1).setVisible(false);
+    this.strainFx = scene.add.container(0, -8);
+    this.add([this.canvasGlow, this.shadow, this.legs, this.upper, this.icon, this.strainIcon, this.fx, this.strainFx]);
 
     this.tag = crisp(
       scene.add
@@ -617,18 +632,73 @@ export class Character extends Phaser.GameObjects.Container {
   setBubble(text: string | undefined, seconds: number, enabled: boolean) {
     if (!enabled) {
       this.bubbleWantsShow = false;
+      this.dramaBubble = false;
       this.applyBubbleVisible();
       this.bubbleUntil = 0;
       return;
     }
     const t = (text ?? '').trim();
-    if (!t || t === this.lastBubble) return;
+    if (!t || t === this.lastServerBubble) return;
+    this.lastServerBubble = t;
     this.lastBubble = t;
+    this.dramaBubble = false;
     this.renderBubbleContent();
     this.bubble.setAlpha(1);
     this.bubbleWantsShow = true;
     this.applyBubbleVisible();
     this.bubbleUntil = this.scene.time.now + seconds * 1000;
+  }
+
+  // ---------------------------------------------------------------- M12 G1: drama
+
+  /** Strain overlay: `null` clears. `animated` false = static frame, no sway/droop, no streak fx. */
+  setStrain(kind: StrainKind | null, animated: boolean): void {
+    if (kind === this.strainKind && animated === this.strainAnimated) return;
+    const kindChanged = kind !== this.strainKind;
+    this.strainKind = kind;
+    this.strainAnimated = animated;
+    if (kindChanged || !animated) {
+      this.strainFx.removeAll(true);
+      if (kind === 'on-a-roll' && animated) this.strainFx.add(createActivityFx(this.scene, 'streak', 0, 0, true));
+    } else if (kind === 'on-a-roll' && this.strainFx.length === 0) this.strainFx.add(createActivityFx(this.scene, 'streak', 0, 0, true));
+    if (kind) this.strainIcon.setTexture(STRAIN_ICON[kind]).setAlpha(1).setPosition(6, -17).setVisible(true);
+    else this.strainIcon.setVisible(false);
+  }
+
+  /** Emote in the main head-icon slot during an antic; `null` clears. */
+  setDramaEmote(emote: DramaEmote | null): void {
+    this.dramaEmote = emote;
+  }
+
+  /** A drama bubble: shown like `setBubble`, but flagged so the label engine ranks it last. Skipped
+   *  while a waiting/blocked agent's real bubble is up (the line must never hide "needs you"). */
+  sayDrama(text: string, seconds: number): void {
+    const t = text.trim();
+    if (!t) return;
+    if (this.bubbleWantsShow && !this.dramaBubble && this.isWaiting) return;
+    this.scene.tweens.killTweensOf(this.bubble);
+    this.lastBubble = t;
+    this.dramaBubble = true;
+    this.renderBubbleContent();
+    this.bubble.setAlpha(1);
+    this.bubbleWantsShow = true;
+    this.applyBubbleVisible();
+    this.bubbleUntil = this.scene.time.now + seconds * 1000;
+  }
+
+  /** Clears the drama emote and a still-visible drama bubble. */
+  clearDrama(): void {
+    this.dramaEmote = null;
+    if (!this.dramaBubble) return;
+    this.dramaBubble = false;
+    this.scene.tweens.killTweensOf(this.bubble);
+    this.bubbleWantsShow = false;
+    this.bubbleUntil = 0;
+    this.applyBubbleVisible();
+  }
+
+  get hasDramaBubble(): boolean {
+    return this.dramaBubble && this.bubbleWantsShow;
   }
 
   /** Draws the bubble's current content: the real text box, or — while a lower-priority bubble has
@@ -895,10 +965,34 @@ export class Character extends Phaser.GameObjects.Container {
       if (!prop && this.costumeProp) prop = this.costumeProp;
       if (this.status === 'waiting' && !icon) icon = 'icon-question';
       if (this.status === 'blocked' && !icon) icon = 'icon-bang';
+      // M12 antic emote: only where no activity/status icon was picked (or the idle zz); `?` / `!` always win.
+      if (this.dramaEmote && (!icon || icon === 'icon-zz')) {
+        icon = EMOTE_ICON[this.dramaEmote];
+        iconAlpha = 1;
+        iconY = -19 + Math.round(Math.sin(t * 4));
+      }
       if (now < this.waveUntil) {
         handRX = 5;
         handRY = -9 - (Math.floor(t * 8) % 2) * 2;
       }
+    }
+
+    // M12 strain: motion only when animated (off under reduced motion / ambientEffects off).
+    const strain = this.strainKind;
+    if (strain && !walking) {
+      if (this.strainAnimated) {
+        if (strain === 'tired') {
+          bob += 1;
+          handRY += 1;
+        } else if (strain === 'dizzy') shakeX += Math.round(Math.sin(t * Math.PI * 2));
+        if (strain === 'dizzy') this.strainIcon.setTexture(DIZZY_FRAMES[Math.floor(t * 6) % DIZZY_FRAMES.length]!);
+      }
+    }
+    if (strain) {
+      const anim = this.strainAnimated;
+      const drip = strain === 'sweating' && anim ? Math.floor(((t * 1.5) % 1) * 4) : 0;
+      this.strainIcon.setPosition(6, -17 + drip + bob);
+      this.strainIcon.setAlpha(strain === 'tired' && anim ? 0.65 + 0.35 * Math.abs(Math.sin(t * 1.5)) : 1);
     }
 
     this.upper.setPosition(shakeX, bob);
@@ -916,11 +1010,12 @@ export class Character extends Phaser.GameObjects.Container {
     if (this.chip) this.chip.setPosition(this.tag.displayWidth / 2 + 2, this.tag.y);
     // Base "above the head" position (a bit higher when an icon badge is up there too), plus this
     // frame's `layoutLabels` offset (0,0 until the first label refresh has run) — see `labelAnchor`.
-    const baseY = (icon ? -26 : -18) + bob;
+    const hasIcon = !!icon || strain !== null;
+    const baseY = (hasIcon ? -26 : -18) + bob;
     const bx = this.labelDx;
     const by = baseY + this.labelDy;
     this.bubble.setPosition(bx, by);
-    this.updateBeacon(now, !!icon, bx, by);
+    this.updateBeacon(now, hasIcon, bx, by);
     this.leaderLine.clear();
     if (this.labelLeader && this.bubbleWantsShow && this.bubbleAllowedByLod) {
       this.leaderLine.lineStyle(1, 0xfdf6e3, 0.5);
@@ -934,6 +1029,10 @@ export class Character extends Phaser.GameObjects.Container {
   destroyAll() {
     this.glowPulse?.remove();
     this.fadeTween?.remove();
+    this.scene.tweens.killTweensOf(this.bubble);
+    this.strainFx.removeAll(true);
+    this.dramaEmote = null;
+    this.dramaBubble = false;
     this.overlay.destroy();
     this.destroy();
   }

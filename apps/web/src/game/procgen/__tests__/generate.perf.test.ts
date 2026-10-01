@@ -157,6 +157,36 @@ describe('perf budget', () => {
   });
 });
 
+describe('perf budget with locked furniture (M12 G4)', () => {
+  it('generateMap(128x96, 64 rooms) with pins on every room stays within the same budget', () => {
+    const input = maxRoomsLayout();
+    const layout: OfficeLayout = {
+      ...input,
+      background: input.background ?? 'hall',
+      corridorWidth: input.corridorWidth ?? 2,
+      id: 'perf-pins',
+      builtin: false,
+      createdAt: 0,
+      updatedAt: 0,
+      rooms: input.rooms.map((r) =>
+        r.type === 'stairs'
+          ? r
+          : { ...r, furniture: [{ kind: 'work-desk', x: 1, y: 2, w: 2, h: 1 }, { kind: 'plant', x: 4, y: 2, w: 1, h: 1 }, { kind: 'bookcase', x: 6, y: 0, w: 2, h: 1 }] },
+      ),
+    };
+    let map: ReturnType<typeof generateMap> | undefined;
+    const samples = sampleDurations(() => {
+      map = generateMap(layout);
+      expect(map.layoutId).toBe('perf-pins');
+      expect(map.furniture.filter((f) => f.pinned).length).toBeGreaterThan(100);
+    }, 9);
+    const median = samples[Math.floor(samples.length / 2)]!;
+    expect(median).toBeLessThan(MEDIAN_BUDGET_MS);
+    expect(samples[samples.length - 1]!).toBeLessThan(MAX_SAMPLE_BUDGET_MS);
+    void map;
+  });
+});
+
 describe('perf budget: the Multiverse plan (M8 8h)', () => {
   it('planMultiverse + generateMap for a full 12-realm plan stays well under budget', () => {
     const now = 1_000_000_000;

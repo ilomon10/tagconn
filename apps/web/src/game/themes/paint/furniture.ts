@@ -18,9 +18,58 @@ function pick<T>(arr: readonly T[], seed: number): T {
 // ==================================================================== modern (port of renderMap.ts)
 
 const MODERN: Record<FurnitureKind, Painter> = {
-  // M12 G3 placeholders (real art lands with G3).
-  'notice-board': (g, f, T, r) => MODERN.board(g, f, T, r),
-  'roster-board': (g, f, T, r) => MODERN.board(g, f, T, r),
+  // M12 G3 trigger furniture: 1 row deep, wall-standing; tall only when `againstNorthWall` (<= MAX_OVERDRAW_PX).
+  'notice-board': (g, f, T, rect) => {
+    // A cork board in a wood frame with pinned notes and a pen ledge.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = f.againstNorthWall ? y - 8 : y + 1;
+    const bottom = y + 13;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(0x6b4a2a, x, top, w, bottom - top);
+    rect(0xc89a5a, x + 1, top + 1, w - 2, bottom - top - 2);
+    rect(0xb08448, x + 1, top + 1, w - 2, 1);
+    const notes = [0xf5f0e0, 0xffe27a, 0x9fd8ff, 0xffb3b3];
+    const count = Math.max(2, f.w * 2);
+    for (let i = 0; i < count; i++) {
+      const nx = x + 2 + i * 7;
+      const ny = top + 2 + ((i + f.variant) % 2) * 5;
+      if (nx + 5 > x + w - 1 || ny + 5 > bottom - 1) continue;
+      rect(pick(notes, f.variant + i), nx, ny, 5, 4);
+      rect(0xd8453a, nx + 2, ny - 1, 1, 1);
+      rect(0x6a6a7a, nx + 1, ny + 2, 3, 1, 0.6);
+    }
+    rect(0x4a2e18, x, bottom, w, 2);
+    rect(0x2a2e35, x + 2, bottom - 1, 4, 1);
+  },
+  'roster-board': (g, f, T, rect) => {
+    // A framed grid of team photos with name plates.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = f.againstNorthWall ? y - 8 : y + 1;
+    const bottom = y + 13;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(0x3a3e4a, x, top, w, bottom - top);
+    rect(0xeceae2, x + 1, top + 1, w - 2, bottom - top - 2);
+    const rows = bottom - top >= 16 ? 2 : 1;
+    const cell = (bottom - top - 2) / rows;
+    const skin = [0xf0c8a0, 0xd8a070, 0x9a6a44];
+    const shirt = [0x5fb8ff, 0x6cf08a, 0xffa94a, 0xb48cff];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < Math.max(2, f.w * 2); c++) {
+        const px = x + 2 + c * 7;
+        const py = top + 2 + r * cell;
+        if (px + 6 > x + w - 1) break;
+        rect(0xa8b0c0, px, py, 6, cell - 3);
+        rect(pick(skin, f.variant + c + r), px + 2, py + 1, 2, 2);
+        rect(pick(shirt, f.variant + c * 2 + r), px + 1, py + 3, 4, Math.max(1, cell - 7));
+        rect(0x3a3e4a, px, py + cell - 2, 6, 1, 0.5);
+      }
+    }
+    rect(0x22252e, x + 2, bottom - 1, w - 4, 1, 0.5);
+  },
   'work-desk': (g, f, T, rect) => {
     const x = f.x * T;
     const y = f.y * T;
@@ -547,9 +596,52 @@ function candleAndScroll(rect: RectFn, x: number, y: number): void {
 }
 
 const GUILD: Record<FurnitureKind, Painter> = {
-  // M12 G3 placeholders (real art lands with G3).
-  'notice-board': (g, f, T, r) => GUILD.board(g, f, T, r),
-  'roster-board': (g, f, T, r) => GUILD.board(g, f, T, r),
+  // M12 G3 trigger furniture: 1 row deep, wall-standing; tall only when `againstNorthWall` (<= MAX_OVERDRAW_PX).
+  'notice-board': (g, f, T, rect) => {
+    // A plank quest board on two posts with parchment bounties nailed on.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const top = f.againstNorthWall ? y - 8 : y + 1;
+    const bottom = y + 12;
+    rect(0x000000, x + 1, y + 14, w - 2, 2, 0.22);
+    rect(WOOD_DARK, x + 1, bottom, 2, y + 15 - bottom);
+    rect(WOOD_DARK, x + w - 3, bottom, 2, y + 15 - bottom);
+    rect(WOOD_DARK, x, top, w, bottom - top);
+    rect(WOOD, x + 1, top + 1, w - 2, bottom - top - 2);
+    for (let py = top + 3; py < bottom - 1; py += 3) rect(darken(WOOD, 0.25), x + 1, py, w - 2, 1, 0.6);
+    const count = Math.max(2, f.w * 2);
+    for (let i = 0; i < count; i++) {
+      const nx = x + 2 + i * 7;
+      const ny = top + 2 + ((i + f.variant) % 2) * 4;
+      if (nx + 5 > x + w - 1 || ny + 5 > bottom - 1) continue;
+      rect(0xe8d9b0, nx, ny, 5, 5);
+      rect(0xb5433a, nx + 1, ny + 3, 3, 1, 0.8);
+      rect(0x2a2a33, nx + 1, ny + 1, 3, 1, 0.7);
+      rect(0x9aa0a8, nx + 2, ny - 1, 1, 1);
+    }
+  },
+  'roster-board': (g, f, T, rect) => {
+    // A heraldic banner hung from a crossbar on a stand, with a gold crest.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    const barY = f.againstNorthWall ? y - 8 : y + 1;
+    const cloth = [0x7a2a3a, 0x2c4a7a, 0x2f6a4a][((f.variant % 3) + 3) % 3]!;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.22);
+    rect(WOOD_DARK, x + 2, barY, w - 4, 2);
+    rect(WOOD_DARK, x + w / 2 - 1, barY, 2, y + 15 - barY);
+    rect(0xe8c070, x + 1, barY, 2, 2);
+    rect(0xe8c070, x + w - 3, barY, 2, 2);
+    const clothTop = barY + 2;
+    const clothH = y + 11 - clothTop;
+    rect(cloth, x + 3, clothTop, w - 6, clothH);
+    rect(darken(cloth, 0.3), x + 3, clothTop, 1, clothH);
+    rect(darken(cloth, 0.3), x + 3, y + 9, w - 6, 2);
+    rect(0xf3c94d, x + w / 2 - 2, clothTop + 2, 4, 1);
+    rect(0xf3c94d, x + w / 2 - 1, clothTop + 3, 2, 3);
+    rect(0xf3c94d, x + w / 2 - 3, clothTop + 4, 6, 1);
+  },
   'work-desk': (g, f, T, rect) => {
     const x = f.x * T;
     const y = f.y * T;
