@@ -15,6 +15,7 @@ export interface SfxParams {
   /** Melodic sequence (fanfare, gong, jingles): each note re-uses the envelope. */
   notes?: readonly { freq: number; at: number; len: number }[];
 }
+export type MusicStyle = 'modern' | 'guild' | 'rift';
 export interface AudioMix { master: number; sfx: boolean; ambient: boolean; alerts: boolean; footsteps: boolean }
 export interface AudioPrefs { muted: boolean | null; volume: number | null }
 export interface AudioEngine {
@@ -22,5 +23,7 @@ export interface AudioEngine {
   setMix(m: AudioMix): void;
   play(id: SfxId, opts?: { gain?: number; pan?: number }): void;
   setAmbient(kind: AmbientKind | null): void;
+  /** M14: the looping battle track; `null` fades it out. Ducks the ambient bed while it plays. */
+  setMusic(style: MusicStyle | null, fadeMs?: number): void;
   destroy(): void;
 }

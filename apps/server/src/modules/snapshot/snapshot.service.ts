@@ -13,6 +13,7 @@ type SnapshotDeps = Deps<
   | 'eventsRepository'
   | 'layoutsRepository'
   | 'heroesRepository'
+  | 'progressionRepository'
   | 'settings'
 >;
 
@@ -44,6 +45,8 @@ export class SnapshotService {
       layouts: d.layoutsRepository.list(),
       // Heroes of the subscribed floor(s) (M8 8i); '*' (pid undefined) returns every project's heroes.
       heroes: d.heroesRepository.list(pid),
+      // M14: stored progress of those heroes (heroes without a row are level 1 on the client).
+      progress: d.progressionRepository.listViews(pid, d.settings.get()),
     };
   }
 }

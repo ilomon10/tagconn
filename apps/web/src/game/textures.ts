@@ -99,10 +99,17 @@ export const CHARACTER_BITMAPS: Record<string, Bitmap> = {
   'icon-can': { rows: ['  g  ', 'bbbbb', 'bwbbb', 'bbbbb', 'bbbbb', ' bbb '], palette: { g: 0xd9d9d9, b: 0x4a90e2, w: 0xcfe9ff }, outline: 0x0a1a2e },
   'icon-pencil': { rows: ['    pp', '   ypp', '  yyp ', ' yyy  ', 'kyy   ', 'kk    '], palette: { p: 0xff8aa0, y: 0xffd84a, k: 0x555555 }, outline: 0x2a2410 },
   'icon-broom': { rows: ['     w', '    w ', '   w  ', '  yyy ', ' yyyyy', 'yyyyyy'], palette: { w: 0x8a5a2b, y: 0xe8c860 }, outline: 0x2a2410 },
+  // M14 A1 KO badges (<= 7x7 before the outline): `icon-ko` + `icon-ko-2` are the two bob frames (KO_FRAMES).
+  'icon-ko': { rows: ['  y   w', ' yyy   ', '  y  y ', '    yyy', 'w    y ', '  y    ', ' yyy   '], palette: { y: 0xffe45a, w: 0xffffff }, outline: 0x2a2410 },
+  'icon-ko-2': { rows: ['w   y  ', '   yyy ', ' y  y  ', 'yyy    ', ' y   w ', '    y  ', '   yyy '], palette: { y: 0xffe45a, w: 0xffffff }, outline: 0x2a2410 },
+  'icon-bandage': { rows: ['     bb', '    bbb', '   bdb ', '  bddb ', ' bbdb  ', 'bbbb   ', 'bb     '], palette: { b: 0xf2c9a0, d: 0xc98a5a }, outline: 0x2a1808 },
   'icon-parcel': { rows: ['bbbbbb', 'bbwwbb', 'bbwwbb', 'wwwwww', 'bbwwbb', 'bbwwbb'], palette: { b: 0xc8934f, w: 0xf2e3b8 }, outline: 0x2a1808 },
 };
 
-function withOutline(b: Bitmap): string[] {
+/** Texture keys of the two KO dizzy frames (bob); the bandage is the single `icon-bandage`. */
+export const KO_FRAMES = ['icon-ko', 'icon-ko-2'] as const;
+
+export function withOutline(b: Bitmap): string[] {
   if (b.outline === undefined) return b.rows;
   const h = b.rows.length + 2;
   const w = Math.max(...b.rows.map((r) => r.length)) + 2;

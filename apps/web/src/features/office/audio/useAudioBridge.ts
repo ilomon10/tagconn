@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { sfxBus, type AmbientContext } from '../../../game/sfxBus';
+import { sfxBus, type AmbientContext, type MusicRequest } from '../../../game/sfxBus';
 import { getAudioEngine } from '../../../lib/audio/engine';
 import { ambientFor } from '../../../lib/audio/ambient';
 import { dayNightChanged, resolveMix } from '../../../lib/audio/mix';
@@ -21,6 +21,7 @@ export function useAudioBridge(active: boolean): void {
   const office = useSettingsStore((s) => s.settings.office);
   const muted = useAudioPrefsStore((s) => s.muted);
   const volume = useAudioPrefsStore((s) => s.volume);
+  const battleMusic = useSettingsStore((s) => s.settings.battle.music);
 
   useEffect(() => {
     const engine = getAudioEngine();
@@ -52,11 +53,20 @@ export function useAudioBridge(active: boolean): void {
     const ambient = sfxBus.ambient();
     if (ambient) engine.setAmbient(mix.ambient ? ambientFor(ambient.style, ambient.night) : null);
 
+    // Battle music (replayed to this subscriber); gated by `battle.music` and master here, by sfx/unlock in the engine.
+    const applyMusic = (m: MusicRequest | null): void => {
+      if (m && battleMusic && mix.master > 0) engine.setMusic(m.style, m.fadeMs);
+      else engine.setMusic(null);
+    };
+    const offMusic = sfxBus.onMusic(applyMusic);
+    if (!sfxBus.music()) engine.setMusic(null);
+
     document.addEventListener('visibilitychange', apply);
     return () => {
       document.removeEventListener('visibilitychange', apply);
       offSfx();
       offAmbient();
+      offMusic();
     };
-  }, [office, muted, volume, active]);
+  }, [office, muted, volume, active, battleMusic]);
 }

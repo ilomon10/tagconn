@@ -67,7 +67,7 @@ export function skillsForClass(classId: ClassId, skills: SkillAllocation): Skill
 
 // ------------------------------------------------------------------ enemy scaling
 
-export const enemyHpPct = (partySize: number): number => 150 + 40 * (partySize - 1);
+export const enemyHpPct = (partySize: number): number => 130 + 15 * (partySize - 1);
 /** clamp(round(avg * difficulty) + spread, 1, maxLevel + 5), spread = rng % 4 - 1 (-1..+2). */
 export function enemyLevelFor(avgLevel: number, difficulty: number, seed: number, maxLevel: number): number {
   const spread = (rngNext(seedState(seed, 0x5bd1e995)).value % 4) - 1;

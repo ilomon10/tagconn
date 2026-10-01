@@ -2,6 +2,8 @@ import { ALL_FLOORS, useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { registerLayoutEvents, useLayoutStore } from '../stores/layoutStore';
 import { registerHeroEvents, useHeroStore } from '../stores/heroStore';
+import { registerProgressEvents, useProgressStore } from '../stores/progressStore';
+import { startDemoProgression } from '../features/battle/demoProgression';
 import { useReceptionistStore } from '../stores/receptionistStore';
 import { emitWithAck, getSocket, heroSocket } from './socket';
 import { startDemo } from './mock';
@@ -41,6 +43,7 @@ function wireLive() {
     office().applySnapshot(snap);
     if (snap.layouts) useLayoutStore.getState().setLayouts(snap.layouts);
     if (snap.heroes) useHeroStore.getState().setHeroes(snap.heroes);
+    useProgressStore.getState().setAll(snap.progress ?? []);
   });
   s.on('project:upsert', (p) => office().upsertProject(p));
   s.on('project:merged', ({ from, into }) => {
@@ -67,6 +70,7 @@ function wireLive() {
   s.on('roles:changed', (r) => cfg().setRoles(r));
   registerLayoutEvents(s);
   registerHeroEvents(s);
+  registerProgressEvents(s);
 }
 
 /** Fetch everything after (re)connecting. We subscribe to all floors and filter client-side. */
@@ -86,6 +90,8 @@ async function resync() {
     // M8 8i: heroes are global too (bound heroes must look the same on every floor/tab). Pre-M8
     // servers and fixtures omit the field.
     useHeroStore.getState().setHeroes(snap.heroes ?? []);
+    // M14: stored hero progress (pre-M14 servers and fixtures omit the field).
+    useProgressStore.getState().setAll(snap.progress ?? []);
   } catch (err) {
     console.warn('[tagconn] resync failed', err);
   }
@@ -108,7 +114,12 @@ export function enterDemo() {
   const cfg = useSettingsStore.getState();
   if (!cfg.settingsLoaded) cfg.setSettings(defaultSettings());
   if (!cfg.rolesLoaded) cfg.setRoles(DEFAULT_ROLES);
-  stopDemoFn = startDemo();
+  const stopMock = startDemo();
+  const stopProgression = startDemoProgression();
+  stopDemoFn = () => {
+    stopProgression();
+    stopMock();
+  };
 }
 
 function stopDemo() {
@@ -119,6 +130,7 @@ function stopDemo() {
 export function exitDemo() {
   stopDemo();
   useOfficeStore.getState().reset();
+  useProgressStore.getState().setAll([]);
   const url = new URL(window.location.href);
   if (url.searchParams.has('demo')) {
     url.searchParams.delete('demo');

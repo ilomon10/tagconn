@@ -2,9 +2,10 @@
 import type { SfxId } from '../../game/sfxBus';
 import { SFX_CATEGORY } from '../../game/sfxBus';
 import { createAmbient } from './ambient';
+import { createMusic } from './music';
 import { SFX_PRESETS } from './presets';
 import { renderSfx } from './sfxr';
-import type { AmbientKind, AudioEngine, AudioMix } from './types';
+import type { AmbientKind, AudioEngine, AudioMix, MusicStyle } from './types';
 
 export const MAX_VOICES = 8;
 const DEFAULT_MIN_INTERVAL_MS = 60;
@@ -15,6 +16,11 @@ const MASTER_FADE_S = 0.1;
 /** Ambient level relative to master: the only 0.25 stage (ambient.ts ramps its own bus 0..1). */
 const AMBIENT_GAIN = 0.25;
 
+/** Battle music level relative to master, and the share of the ambient bed that stays audible underneath it. */
+const MUSIC_GAIN = 0.3;
+const AMBIENT_DUCK = 0.3;
+const DEFAULT_MUSIC_FADE_MS = 400;
+
 const OFF: AudioMix = { master: 0, sfx: false, ambient: false, alerts: false, footsteps: false };
 
 export function createAudioEngine(deps: { createContext: () => AudioContext | null; target: EventTarget }): AudioEngine {
@@ -24,7 +30,7 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
   } catch {
     ctx = null;
   }
-  if (!ctx) return { unlocked: false, setMix() {}, play() {}, setAmbient() {}, destroy() {} };
+  if (!ctx) return { unlocked: false, setMix() {}, play() {}, setAmbient() {}, setMusic() {}, destroy() {} };
   const c = ctx;
 
   const masterGain = c.createGain();
@@ -34,6 +40,9 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
   const ambientBus = c.createGain();
   ambientBus.gain.value = AMBIENT_GAIN;
   ambientBus.connect(masterGain);
+  const musicBus = c.createGain();
+  musicBus.gain.value = MUSIC_GAIN;
+  musicBus.connect(masterGain);
 
   let mix: AudioMix = OFF;
   let unlocked = false;
@@ -43,6 +52,8 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
   let suspendTimer: ReturnType<typeof setTimeout> | null = null;
   let wantedAmbient: AmbientKind | null = null;
   let ambient: { kind: AmbientKind; stop(): void } | null = null;
+  let wantedMusic: { style: MusicStyle; fadeMs: number } | null = null;
+  let music: { style: MusicStyle; stop(fadeMs: number): void } | null = null;
   const buffers = new Map<SfxId, AudioBuffer | null>();
   const lastAt = new Map<SfxId, number>();
 
@@ -66,6 +77,21 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
     if (kind) ambient = { kind, ...createAmbient(c, kind, ambientBus) };
   };
 
+  // Plays only while master, sfx and the unlock allow it (like ambient); the ambient bed ducks underneath.
+  const syncMusic = (): void => {
+    const want = mix.sfx && mix.master > 0 && unlocked ? wantedMusic : null;
+    const fadeMs = wantedMusic?.fadeMs ?? DEFAULT_MUSIC_FADE_MS;
+    if (!(music && want && music.style === want.style)) {
+      music?.stop(fadeMs);
+      music = null;
+      if (want) music = { style: want.style, ...createMusic(c, want.style, musicBus, want.fadeMs) };
+    }
+    const t = c.currentTime;
+    ambientBus.gain.cancelScheduledValues(t);
+    ambientBus.gain.setValueAtTime(ambientBus.gain.value, t);
+    ambientBus.gain.linearRampToValueAtTime(music ? AMBIENT_GAIN * AMBIENT_DUCK : AMBIENT_GAIN, t + fadeMs / 1000);
+  };
+
   const syncContext = (): void => {
     if (destroyed) return;
     if (suspendTimer) clearTimeout(suspendTimer);
@@ -75,6 +101,7 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
       return;
     }
     syncAmbient();
+    syncMusic();
     if (mix.master === 0) {
       // Ramp down first so suspending does not click; the ambient bed fades out meanwhile.
       const t = c.currentTime;
@@ -170,6 +197,10 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
       wantedAmbient = kind;
       syncAmbient();
     },
+    setMusic(style, fadeMs = DEFAULT_MUSIC_FADE_MS) {
+      wantedMusic = style ? { style, fadeMs } : null;
+      if (!destroyed) syncMusic();
+    },
     destroy() {
       if (destroyed) return;
       destroyed = true;
@@ -178,6 +209,8 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
       // The abrupt cut is intentional at teardown: nothing is left to hear, so the ambient fade is skipped.
       ambient?.stop();
       ambient = null;
+      music?.stop(0);
+      music = null;
       try {
         masterGain.disconnect();
         void c.close?.().catch?.(() => {});

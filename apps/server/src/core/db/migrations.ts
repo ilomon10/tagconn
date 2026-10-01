@@ -127,6 +127,26 @@ export const MIGRATIONS: string[] = [
   /* 11: M12 how a project's cwd was established (git toplevel, project-dir fallback, payload cwd); null on old rows */ `
   ALTER TABLE projects ADD COLUMN root_source TEXT;
   `,
+  /* 12: M14 hero progression, usage high-water marks, battles. Tables in modules/progression/progression.tables.ts. */ `
+  CREATE TABLE IF NOT EXISTS hero_progress (
+    hero_id TEXT PRIMARY KEY, class_id TEXT NOT NULL, xp INTEGER NOT NULL DEFAULT 0, bonus_points INTEGER NOT NULL DEFAULT 0,
+    skills TEXT NOT NULL, ko_until INTEGER, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0,
+    flees INTEGER NOT NULL DEFAULT 0, loot TEXT NOT NULL, equipped_title TEXT, updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS usage_marks (
+    session_id TEXT NOT NULL, agent_id TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+    cache_read_tokens INTEGER NOT NULL, cache_creation_tokens INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    PRIMARY KEY (session_id, agent_id)
+  );
+  CREATE TABLE IF NOT EXISTS battles (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, status TEXT NOT NULL, npc_kind TEXT NOT NULL, encounter_id TEXT NOT NULL,
+    setup TEXT NOT NULL, loot_seed INTEGER NOT NULL, party_hero_ids TEXT NOT NULL, log TEXT, log_hash TEXT, outcome TEXT,
+    created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, resolved_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS battles_project_status_idx ON battles (project_id, status);
+  CREATE INDEX IF NOT EXISTS battles_created_idx ON battles (created_at);
+  CREATE INDEX IF NOT EXISTS battles_status_expires_idx ON battles (status, expires_at);
+  `,
 ];
 
 export function migrate(sqlite: Database.Database): number {

@@ -2,6 +2,7 @@ import type {
   Activity,
   Agent,
   Hero,
+  HeroProgress,
   HookPayload,
   OfficeEvent,
   OfficeLayout,
@@ -72,6 +73,8 @@ export interface BusEvents {
   'hero.upserted': Hero;
   /** A hero was deleted. */
   'hero.removed': { id: string; projectId: string };
+  /** A hero's progress (XP, skills, KO, loot) changed (M14). */
+  'progress.upserted': HeroProgress;
   /** A run (quest or receptionist turn) was created or changed status (M8 8k, S2). */
   'run.upserted': Run;
   /** One redacted, capped `RunEvent` accepted from the verified runner it was dispatched to. */

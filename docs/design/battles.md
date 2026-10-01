@@ -1686,6 +1686,15 @@ weights are renormalised. `r1 % total` picks the category. Within "attack", `r2 
 - A type-advantaged party roughly halves the turns; a disadvantaged one (developer vs monster) loses without a swap.
   That is intended.
 
+
+**W0d tuning (balance simulation, accepted by the PM; supersedes the numbers above where they differ).**
+`enemyHpPct = 130 + 15·(n−1)` (130/145/160/175 % for 1–4 heroes). Enemy base atk/def are now: monster 90/22,
+police 82/28, cia-agent 90/24, sales-dog 98/20, guest 82/24, office-cat 98/18 (hp, spd, focus unchanged); `battleXp`
+unchanged. Measured (300 seeds per cell, difficulty 1, greedy bot): median 4–8 turns in every cell, solo win rate
+0.57–0.79, parties of 2–4 win 0.88–1.00, difficulty 2 always harder, 0 % timeouts. The 0.98 cap for parties of 2–4 is
+not reachable without party-size-scaled enemy damage (one hero acts per turn); accepted, since the stakes are cosmetic
+and `battle.difficulty` raises the challenge. `balance.test.ts` asserts ≥ 0.7 for parties of 2–4.
+
 ### 4.7 Outcome
 
 | result | XP per hero | tally | KO | loot |

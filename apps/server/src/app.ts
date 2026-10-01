@@ -15,6 +15,7 @@ import { healthModule } from './modules/health/index.js';
 import { heroesModule } from './modules/heroes/index.js';
 import { ingestModule } from './modules/ingest/index.js';
 import { layoutsModule } from './modules/layouts/index.js';
+import { progressionModule } from './modules/progression/index.js';
 import { projectsModule } from './modules/projects/index.js';
 import { receptionistModule } from './modules/receptionist/index.js';
 import { rolesModule } from './modules/roles/index.js';
@@ -93,6 +94,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(agentsModule);
   await app.register(heroesModule);
   await app.register(transcriptsModule);
+  await app.register(progressionModule);
   await app.register(tasksModule);
   await app.register(eventsModule);
   await app.register(snapshotModule);

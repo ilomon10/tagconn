@@ -102,32 +102,32 @@ const eBuff = (turns: number): MoveOver => buff(turns, 0);
 
 export const ENEMIES: Readonly<Record<BattleNpcKind, EnemyDef>> = {
   monster: {
-    kind: 'monster', type: 'bug', base: { hp: 75, atk: 60, def: 55, spd: 50, focus: 50 }, ai: 'aggressive',
+    kind: 'monster', type: 'bug', base: { hp: 75, atk: 90, def: 22, spd: 50, focus: 50 }, ai: 'aggressive',
     moves: [em('bug', 'segfault', eAtk(40)), em('bug', 'null-pointer', eAtk(60, 90)), em('bug', 'race-condition', inflict(['merge-conflict', 45, 2, 3], 100, 0)), em('bug', 'memory-leak', inflict(['burnout', 50, 3, 5], 100, 0))],
     loot: [{ id: 'title-bug-squasher', weight: 3 }, { id: 'hat-hardhat', weight: 2 }, { id: 'prop-mop', weight: 2 }],
   },
   police: {
-    kind: 'police', type: 'bureaucrat', base: { hp: 85, atk: 55, def: 70, spd: 40, focus: 50 }, ai: 'tank',
+    kind: 'police', type: 'bureaucrat', base: { hp: 85, atk: 82, def: 28, spd: 40, focus: 50 }, ai: 'tank',
     moves: [em('bureaucrat', 'citation', eAtk(40)), em('bureaucrat', 'paperwork-pile', eAtk(60, 90)), em('bureaucrat', 'red-tape', inflict(['stunned', 35, 1, 1], 100, 0)), em('bureaucrat', 'by-the-book', eShield(2))],
     loot: [{ id: 'hat-police-cap', weight: 3 }, { id: 'title-red-tape-cutter', weight: 2 }, { id: 'prop-clipboard', weight: 2 }],
   },
   'cia-agent': {
-    kind: 'cia-agent', type: 'bureaucrat', base: { hp: 70, atk: 60, def: 60, spd: 65, focus: 50 }, ai: 'tricky',
+    kind: 'cia-agent', type: 'bureaucrat', base: { hp: 70, atk: 90, def: 24, spd: 65, focus: 50 }, ai: 'tricky',
     moves: [em('bureaucrat', 'redact', eAtk(40)), em('bureaucrat', 'classified', eAtk(65, 85)), em('bureaucrat', 'surveillance', eBuff(2)), em('bureaucrat', 'interrogate', inflict(['merge-conflict', 45, 2, 3], 100, 0))],
     loot: [{ id: 'hat-fedora', weight: 3 }, { id: 'title-redacted', weight: 2 }, { id: 'prop-clipboard', weight: 1 }],
   },
   'sales-dog': {
-    kind: 'sales-dog', type: 'salesy', base: { hp: 70, atk: 65, def: 50, spd: 70, focus: 50 }, ai: 'aggressive',
+    kind: 'sales-dog', type: 'salesy', base: { hp: 70, atk: 98, def: 20, spd: 70, focus: 50 }, ai: 'aggressive',
     moves: [em('salesy', 'pitch', eAtk(40)), em('salesy', 'upsell', eAtk(60, 90)), em('salesy', 'cold-call', inflict(['stunned', 30, 1, 1], 100, 0)), em('salesy', 'synergy', heal(25, 0))],
     loot: [{ id: 'title-unsold', weight: 3 }, { id: 'hat-cap', weight: 2 }, { id: 'prop-parcel', weight: 2 }],
   },
   guest: {
-    kind: 'guest', type: 'rival', base: { hp: 70, atk: 55, def: 60, spd: 60, focus: 50 }, ai: 'tricky',
+    kind: 'guest', type: 'rival', base: { hp: 70, atk: 82, def: 24, spd: 60, focus: 50 }, ai: 'tricky',
     moves: [em('rival', 'small-talk', eAtk(40)), em('rival', 'hot-take', eAtk(60, 90)), em('rival', 'humblebrag', eBuff(2)), em('rival', 'name-drop', inflict(['merge-conflict', 40, 2, 3], 100, 0))],
     loot: [{ id: 'title-rival-tamer', weight: 3 }, { id: 'prop-watering-can', weight: 2 }, { id: 'hat-cap', weight: 1 }],
   },
   'office-cat': {
-    kind: 'office-cat', type: 'feral', base: { hp: 60, atk: 65, def: 45, spd: 90, focus: 50 }, ai: 'aggressive',
+    kind: 'office-cat', type: 'feral', base: { hp: 60, atk: 98, def: 18, spd: 90, focus: 50 }, ai: 'aggressive',
     moves: [em('feral', 'scratch', eAtk(40)), em('feral', 'zoomies', eAtk(50, 100, { priority: 1 })), em('feral', 'keyboard-walk', inflict(['merge-conflict', 45, 2, 3], 100, 0)), em('feral', 'hairball', inflict(['burnout', 45, 3, 5], 100, 0))],
     loot: [{ id: 'title-cat-whisperer', weight: 3 }, { id: 'prop-parcel', weight: 1 }],
   },

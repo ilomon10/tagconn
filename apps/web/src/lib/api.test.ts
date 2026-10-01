@@ -82,3 +82,44 @@ describe('api: Bearer header injection (M8 8m)', () => {
     expect(session.getItem('tagconn.adminToken')).toBe('tca_ok');
   });
 });
+
+describe('api: M14 progression routes', () => {
+  beforeEach(() => {
+    vi.stubGlobal('sessionStorage', memoryStorage());
+    vi.stubGlobal('localStorage', memoryStorage());
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const lastCall = () => (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.at(-1) as [string, RequestInit];
+
+  it('builds the progress, battle and hero-progress URLs and methods', async () => {
+    await api.progress('p 1');
+    expect(lastCall()[0]).toBe('/api/progress?projectId=p+1');
+    await api.progress();
+    expect(lastCall()[0]).toBe('/api/progress');
+    await api.heroProgress('h-0123abcd');
+    expect(lastCall()[0]).toBe('/api/heroes/h-0123abcd/progress');
+    await api.healHero('h-0123abcd');
+    expect(lastCall()[0]).toBe('/api/heroes/h-0123abcd/heal');
+    expect(lastCall()[1].method).toBe('POST');
+    await api.abandonBattle('b-0123456789ab');
+    expect(lastCall()[0]).toBe('/api/battles/b-0123456789ab/abandon');
+  });
+
+  it('posts JSON bodies for skills, title, create and resolve', async () => {
+    await api.saveSkills('h-0123abcd', { skills: { 'developer.0.1': 1 }, baseUpdatedAt: 5 });
+    expect(lastCall()[0]).toBe('/api/heroes/h-0123abcd/skills');
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({ skills: { 'developer.0.1': 1 }, baseUpdatedAt: 5 });
+    await api.equipTitle('h-0123abcd', { title: null });
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({ title: null });
+    await api.createBattle({ projectId: 'p', npcKind: 'guest', encounterId: 'guest-1', party: [{ kind: 'agent', agentId: 'a' }] });
+    expect(lastCall()[0]).toBe('/api/battles');
+    await api.resolveBattle('b-0123456789ab', { log: [{ t: 'run' }] });
+    expect(lastCall()[0]).toBe('/api/battles/b-0123456789ab/resolve');
+    expect(headersOf(lastCall()[1])['content-type']).toBe('application/json');
+  });
+});

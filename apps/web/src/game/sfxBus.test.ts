@@ -69,3 +69,21 @@ describe('sfxBus', () => {
     expect(SFX_CATEGORY['battle-hit']).toBe('sfx');
   });
 });
+
+describe('sfxBus music channel', () => {
+  it('replays the last music request to late subscribers and stops with null', () => {
+    sfxBus.clear();
+    sfxBus.setMusic({ kind: 'battle', style: 'rift' });
+    const cb = vi.fn();
+    const off = sfxBus.onMusic(cb);
+    expect(cb).toHaveBeenCalledWith({ kind: 'battle', style: 'rift' });
+    sfxBus.setMusic(null);
+    expect(cb).toHaveBeenLastCalledWith(null);
+    expect(sfxBus.music()).toBeNull();
+    off();
+    sfxBus.setMusic({ kind: 'battle', style: 'guild' });
+    expect(cb).toHaveBeenCalledTimes(2);
+    sfxBus.clear();
+    expect(sfxBus.music()).toBeNull();
+  });
+});

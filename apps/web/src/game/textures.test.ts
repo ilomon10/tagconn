@@ -2,7 +2,7 @@ import { HERO_HAIR_COLORS, HERO_HAIR_STYLE_COUNT, HERO_SKIN_TONES } from '@tagco
 import { describe, expect, it } from 'vitest';
 import { POSE_PROP } from './actors/poses';
 import { DIZZY_FRAMES, EMOTE_ICON, STRAIN_ICON } from './drama';
-import { CHARACTER_BITMAPS, HAIR_COLORS, HAIR_STYLES, hexToNumber, SKIN_TONES } from './textures';
+import { CHARACTER_BITMAPS, HAIR_COLORS, HAIR_STYLES, hexToNumber, KO_FRAMES, SKIN_TONES } from './textures';
 
 // W4 acceptance: the web palettes stay equal to the shared `HERO_*` vocabulary (packages/shared/src/heroes.ts).
 describe('palettes match the shared HERO_* vocabulary', () => {
@@ -55,5 +55,21 @@ describe('M13 life art', () => {
       expect(b, k).toBeDefined();
       for (const r of b!.rows) for (const ch of r) if (ch !== ' ') expect(b!.palette[ch], `${k} '${ch}'`).toBeDefined();
     }
+  });
+});
+
+describe('M14 KO icons', () => {
+  it('icon-ko (2 frames) and icon-bandage are at most 7x7 before the outline and palette-only', () => {
+    expect(KO_FRAMES).toHaveLength(2);
+    for (const k of [...KO_FRAMES, 'icon-bandage']) {
+      const b = CHARACTER_BITMAPS[k]!;
+      expect(b, k).toBeDefined();
+      expect(b.rows.length, k).toBeLessThanOrEqual(7);
+      for (const r of b.rows) {
+        expect(r.length, k).toBeLessThanOrEqual(7);
+        for (const ch of r) if (ch !== ' ') expect(b.palette[ch], `${k} '${ch}'`).toBeDefined();
+      }
+    }
+    expect(CHARACTER_BITMAPS['icon-ko']!.rows.join()).not.toEqual(CHARACTER_BITMAPS['icon-ko-2']!.rows.join());
   });
 });

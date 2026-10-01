@@ -4,9 +4,12 @@ import type { AudioMix } from '../types';
 vi.mock('../sfxr', () => ({ renderSfx: vi.fn(() => new Float32Array(10)) }));
 vi.mock('../presets', () => ({ SFX_PRESETS: new Proxy({}, { get: () => ({}) }) }));
 const stopAmbient = vi.fn();
+const stopMusic = vi.fn();
+vi.mock('../music', () => ({ createMusic: vi.fn(() => ({ stop: stopMusic })) }));
 vi.mock('../ambient', () => ({ createAmbient: vi.fn(() => ({ stop: stopAmbient })) }));
 
 import { createAmbient } from '../ambient';
+import { createMusic } from '../music';
 import { createAudioEngine, getAudioEngine } from '../engine';
 import { renderSfx } from '../sfxr';
 
@@ -236,6 +239,31 @@ describe('audio engine', () => {
     expect(createAmbient).toHaveBeenCalledTimes(3);
     engine.setAmbient(null);
     expect(stopAmbient).toHaveBeenCalledTimes(3);
+  });
+
+  it('plays battle music only when unlocked, sfx on and audible; ducks ambient meanwhile', () => {
+    const { target, engine } = setup();
+    engine.setMix(ALL);
+    engine.setMusic('guild', 300);
+    expect(createMusic).not.toHaveBeenCalled();
+    unlock(target);
+    expect(createMusic).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createMusic).mock.calls[0]![1]).toBe('guild');
+    expect(vi.mocked(createMusic).mock.calls[0]![3]).toBe(300);
+    engine.setMusic('guild', 300);
+    expect(createMusic).toHaveBeenCalledTimes(1);
+    engine.setMusic('rift');
+    expect(stopMusic).toHaveBeenCalledWith(400);
+    expect(createMusic).toHaveBeenCalledTimes(2);
+    engine.setMix({ ...ALL, sfx: false });
+    expect(stopMusic).toHaveBeenCalledTimes(2);
+    engine.setMix(ALL);
+    expect(createMusic).toHaveBeenCalledTimes(3);
+    engine.setMix({ ...ALL, master: 0 });
+    expect(stopMusic).toHaveBeenCalledTimes(3);
+    engine.setMix(ALL);
+    engine.setMusic(null);
+    expect(stopMusic).toHaveBeenCalledTimes(4);
   });
 
   it('destroy removes listeners and closes the context', () => {

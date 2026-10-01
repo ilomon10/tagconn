@@ -25,6 +25,15 @@ describe('SFX_PRESETS', () => {
     expect(peak).toBeLessThanOrEqual(SFX_CATEGORY[id] === 'ui' || id === 'transition-daynight' ? 0.35 : 0.6);
     if (id === 'ui-hover') expect(peak).toBeLessThanOrEqual(0.1);
   });
+  it('battle presets meet the design durations', () => {
+    const secs = (id: (typeof SFX_IDS)[number]) => renderSfx(SFX_PRESETS[id], RATE).length / RATE;
+    expect(secs('battle-swirl')).toBeCloseTo(0.65, 1);
+    expect(secs('battle-return')).toBeCloseTo(0.3, 1);
+    expect(secs('battle-sting')).toBeLessThanOrEqual(0.2);
+    expect(secs('battle-text')).toBeLessThanOrEqual(0.03);
+    for (const id of ['battle-victory', 'battle-defeat', 'battle-level-up'] as const) expect(secs(id)).toBeLessThanOrEqual(1.5);
+    for (const id of ['battle-hit', 'battle-hit-super', 'battle-hit-weak', 'battle-crit', 'battle-miss'] as const) expect(secs(id)).toBeLessThanOrEqual(0.25);
+  });
   it('has no extra ids', () => {
     expect(Object.keys(SFX_PRESETS).sort()).toEqual([...SFX_IDS].sort());
   });

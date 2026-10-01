@@ -38,6 +38,8 @@ export interface SfxEvent {
 /** World-space camera centre and half view size (OfficeScene sets it every proximity tick). */
 export interface SfxListenerPose { x: number; y: number; halfW: number; halfH: number }
 export interface AmbientContext { style: 'modern' | 'guild' | 'rift'; night: boolean }
+/** M14: the looping battle track (docs/design/battles.md 3.2); `null` = stop. */
+export interface MusicRequest { kind: 'battle'; style: 'modern' | 'guild' | 'rift'; fadeMs?: number }
 
 export interface SfxBus {
   emit(e: SfxEvent): void;
@@ -48,6 +50,10 @@ export interface SfxBus {
   setAmbient(a: AmbientContext): void;
   ambient(): AmbientContext | null;
   onAmbient(cb: (a: AmbientContext) => void): () => void;
+  /** Replays the last music request to late subscribers; `null` stops the track. */
+  setMusic(m: MusicRequest | null): void;
+  music(): MusicRequest | null;
+  onMusic(cb: (m: MusicRequest | null) => void): () => void;
   /** Tests. */
   clear(): void;
 }
@@ -57,6 +63,8 @@ function createSfxBus(): SfxBus {
   const ambientSubs = new Set<(a: AmbientContext) => void>();
   let listener: SfxListenerPose | null = null;
   let ambient: AmbientContext | null = null;
+  const musicSubs = new Set<(m: MusicRequest | null) => void>();
+  let music: MusicRequest | null = null;
   // A throwing listener never breaks the emitter or the other listeners.
   const safe = <T>(cb: (v: T) => void, v: T): void => {
     try {
@@ -87,7 +95,19 @@ function createSfxBus(): SfxBus {
       if (ambient) safe(cb, ambient);
       return () => void ambientSubs.delete(cb);
     },
+    setMusic: (m) => {
+      music = m;
+      for (const cb of [...musicSubs]) safe(cb, m);
+    },
+    music: () => music,
+    onMusic: (cb) => {
+      musicSubs.add(cb);
+      if (music) safe(cb, music);
+      return () => void musicSubs.delete(cb);
+    },
     clear: () => {
+      musicSubs.clear();
+      music = null;
       subs.clear();
       ambientSubs.clear();
       listener = null;

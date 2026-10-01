@@ -2,10 +2,17 @@ import type {
   AdminSessionInfo,
   AuthStatus,
   AuthTokenResponse,
+  BattleCreate,
+  BattleOutcome,
+  BattleResolve,
+  BattleStart,
+  BattleStatus,
   BootstrapRequest,
   Hero,
   HeroCreate,
   HeroPatch,
+  HeroProgress,
+  LootId,
   OfficeEvent,
   OfficeLayout,
   OfficeLayoutInput,
@@ -15,6 +22,7 @@ import type {
   Role,
   Settings,
   SettingsPatch,
+  SkillAllocationRequest,
 } from '@tagconn/shared';
 import { clearStoredToken, emitAuthEvent, PAIR_TO_CHANGE_MESSAGE, readStoredToken } from './auth';
 
@@ -102,6 +110,15 @@ export const api = {
   patchHero: (id: string, patch: HeroPatch) => request<Hero>(`/api/heroes/${encodeURIComponent(id)}`, { method: 'PATCH', body: json(patch) }),
   resetHero: (id: string) => request<Hero>(`/api/heroes/${encodeURIComponent(id)}/reset`, { method: 'POST' }),
   deleteHero: (id: string) => request<unknown>(`/api/heroes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // M14 progression and battles (docs/design/battles.md 2.4). Writes need an admin session; reads are public.
+  progress: (projectId?: string) => request<HeroProgress[]>(`/api/progress${qs({ projectId })}`),
+  heroProgress: (id: string) => request<HeroProgress>(`/api/heroes/${encodeURIComponent(id)}/progress`),
+  saveSkills: (id: string, body: SkillAllocationRequest) => request<HeroProgress>(`/api/heroes/${encodeURIComponent(id)}/skills`, { method: 'POST', body: json(body) }),
+  equipTitle: (id: string, body: { title: LootId | null }) => request<HeroProgress>(`/api/heroes/${encodeURIComponent(id)}/title`, { method: 'POST', body: json(body) }),
+  healHero: (id: string) => request<HeroProgress>(`/api/heroes/${encodeURIComponent(id)}/heal`, { method: 'POST' }),
+  createBattle: (body: BattleCreate) => request<BattleStart>('/api/battles', { method: 'POST', body: json(body) }),
+  resolveBattle: (id: string, body: BattleResolve) => request<BattleOutcome>(`/api/battles/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: json(body) }),
+  abandonBattle: (id: string) => request<{ status: BattleStatus }>(`/api/battles/${encodeURIComponent(id)}/abandon`, { method: 'POST' }),
   // M8 8m admin auth (docs/design/runner-and-helpdesk.md section 5). `authStatus` is public (works with
   // no token, or a bad/expired one — the response just says `admin: false`); the rest need an existing
   // admin session, carried by the Authorization header `request()` attaches above.

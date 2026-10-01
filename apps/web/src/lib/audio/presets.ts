@@ -12,9 +12,6 @@ const JINGLE = (freqs: number[]): SfxParams => ({
   notes: seq(freqs, 0.11, 0.16),
 });
 
-/** M14 W0w placeholder: a barely audible blip until AU1 writes the real battle presets. */
-const BLANK: SfxParams = { wave: 'sine', attack: 0.004, sustain: 0.01, decay: 0.03, freq: 440, gain: 0.15 };
-
 export const SFX_PRESETS: Record<SfxId, SfxParams> = {
   'alert-ask': {
     wave: 'square', duty: 0.25, attack: 0.01, sustain: 0.08, decay: 0.12, freq: 660, gain: 0.4, lowpass: 2600,
@@ -77,30 +74,65 @@ export const SFX_PRESETS: Record<SfxId, SfxParams> = {
     wave: 'sine', attack: 0.01, sustain: 0.06, decay: 0.2, freq: 784, gain: 0.2,
     notes: [{ freq: 784, at: 0, len: 0.2 }, { freq: 1047, at: 0.12, len: 0.26 }],
   },
-  // Battle presets: blank until AU1.
-  'battle-encounter': BLANK, 'battle-text': BLANK,
-  'battle-swirl': BLANK,
-  'battle-sting': BLANK,
-  'battle-return': BLANK,
-  'battle-hit': BLANK,
-  'battle-hit-super': BLANK,
-  'battle-hit-weak': BLANK,
-  'battle-crit': BLANK,
-  'battle-miss': BLANK,
-  'battle-heal': BLANK,
-  'battle-buff': BLANK,
-  'battle-shield': BLANK,
-  'battle-status': BLANK,
-  'battle-faint': BLANK,
-  'battle-enemy-faint': BLANK,
-  'battle-swap': BLANK,
-  'battle-item': BLANK,
-  'battle-run': BLANK,
-  'battle-victory': BLANK,
-  'battle-defeat': BLANK,
-  'battle-level-up': BLANK,
-  'battle-loot': BLANK,
-  'battle-xp-tick': BLANK,
+  // M14 battle presets (docs/design/battles.md 3.2): chiptune squares and triangles, soft edges. Times in seconds.
+  'battle-encounter': {
+    wave: 'square', duty: 0.25, attack: 0.005, sustain: 0.05, decay: 0.08, freq: 784, gain: 0.5, lowpass: 3600,
+    notes: [{ freq: 784, at: 0, len: 0.1 }, { freq: 659, at: 0.1, len: 0.1 }, { freq: 784, at: 0.2, len: 0.1 }, { freq: 1047, at: 0.3, len: 0.28 }],
+  },
+  'battle-text': { wave: 'square', duty: 0.5, attack: 0.002, sustain: 0.006, decay: 0.014, freq: 1000, gain: 0.12, lowpass: 3000 },
+  'battle-swirl': { wave: 'square', duty: 0.25, attack: 0.05, sustain: 0.5, decay: 0.1, freq: 220, slide: 1100, gain: 0.35, lowpass: 2800, vibratoHz: 14, vibratoDepth: 0.03 },
+  'battle-sting': {
+    wave: 'square', duty: 0.25, attack: 0.004, sustain: 0.03, decay: 0.05, freq: 988, gain: 0.45, lowpass: 3400,
+    notes: [{ freq: 988, at: 0, len: 0.08 }, { freq: 1319, at: 0.07, len: 0.12 }],
+  },
+  'battle-return': { wave: 'noise', attack: 0.05, sustain: 0.1, decay: 0.15, freq: 0, gain: 0.3, lowpass: 1400, highpass: 150, seed: 53 },
+  'battle-hit': { wave: 'noise', attack: 0.002, sustain: 0.03, decay: 0.09, freq: 0, gain: 0.5, lowpass: 2200, highpass: 100, punch: 0.6, seed: 57 },
+  'battle-hit-super': {
+    wave: 'noise', attack: 0.002, sustain: 0.05, decay: 0.15, freq: 0, gain: 0.58, lowpass: 3200, highpass: 80, punch: 0.9, seed: 59,
+  },
+  'battle-hit-weak': { wave: 'noise', attack: 0.002, sustain: 0.015, decay: 0.06, freq: 0, gain: 0.3, lowpass: 1100, highpass: 150, punch: 0.3, seed: 61 },
+  'battle-crit': {
+    wave: 'square', duty: 0.25, attack: 0.002, sustain: 0.04, decay: 0.12, freq: 1568, slide: -1800, gain: 0.55, lowpass: 4200, punch: 0.8,
+  },
+  'battle-miss': { wave: 'noise', attack: 0.04, sustain: 0.05, decay: 0.1, freq: 0, gain: 0.25, lowpass: 1800, highpass: 600, seed: 67 },
+  'battle-heal': {
+    wave: 'triangle', attack: 0.01, sustain: 0.05, decay: 0.12, freq: 523, gain: 0.45, lowpass: 4000,
+    notes: seq([523, 659, 784, 1047], 0.08, 0.16),
+  },
+  'battle-buff': { wave: 'square', duty: 0.25, attack: 0.01, sustain: 0.12, decay: 0.12, freq: 440, slide: 900, gain: 0.35, lowpass: 3200 },
+  'battle-shield': { wave: 'triangle', attack: 0.005, sustain: 0.1, decay: 0.2, freq: 330, slide: 120, gain: 0.45, lowpass: 2400, punch: 0.5, vibratoHz: 30, vibratoDepth: 0.03 },
+  'battle-status': { wave: 'saw', attack: 0.02, sustain: 0.15, decay: 0.2, freq: 330, slide: -180, gain: 0.35, lowpass: 1500, vibratoHz: 16, vibratoDepth: 0.1 },
+  'battle-faint': { wave: 'square', duty: 0.5, attack: 0.01, sustain: 0.25, decay: 0.2, freq: 440, slide: -600, gain: 0.4, lowpass: 2200 },
+  'battle-enemy-faint': { wave: 'square', duty: 0.25, attack: 0.01, sustain: 0.2, decay: 0.25, freq: 660, slide: -420, gain: 0.4, lowpass: 2400, vibratoHz: 20, vibratoDepth: 0.06 },
+  'battle-swap': { wave: 'triangle', attack: 0.01, sustain: 0.06, decay: 0.12, freq: 400, slide: 900, gain: 0.35, lowpass: 3000 },
+  'battle-item': {
+    wave: 'triangle', attack: 0.005, sustain: 0.03, decay: 0.07, freq: 784, gain: 0.4, lowpass: 3400,
+    notes: [{ freq: 784, at: 0, len: 0.08 }, { freq: 1175, at: 0.07, len: 0.12 }],
+  },
+  'battle-run': { wave: 'square', duty: 0.5, attack: 0.01, sustain: 0.18, decay: 0.12, freq: 300, slide: 1200, gain: 0.35, lowpass: 3000, vibratoHz: 22, vibratoDepth: 0.05 },
+  'battle-victory': {
+    wave: 'square', duty: 0.25, attack: 0.005, sustain: 0.08, decay: 0.12, freq: 523, gain: 0.5, lowpass: 3800,
+    notes: [
+      { freq: 523, at: 0, len: 0.14 }, { freq: 523, at: 0.16, len: 0.14 }, { freq: 523, at: 0.32, len: 0.14 },
+      { freq: 659, at: 0.48, len: 0.2 }, { freq: 523, at: 0.72, len: 0.14 }, { freq: 784, at: 0.88, len: 0.5 },
+    ],
+  },
+  'battle-defeat': {
+    wave: 'triangle', attack: 0.01, sustain: 0.15, decay: 0.25, freq: 392, gain: 0.5, lowpass: 1800,
+    notes: [{ freq: 392, at: 0, len: 0.3 }, { freq: 330, at: 0.3, len: 0.3 }, { freq: 262, at: 0.6, len: 0.3 }, { freq: 196, at: 0.9, len: 0.5 }],
+  },
+  'battle-level-up': {
+    wave: 'square', duty: 0.25, attack: 0.005, sustain: 0.06, decay: 0.1, freq: 523, gain: 0.5, lowpass: 4000,
+    notes: [
+      { freq: 523, at: 0, len: 0.12 }, { freq: 659, at: 0.1, len: 0.12 }, { freq: 784, at: 0.2, len: 0.12 },
+      { freq: 1047, at: 0.3, len: 0.12 }, { freq: 784, at: 0.42, len: 0.1 }, { freq: 1047, at: 0.52, len: 0.1 }, { freq: 1319, at: 0.62, len: 0.6 },
+    ],
+  },
+  'battle-loot': {
+    wave: 'sine', attack: 0.003, sustain: 0.03, decay: 0.1, freq: 1319, gain: 0.45, punch: 0.4,
+    notes: [{ freq: 1319, at: 0, len: 0.1 }, { freq: 1760, at: 0.07, len: 0.25 }],
+  },
+  'battle-xp-tick': { wave: 'square', duty: 0.5, attack: 0.002, sustain: 0.008, decay: 0.02, freq: 1200, gain: 0.2, lowpass: 3200 },
 };
 
 // Compile-time/runtime guard that no id is missing.

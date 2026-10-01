@@ -61,7 +61,7 @@ describe('mods, moves, skillsForClass', () => {
 
 describe('enemy scaling', () => {
   it('enemyHpPct', () => {
-    expect([1, 2, 3, 4].map(enemyHpPct)).toEqual([150, 190, 230, 270]);
+    expect([1, 2, 3, 4].map(enemyHpPct)).toEqual([130, 145, 160, 175]);
   });
   it('enemyLevelFor stays within spread and clamps', () => {
     for (let seed = 0; seed < 400; seed++) {
@@ -98,7 +98,7 @@ describe('buildBattleSetup', () => {
     const four = build([member('a', 10), member('b', 10), member('c', 10), member('d', 10)], 5);
     expect(one.enemy.level).toBe(four.enemy.level);
     expect(four.enemy.stats.hp).toBeGreaterThan(one.enemy.stats.hp);
-    expect(four.enemy.stats.hp).toBe(Math.floor((one.enemy.stats.hp / 150) * 270));
+    expect(four.enemy.stats.hp).toBe(Math.floor((one.enemy.stats.hp / 130) * 175));
   });
   it('sanitizes names, caps the party and rejects an empty one', () => {
     expect(build([member('x\u0007y\n' + 'z'.repeat(60), 3)]).party[0]!.name).toHaveLength(40);

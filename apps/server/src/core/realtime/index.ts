@@ -122,6 +122,7 @@ export const realtimePlugin = fp(
     bus.on('layout.removed', (id) => office.emit('layout:remove', id));
     bus.on('hero.upserted', (h) => toProject(h.projectId).emit('hero:upsert', h));
     bus.on('hero.removed', ({ id, projectId }) => toProject(projectId).emit('hero:remove', id));
+    bus.on('progress.upserted', (p) => toProject(p.projectId).emit('hero:progress', p));
 
     app.addHook('preClose', async () => {
       office.disconnectSockets(true);

@@ -247,11 +247,12 @@ Pokémon-style turn-based battles from M13 encounters (Battle / Ignore), party o
 (`Agent.usage` deltas credited to the bound hero), stats + per-class skill trees, XP + cosmetic loot, soft KO.
 Design: `docs/design/battles.md`.
 
-- [ ] W0 design + threat model + shared contract (`progression.ts`, seeded battle engine replayed by the server) [Architect + Security]
+- [x] W0 design `docs/design/battles.md` + threat model (14 findings, none Critical/High, all folded in) + shared contract, settings, battle engine, content/setup, web stubs [Architect + Security + Developers]
+- [x] W0d balance simulation (median 4–8 turns; solo 57–79 % wins, parties 88–100 %, difficulty 2 harder) [Developer]
 - [x] UI interaction sounds + transition sounds (floor, Multiverse, day/night): game-like feedback on menu/panel open-close, character selection, toggles, tabs, floor switch, save (user request 2026-10-01) [Developer: audio/web]
-- [ ] Server `progression` module (hero_progress table, usage-delta XP, skills, battles create/resolve) [Developer: server]
-- [ ] BattleScene (swirl transition, command menu, HP bars, log, results) + enemy art [Developer: game]
-- [ ] Hero sheet "Stats & Skills" tab + HUD level badge [Developer: heroes]
+- [~] Server `progression` module: S1 storage + migration 12 [x]; S2 XP/skills routes, S3 battles routes + security tests [ ] [Developer: server]
+- [x] BattleScene (swirl + iris, stage, animations) + controller timeline + enemy/FX/KO art + battle HUD (menu, bars, log, results) + battle audio and music + themed copy [Developers]
+- [x] Hero sheet "Stats & Skills" tab (skill tree, spend/respec/confirm) + HUD level badge + data layer and demo battles [Developers]
 - [ ] Encounter prompt + party picker + KO presence + loot cosmetics [Developer: web]
 - [ ] Gate → v0.8.0
 
