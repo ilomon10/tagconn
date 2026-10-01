@@ -20,7 +20,7 @@ function run(events: FlowEvent[], from: FlowState = IDLE) {
 }
 
 const toPicking: FlowEvent[] = [{ t: 'offer', offer }, { t: 'shown', npcId: 'n-1' }, { t: 'choice', npcId: 'n-1', choice: 'battle' }];
-const toFighting: FlowEvent[] = [...toPicking, { t: 'pick', party }, { t: 'started', start }];
+const toFighting: FlowEvent[] = [...toPicking, { t: 'pick', party }, { t: 'started', npcId: 'n-1', start }];
 
 describe('flowMachine', () => {
   it('offer then shown holds the NPC', () => {
@@ -74,7 +74,7 @@ describe('flowMachine', () => {
 
   it('a failed create releases the NPC and shows the error; Continue leaves quietly', () => {
     const base = run([...toPicking, { t: 'pick', party }]);
-    const failed = run([{ t: 'failed', message: 'rate limit' }], base.state);
+    const failed = run([{ t: 'failed', for: 'n-1', message: 'rate limit' }], base.state);
     expect(failed.state).toEqual({ phase: 'error', offer, message: 'rate limit', start: null });
     expect(failed.effects).toEqual([{ do: 'release', npcId: 'n-1' }]);
     const done = run([{ t: 'close' }], failed.state);
@@ -109,10 +109,40 @@ describe('flowMachine', () => {
 
   it('a failed resolve shows the error, keeps the scene, and releases on Continue', () => {
     const resolving = run([{ t: 'ended', log: [], result: 'won', turns: 1 }], run(toFighting).state);
-    const failed = run([{ t: 'failed', message: 'desync' }], resolving.state);
+    const failed = run([{ t: 'failed', for: 'b-1', message: 'desync' }], resolving.state);
     expect(failed.state).toMatchObject({ phase: 'error', start, message: 'desync' });
     expect(failed.effects).toEqual([]);
     expect(run([{ t: 'close' }], failed.state).effects).toEqual([{ do: 'closeScene' }, { do: 'release', npcId: 'n-1' }]);
+  });
+
+  it('a retryable failed resolve can be sent again with the same log; a non-retryable one cannot', () => {
+    const log = [{ t: 'flee' }] as unknown as Extract<FlowEvent, { t: 'ended' }>['log'];
+    const resolving = run([{ t: 'ended', log, result: 'won', turns: 2 }], run(toFighting).state);
+    const failed = run([{ t: 'failed', for: 'b-1', message: '503', retryable: true }], resolving.state);
+    expect(failed.state).toMatchObject({ phase: 'error', retry: { log, result: 'won', turns: 2 } });
+    const again = run([{ t: 'retry' }], failed.state);
+    expect(again.state).toMatchObject({ phase: 'resolving', log, result: 'won', turns: 2 });
+    expect(again.effects).toEqual([{ do: 'resolve', start, log, result: 'won', turns: 2 }]);
+    const hard = run([{ t: 'failed', for: 'b-1', message: '400' }], resolving.state);
+    expect(run([{ t: 'retry' }], hard.state).state).toBe(hard.state);
+  });
+
+  it('an unusable battle (engine version mismatch) is abandoned, the scene closed and the NPC released', () => {
+    const r = run([{ t: 'failed', for: 'b-1', message: 'reload' }], run(toFighting).state);
+    expect(r.state).toEqual({ phase: 'error', offer, message: 'reload', start: null });
+    expect(r.effects).toEqual([{ do: 'abandon', battleId: 'b-1' }, { do: 'closeScene' }, { do: 'release', npcId: 'n-1' }]);
+    expect(run([{ t: 'close' }], r.state).effects).toEqual([]);
+  });
+
+  it('async results for another battle or NPC are ignored', () => {
+    const fighting = run(toFighting).state;
+    expect(run([{ t: 'failed', for: 'b-other', message: 'x' }], fighting).state).toBe(fighting);
+    const resolving = run([{ t: 'ended', log: [], result: 'won', turns: 1 }], fighting).state;
+    expect(run([{ t: 'failed', for: 'b-other', message: 'x' }], resolving).state).toBe(resolving);
+    expect(run([{ t: 'resolved', outcome: { ...outcome('won'), battleId: 'b-other' } }], resolving).state).toBe(resolving);
+    const starting = run([...toPicking, { t: 'pick', party }]).state;
+    expect(run([{ t: 'failed', for: 'n-other', message: 'x' }], starting).state).toBe(starting);
+    expect(run([{ t: 'started', npcId: 'n-other', start }], starting).state).toBe(starting);
   });
 
   it('unmount (close) mid-battle abandons it', () => {
@@ -127,7 +157,7 @@ describe('flowMachine', () => {
   });
 
   it('stale async events are ignored once the flow is idle', () => {
-    expect(run([{ t: 'started', start }, { t: 'resolved', outcome: outcome('won') }, { t: 'failed', message: 'x' }, { t: 'ended', log: [], result: 'won', turns: 1 }]).state).toBe(IDLE);
+    expect(run([{ t: 'started', npcId: 'n-1', start }, { t: 'resolved', outcome: outcome('won') }, { t: 'failed', for: 'b-1', message: 'x' }, { t: 'ended', log: [], result: 'won', turns: 1 }]).state).toBe(IDLE);
   });
 
   it('a withdraw does not interrupt the picker or a fight', () => {

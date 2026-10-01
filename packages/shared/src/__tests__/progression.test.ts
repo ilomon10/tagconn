@@ -222,6 +222,7 @@ describe('schemas', () => {
     expect(({} as Record<string, unknown>).x).toBeUndefined();
     expect(SkillAllocationSchema.safeParse(JSON.parse('{"skills":{"constructor":1}}')).success).toBe(false);
     expect(SkillAllocationSchema.safeParse({ skills: { 'developer.0.1': 1 } }).success).toBe(true);
+    expect(SkillAllocationSchema.safeParse({ skills: {}, baseSkillsUpdatedAt: 5, baseUpdatedAt: 3 }).success).toBe(true); // legacy field still accepted
     expect(SkillAllocationSchema.safeParse({ skills: { 'developer.3.1': 1 } }).success).toBe(false);
     expect(SkillAllocationSchema.safeParse({ skills: { 'developer.0.1': 11 } }).success).toBe(false);
     const many = Object.fromEntries(CLASS_IDS.flatMap((c) => [0, 1, 2].flatMap((b) => [1, 2, 3, 4].map((t) => [`${c}.${b}.${t}`, 1]))));

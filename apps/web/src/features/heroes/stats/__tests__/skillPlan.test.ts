@@ -137,7 +137,11 @@ describe('skillPlan', () => {
   });
 
   it('classifies a stale-base save as a conflict', () => {
-    expect(classifySaveError(new Error('Progress for "h-1" was changed since you loaded it')).kind).toBe('conflict');
+    const conflict = Object.assign(new Error('Skills changed since you loaded them (skills-conflict); reload and retry'), { status: 409 });
+    expect(classifySaveError(conflict).kind).toBe('conflict');
+    expect(classifySaveError(Object.assign(new Error('Invalid skill allocation: respec-disabled'), { status: 409 })).kind).toBe('other');
+    expect(classifySaveError(Object.assign(new Error('Skills changed (skills-conflict)'), { status: 400 })).kind).toBe('other');
+    expect(classifySaveError(new Error('Progress changed; reload and retry')).kind).toBe('other'); // text alone is not enough
     expect(classifySaveError(new Error('Battles are disabled')).kind).toBe('other');
   });
 

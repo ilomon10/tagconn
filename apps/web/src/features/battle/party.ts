@@ -1,5 +1,6 @@
 // M14 F1: who can join a battle party (docs/design/battles.md 3.4). Pure.
 import { classForRole, levelForXp, statsFor, xpFromUsage, type Agent, type Hero, type HeroProgress, type SkillAllocation, type Settings } from '@tagconn/shared';
+import { clipDisplayText } from '../../lib/displayText';
 import type { PartyCandidate } from './types';
 
 const hasOwn = <T>(map: Readonly<Record<string, T>>, id: string): T | undefined => (Object.hasOwn(map, id) ? map[id] : undefined);
@@ -68,7 +69,7 @@ export function partyCandidates(
       out.push({
         key: `agent:${agent.id}`,
         ref: { kind: 'agent', agentId: agent.id },
-        name: agent.description?.trim().slice(0, 40) || agent.role,
+        name: clipDisplayText(agent.description, 40) || agent.role,
         classId,
         level,
         temporary: true,

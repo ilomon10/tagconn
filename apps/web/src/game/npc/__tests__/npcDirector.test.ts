@@ -115,11 +115,10 @@ describe('NpcDirector', () => {
     expect(c.plate).toBeDefined();
   });
 
-  it('gates: disabled, ambientEffects off, reduced motion and Multiverse spawn nothing', () => {
+  it('gates: disabled, ambientEffects off and Multiverse spawn nothing', () => {
     for (const over of [
       { office: { npcs: { ...NPCS, enabled: false } } },
       { office: { ambientEffects: false } },
-      { reduced: true },
       { multi: true },
     ]) {
       const s = setup(over);
@@ -189,7 +188,7 @@ describe('NpcDirector', () => {
     expect(s.reactions.cancelAll).toHaveBeenLastCalledWith(false);
   });
 
-  it('turning NPCs off sends them to the exit step; reduced motion removes them at once', () => {
+  it('turning NPCs off sends them to the exit step; reduced motion sends walkers out', () => {
     const s = setup();
     untilSpawn(s.d, s);
     const c = s.spawned[0]!;
@@ -204,8 +203,24 @@ describe('NpcDirector', () => {
     untilSpawn(r.d, r);
     r.state.reduced = true;
     tick(r.d);
-    expect(r.spawned[0]!.destroyed).toBe(true);
-    expect(r.d.npcs().size).toBe(0);
+    const rs = r.steps.filter((x) => x.startsWith(r.spawned[0]!.key));
+    expect(Number(rs[rs.length - 1]!.split('@')[1])).toBeGreaterThan(0);
+  });
+
+  it('reduced motion spawns a static visit (enter, one bit, exit; no react, no janitor)', () => {
+    const s = setup({ reduced: true });
+    untilSpawn(s.d, s);
+    expect(s.spawned).toHaveLength(1);
+    expect(s.spawned[0]!.at).toEqual({ x: 3, y: 4 });
+    const npc = (s.d as unknown as { actors: Map<string, NpcActor> }).actors.get(s.spawned[0]!.key)!;
+    expect(npc.def.static).toBe(true);
+    expect(npc.def.steps.map((x) => x.do)).toEqual(['enter', 'bit', 'exit']);
+    expect(npc.def.steps.some((x) => x.do === 'bit' && x.react)).toBe(false);
+    tick(s.d, 3);
+    expect(s.spawned[0]!.destroyed).toBe(false);
+    const j = setup({ reduced: true, hour: 20, office: { npcs: { ...NPCS, encounters: false, encounterEverySec: 86_400 } } });
+    tick(j.d, 5);
+    expect(j.spawned).toHaveLength(0);
   });
 
   it('hold / release / dismiss', () => {

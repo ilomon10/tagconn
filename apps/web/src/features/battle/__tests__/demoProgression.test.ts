@@ -251,10 +251,14 @@ describe('demo skills, titles and heal', () => {
     creditUsage([agent({ usage: usage(100_000) })]); // enough for several levels
     const view = useProgressStore.getState().progress[heroId]!;
     expect(view.skillPoints).toBeGreaterThan(0);
-    const saved = saveSkills(heroId, { 'developer.0.1': 1 }, view.updatedAt, 9_000);
+    expect(view.skillsUpdatedAt).toBe(0);
+    creditUsage([agent({ usage: usage(200_000) })]); // an XP credit bumps updatedAt but must not stale a skill plan
+    const saved = saveSkills(heroId, { 'developer.0.1': 1 }, view.skillsUpdatedAt, 9_000);
+    expect(saved.skillsUpdatedAt).toBe(9_000);
     expect(saved.skills).toEqual({ 'developer.0.1': 1 });
     expect(useProgressStore.getState().progress[heroId]?.skills).toEqual({ 'developer.0.1': 1 });
-    rejects(() => saveSkills(heroId, { 'developer.0.1': 1 }, view.updatedAt - 1), 409);
+    rejects(() => saveSkills(heroId, { 'developer.0.1': 1 }, 1), 409);
+    expect(() => saveSkills(heroId, { 'developer.0.1': 1 }, 1)).toThrow(/skills-conflict/);
     rejects(() => saveSkills(heroId, { 'developer.0.4': 1 }, undefined), 400); // missing prerequisites
     rejects(() => saveSkills(heroId, { 'bogus': 1 }, undefined), 400);
     rejects(() => saveSkills('h-ffffffff', {}), 404);

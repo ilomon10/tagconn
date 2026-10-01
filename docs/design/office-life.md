@@ -1030,8 +1030,9 @@ export function npcSkin(theme: Pick<ThemeDefinition, 'npcs'>, kind: NpcKind): Np
 (ticks its own NPC `Character`s every frame, logic on a 500 ms throttle), `npcs(): ReadonlyMap<ActorKey, Character>`,
 `setDim(alpha: number): void`, `destroy(): void`, and the M14 hooks `hold(id: string): boolean`,
 `release(id: string): void`, `dismiss(id: string): void` (jump to `exit`).
-- Gates: `npcs.enabled && office.ambientEffects && !reducedMotion() && !isMultiverse()`; otherwise no new NPCs and the
-  existing ones exit (reduced motion: removed at once).
+- Gates: `npcs.enabled && office.ambientEffects && !isMultiverse()`; otherwise no new NPCs and the
+  existing ones exit. Reduced motion allows a static visit only: the NPC appears at the door, stays for one bit's
+  duration (same `appeared`/`bit`/`left` events, so a battle can be offered), then leaves; no walking, reactions or janitor.
 - Schedule: janitor via `janitorDue(host.hour(), burst, ...)` when `npcs.janitor`; others via `nextEncounterDelayMs` +
   `pickEncounter(host.hour(), dramaRng(seed), npcs, activeKinds)`. Capacity `lowQuality ? 1 : npcs.maxConcurrent`,
   one NPC per kind at a time.
@@ -1051,7 +1052,7 @@ export function npcSkin(theme: Pick<ThemeDefinition, 'npcs'>, kind: NpcKind): Np
 |---|---|---|---|---|---|---|---|---|---|
 | feature flag off (`labels.*`, `alerts.enabled`, `office.sound`+prefs, `life.enabled`, `npcs.enabled`) | Text fallback / n.a. | off | off | | off | off | off | off | off |
 | `ambientEffects` off | on | on | on | off | off | off | off | off | off |
-| reduced motion | on | no reveal/typewriter | on | in place | off | off | on (static) | off | off |
+| reduced motion | on | no reveal/typewriter | on | in place | off | off | on (static) | static visit at the door (no walking, no chaos; still emits the encounter event) | off |
 | quality `low` | on | on | on | on | max 1 script | | | max 1 | off |
 | canvas renderer | system text | on | on | on | on | on | on | on | on |
 | tab hidden | n.a. | queue paused, notify.ts | master 0 (suspend) | | | | | | |

@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  PROGRESSION_LIMITS, HeroProgressSchema, type Agent, type Hero, type HeroProgress, type HookPayload, type TokenUsage,
+  CLASS_IDS, PROGRESSION_LIMITS, SKILL_ID_RE, HeroProgressSchema, type Agent, type Hero, type HeroProgress, type HookPayload, type TokenUsage,
 } from '@tagconn/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { App } from '../../../app.js';
@@ -267,9 +267,10 @@ describe('progression: XP crediting and routes (M14 S2)', () => {
       expect(tooMany.statusCode).toBe(400);
       expect(tooMany.json().details.code).toBe('rank-out-of-range');
 
-      const stale = await body(headers, { skills: {}, baseUpdatedAt: 5 }, url);
+      const stale = await body(headers, { skills: {}, baseSkillsUpdatedAt: 5 }, url);
       expect(stale.statusCode).toBe(409);
-      const respec = await body(headers, { skills: {}, baseUpdatedAt: ok.json<HeroProgress>().updatedAt }, url);
+      expect(stale.json().details).toEqual({ code: 'skills-conflict' });
+      const respec = await body(headers, { skills: {}, baseSkillsUpdatedAt: ok.json<HeroProgress>().skillsUpdatedAt }, url);
       expect(respec.statusCode).toBe(200);
       expect(respec.json<HeroProgress>().skills).toEqual({});
 
@@ -284,6 +285,28 @@ describe('progression: XP crediting and routes (M14 S2)', () => {
       expect((await body(headers, { skills: {} }, url)).statusCode).toBe(409);
     });
 
+    it('skills conflict stamp: XP credits, titles and heals do not stale it; the legacy baseUpdatedAt is ignored', async () => {
+      app = await buildTestApp();
+      const headers = adminHeaders(app);
+      const { hero, agent } = await levelled(1500 * 4 + 1);
+      const url = `/api/heroes/${hero.id}/skills`;
+      const first = progressOf(hero.id)!;
+      expect(first.skillsUpdatedAt).toBe(0); // never saved
+      feed(agent, { outputTokens: 9_999_999 }); // credits XP, bumps updatedAt only
+      const moved = progressOf(hero.id)!;
+      expect(moved.updatedAt).toBeGreaterThanOrEqual(first.updatedAt);
+      const saved = await body(headers, { skills: { 'developer.0.1': 1 }, baseSkillsUpdatedAt: first.skillsUpdatedAt }, url);
+      expect(saved.statusCode).toBe(200);
+      const stamp = saved.json<HeroProgress>().skillsUpdatedAt!;
+      expect(stamp).toBeGreaterThan(0);
+      feed(agent, { outputTokens: 19_999_999 });
+      expect((await body(headers, { skills: {}, baseSkillsUpdatedAt: stamp }, url)).statusCode).toBe(200);
+      expect((await body(headers, { skills: {}, baseUpdatedAt: 5 }, url)).statusCode).toBe(200); // deprecated, ignored
+      const conflict = await body(headers, { skills: {}, baseSkillsUpdatedAt: stamp - 1 }, url);
+      expect(conflict.statusCode).toBe(409);
+      expect(conflict.json().details.code).toBe('skills-conflict');
+    });
+
     it('S2-8: __proto__ / constructor / toString keys and > 48 keys are 400', async () => {
       app = await buildTestApp();
       const headers = { ...adminHeaders(app), 'content-type': 'application/json' };
@@ -293,6 +316,14 @@ describe('progression: XP crediting and routes (M14 S2)', () => {
         const res = await app.inject({ method: 'POST', url, headers, payload: `{"skills":{"${key}":1}}` });
         expect(res.statusCode).toBe(400);
       }
+      // 49 VALID ids (so only the maxSkillKeys refine can reject them), spread across classes.
+      const ids = CLASS_IDS.flatMap((c) => [0, 1, 2].flatMap((tier) => [1, 2, 3, 4].map((n) => `${c}.${tier}.${n}`)));
+      const valid = ids.filter((id) => SKILL_ID_RE.test(id));
+      expect(valid.length).toBeGreaterThan(PROGRESSION_LIMITS.maxSkillKeys);
+      const many = Object.fromEntries(valid.slice(0, PROGRESSION_LIMITS.maxSkillKeys + 1).map((id) => [id, 1]));
+      const res49 = await body(headers, { skills: many }, url);
+      expect(res49.statusCode).toBe(400);
+      expect(res49.body).toMatch(/too many skills/);
       const fake = Object.fromEntries(Array.from({ length: 49 }, (_, i) => [`k${i}`, 1]));
       expect((await body(headers, { skills: fake }, url)).statusCode).toBe(400);
       expect(({} as Record<string, unknown>).polluted).toBeUndefined();

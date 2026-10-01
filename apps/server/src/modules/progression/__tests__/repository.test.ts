@@ -61,7 +61,7 @@ describe('ProgressionRepository', () => {
     const { progress, addHero } = setup();
     addHero(H1);
     expect(progress.getCore(H1)).toEqual({ kind: 'missing' });
-    const c = core({ xp: 10, skills: { 'developer.0.1': 2 }, loot: ['hat-fedora' as never] });
+    const c = core({ xp: 10, skillsUpdatedAt: 7, skills: { 'developer.0.1': 2 }, loot: ['hat-fedora' as never] });
     expect(progress.upsertCore(H1, c)).toBe(true);
     const r = progress.getCore(H1);
     expect(r.kind).toBe('ok');

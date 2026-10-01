@@ -36,6 +36,7 @@ import {
   type SkillAllocation,
   type UsageCounters,
   validateSkillAllocation,
+  SKILLS_CONFLICT_CODE,
 } from '@tagconn/shared';
 import { ApiError } from '../../lib/api';
 import { getHero, useHeroStore } from '../../stores/heroStore';
@@ -99,6 +100,7 @@ function sanitizeCore(raw: unknown): HeroProgressCore | null {
   const losses = int(raw.losses);
   const flees = int(raw.flees);
   const updatedAt = num(raw.updatedAt);
+  const skillsUpdatedAt = num(raw.skillsUpdatedAt) ?? 0; // absent in pre-13 saves
   const classId = CLASS_IDS.find((c) => c === raw.classId);
   if (xp === null || bonusPoints === null || wins === null || losses === null || flees === null || updatedAt === null || !classId) return null;
   const skills = nullProto<number>();
@@ -111,7 +113,7 @@ function sanitizeCore(raw: unknown): HeroProgressCore | null {
   const equippedTitle = LOOT_IDS.find((l) => l === raw.equippedTitle) ?? null;
   const koUntil = raw.koUntil === null ? null : num(raw.koUntil);
   if (raw.koUntil !== null && koUntil === null) return null;
-  return { classId, xp, bonusPoints, skills, koUntil, wins, losses, flees, loot, equippedTitle, updatedAt };
+  return { classId, xp, bonusPoints, skills, koUntil, wins, losses, flees, loot, equippedTitle, updatedAt, skillsUpdatedAt };
 }
 
 function sanitizeMark(raw: unknown): UsageCounters | null {
@@ -440,14 +442,16 @@ function heroOrFail(heroId: string): Hero {
   return hero ?? fail(404, 'hero not found');
 }
 
-export function saveSkills(heroId: string, skills: SkillAllocation, baseUpdatedAt?: number, now = Date.now()): HeroProgress {
+export function saveSkills(heroId: string, skills: SkillAllocation, baseSkillsUpdatedAt?: number, now = Date.now()): HeroProgress {
   ensureLoaded();
   const hero = heroOrFail(heroId);
   if (!cfg().progression.enabled) fail(409, 'progression is disabled');
-  const parsed = SkillAllocationSchema.safeParse({ skills, baseUpdatedAt });
+  const parsed = SkillAllocationSchema.safeParse({ skills, baseSkillsUpdatedAt });
   if (!parsed.success) return fail(400, 'invalid skill allocation');
   const stored = coreOf(hero.id);
-  if (stored && parsed.data.baseUpdatedAt !== undefined && parsed.data.baseUpdatedAt !== stored.updatedAt) fail(409, 'progress changed, reload');
+  if (stored && parsed.data.baseSkillsUpdatedAt !== undefined && parsed.data.baseSkillsUpdatedAt !== (stored.skillsUpdatedAt ?? 0)) {
+    fail(409, `Skills changed since you loaded them (${SKILLS_CONFLICT_CODE}); reload and retry`);
+  }
 
   const core = stored ?? emptyCore(hero.role, now);
   const view = viewFor(hero, core);
@@ -455,7 +459,7 @@ export function saveSkills(heroId: string, skills: SkillAllocation, baseUpdatedA
   const p = cfg().progression;
   const check = validateSkills(classId, parsed.data.skills, view, p.skillPointsPerLevel, p.allowRespec);
   if (check) fail(check === 'respec-disabled' ? 409 : 400, check);
-  state.cores[hero.id] = { ...core, classId, skills: parsed.data.skills, updatedAt: now };
+  state.cores[hero.id] = { ...core, classId, skills: parsed.data.skills, updatedAt: now, skillsUpdatedAt: now };
   save();
   pushView(hero.id);
   return viewFor(hero, coreOf(hero.id) as HeroProgressCore);

@@ -18,6 +18,7 @@ import {
   type EncounterEvent,
   type NpcActor,
   type NpcHost,
+  type NpcStep,
   type NpcScriptCtx,
   type NpcScriptRunner,
   type ReactionController,
@@ -26,6 +27,13 @@ import {
 export interface NpcDirectorFactories {
   createScriptRunner: CreateScriptRunner;
   createReactions: CreateReactions;
+}
+
+/** Reduced motion: appear at the door, stay one bit's duration (same events), leave. No walking, no reactions. */
+export function staticVisit(def: EncounterDef): EncounterDef {
+  const bit = def.steps.find((s): s is Extract<NpcStep, { do: 'bit' }> => s.do === 'bit');
+  const { react: _react, ...still } = bit ?? { do: 'bit' as const, pose: 'chat' as const, sec: [4, 6] as const };
+  return { ...def, static: true, steps: [{ do: 'enter' }, still, { do: 'exit' }] };
 }
 
 export class NpcDirector {
@@ -125,21 +133,18 @@ export class NpcDirector {
 
   private allowed(): boolean {
     const o = this.host.office();
-    return !!o && o.npcs.enabled && o.ambientEffects && !this.host.reducedMotion() && !this.host.isMultiverse();
+    return !!o && o.npcs.enabled && o.ambientEffects && !this.host.isMultiverse();
   }
 
   private tick(now: number): void {
     const o = this.host.office();
     const allowed = this.allowed();
     if (!allowed) {
-      // Reduced motion removes NPCs at once; any other gate lets them walk out.
-      if (this.host.reducedMotion() && this.actors.size > 0) {
-        this.reactions.cancelAll(false);
-        this.removeAll();
-      } else {
-        for (const npc of this.actors.values()) if (!this.exiting(npc)) this.toExit(npc, now);
-      }
+      for (const npc of this.actors.values()) if (!this.exiting(npc)) this.toExit(npc, now);
       this.nextAt = null;
+    } else if (this.host.reducedMotion()) {
+      // Reduced motion: walking visitors leave (the fade is skipped); static visits carry on.
+      for (const npc of this.actors.values()) if (!npc.def.static && !this.exiting(npc)) this.toExit(npc, now);
     }
     if (o) {
       const opts = plateOptions(o.labels);
@@ -155,7 +160,8 @@ export class NpcDirector {
   private schedule(now: number, s: NonNullable<ReturnType<NpcHost['office']>>['npcs']): void {
     const cap = this.host.lowQuality() ? 1 : s.maxConcurrent;
     const active = this.activeKinds();
-    if (!active.has('janitor') && this.actors.size < cap) {
+    const reduced = this.host.reducedMotion();
+    if (!reduced && !active.has('janitor') && this.actors.size < cap) {
       const due = janitorDue(this.host.hour(), this.burst.burst(now), this.lastJanitorAt, now, s);
       if (due) {
         this.lastJanitorAt = now;
@@ -174,7 +180,8 @@ export class NpcDirector {
     if (def) this.spawn(def, now);
   }
 
-  private spawn(def: EncounterDef, now: number): void {
+  private spawn(picked: EncounterDef, now: number): void {
+    const def = this.host.reducedMotion() ? staticVisit(picked) : picked;
     const o = this.host.office();
     if (!o) return;
     const theme = this.host.theme();

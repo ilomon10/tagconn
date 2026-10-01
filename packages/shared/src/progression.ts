@@ -252,6 +252,8 @@ export interface HeroProgressCore {
   loot: readonly LootId[];
   equippedTitle: LootId | null;
   updatedAt: number;
+  /** Last skill save (absent/0 = never); migration 13. */
+  skillsUpdatedAt?: number;
 }
 
 /** Server → client view (REST, snapshot, `hero:progress`). */
@@ -276,6 +278,8 @@ export const HeroProgressSchema = z.object({
   loot: z.array(LootIdSchema).max(LOOT_IDS.length),
   equippedTitle: LootIdSchema.nullable(),
   updatedAt: z.number(),
+  /** Bumped only by a skill save (not by XP, titles or heals); the optimistic-concurrency stamp of `baseSkillsUpdatedAt`. */
+  skillsUpdatedAt: z.number().optional(),
 });
 export type HeroProgress = z.infer<typeof HeroProgressSchema>;
 
@@ -286,6 +290,8 @@ export const isKnockedOut = (p: Pick<HeroProgress, 'koUntil'> | undefined, now: 
 export const BATTLE_ID_RE = /^b-[a-f0-9]{12}$/;
 /** M13 `NpcActor.id` (`<kind>-<seq>`). */
 export const ENCOUNTER_ID_RE = /^[a-z0-9-]{1,64}$/;
+/** Stable `details.code` of the 409 a skill save gets when the skills changed since the client loaded them. */
+export const SKILLS_CONFLICT_CODE = 'skills-conflict';
 export const PROGRESSION_LIMITS = {
   maxParty: 4, maxMoves: 8, maxItems: 4, maxLog: 220, maxSkillKeys: 48,
   /** maxLog = 200 (max battle.maxTurns) + 4 (maxParty swaps) + 16 slack. */
@@ -304,7 +310,9 @@ export const SkillAllocationSchema = z.strictObject({
     .record(z.string().regex(SKILL_ID_RE), z.number().int().min(1).max(10))
     .refine((o) => Object.keys(o).length <= PROGRESSION_LIMITS.maxSkillKeys, 'too many skills')
     .transform((o): Record<string, number> => Object.assign(Object.create(null) as Record<string, number>, o)),
-  /** Optimistic concurrency: 409 when the stored progress `updatedAt` differs. */
+  /** Optimistic concurrency: 409 (`details.code` = SKILLS_CONFLICT_CODE) when the stored `skillsUpdatedAt` (0 if never saved) differs. */
+  baseSkillsUpdatedAt: z.number().optional(),
+  /** @deprecated Accepted for old clients and ignored: `updatedAt` moves on every XP credit, so it cannot guard a skill save. */
   baseUpdatedAt: z.number().optional(),
 });
 export type SkillAllocationRequest = z.input<typeof SkillAllocationSchema>;

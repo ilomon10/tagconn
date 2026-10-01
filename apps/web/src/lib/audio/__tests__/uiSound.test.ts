@@ -103,6 +103,20 @@ describe('close/open pairing', () => {
     vi.advanceTimersByTime(500);
     expect(heard).toEqual(['ui-open']);
   });
+  it('drops a pending ui-close when ui-back or ui-confirm follows', () => {
+    vi.useFakeTimers();
+    const heard: SfxId[] = [];
+    sfxBus.on((e) => heard.push(e.id));
+    uiSound('ui-back');
+    uiSound('ui-close');
+    vi.advanceTimersByTime(20);
+    uiSound('ui-confirm');
+    vi.advanceTimersByTime(500);
+    uiSound('ui-close');
+    uiSound('ui-back');
+    vi.advanceTimersByTime(500);
+    expect(heard).toEqual(['ui-back', 'ui-confirm', 'ui-back']);
+  });
   it('plays a lone ui-close after the window, and drops a ui-close right after a ui-open', () => {
     vi.useFakeTimers();
     const heard: SfxId[] = [];

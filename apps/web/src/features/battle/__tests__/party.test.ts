@@ -40,6 +40,15 @@ describe('partyCandidates', () => {
     expect(out.find((c) => c.key === 'h-00000002')).toMatchObject({ selectable: true, koUntil: null });
   });
 
+  it('sanitizes and clips an anonymous agent name, falling back to the role', () => {
+    const agents = map([agent('a2', { description: 'x\u202Ey'.repeat(40) }), agent('a3', { description: '   ' })]);
+    const out = partyCandidates({}, agents, {}, settings(true), 'p', NOW);
+    const long = out.find((c) => c.key === 'agent:a2')!;
+    expect(Array.from(long.name).length).toBeLessThanOrEqual(40);
+    expect(long.name).not.toContain('\u202E');
+    expect(out.find((c) => c.key === 'agent:a3')!.name).toBe('qa');
+  });
+
   it('adds live unbound agents as temporary members only when the setting is on', () => {
     const heroes = map([hero('h-00000001', 'Ada', { boundAgentId: 'a1' })]);
     const agents = map([agent('a1'), agent('a2'), agent('a3', { status: 'done' }), agent('a4', { projectId: 'other' })]);

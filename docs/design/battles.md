@@ -474,7 +474,8 @@ export const SkillAllocationSchema = z.strictObject({
     .record(z.string().regex(SKILL_ID_RE), z.number().int().min(1).max(10))
     .refine((o) => Object.keys(o).length <= PROGRESSION_LIMITS.maxSkillKeys, 'too many skills'),
   /** Optimistic concurrency: 409 when the stored progress `updatedAt` differs. */
-  baseUpdatedAt: z.number().optional(),
+  baseSkillsUpdatedAt: z.number().optional(), // 409 `skills-conflict` when != stored skillsUpdatedAt (0 if never saved)
+  baseUpdatedAt: z.number().optional(), // deprecated, accepted and ignored (updatedAt moves on every XP credit)
 });
 export type SkillAllocationRequest = z.input<typeof SkillAllocationSchema>;
 /** POST /api/heroes/:id/title: equip an owned title loot, or null to clear. */
@@ -952,7 +953,7 @@ access. Errors use `HttpError` → `{ error, statusCode, details? }`.
 |---|---|---|---|---|
 | `GET /api/progress` | public | `ProgressListQuerySchema` | 200 `HeroProgress[]` | |
 | `GET /api/heroes/:id/progress` | public | | 200 `HeroProgress` (default view without a row) | 400 bad id, 404 hero |
-| `POST /api/heroes/:id/skills` | admin | `SkillAllocationSchema` | 200 `HeroProgress` | 400 `details: {code, skillId}` from `validateSkillAllocation` (409 for `respec-disabled`), 404, 409 `baseUpdatedAt`, 409 progression disabled, 409 corrupt row, 413, 429 |
+| `POST /api/heroes/:id/skills` | admin | `SkillAllocationSchema` | 200 `HeroProgress` | 400 `details: {code, skillId}` from `validateSkillAllocation` (409 for `respec-disabled`), 404, 409 `skills-conflict` (`baseSkillsUpdatedAt` != the skills-only stamp `skillsUpdatedAt`, set only by a skill save so XP/title/heal never stale it; `details.code` = `skills-conflict`), 409 progression disabled, 409 corrupt row, 413, 429 |
 | `POST /api/heroes/:id/title` | admin | `TitleEquipSchema` | 200 `HeroProgress` | 400 not a title id, 409 not owned, 409 corrupt row, 404, 413, 429 |
 | `POST /api/heroes/:id/heal` | admin | `EmptyBodySchema` | 200 `HeroProgress` (`koUntil` null) | 409 not knocked out, 409 corrupt row, 404, 413, 429 |
 | `POST /api/battles` | admin | `BattleCreateSchema` | 201 `BattleStart` (no `lootSeed`) | 404 project/hero/agent, 400 duplicate member / > `battle.maxParty` / foreign floor / agent has a hero / anonymous disabled, 409 KO'd member (`details: {heroId, koUntil}`), 409 battles disabled, 413, 429 `maxPerHour` |
@@ -1219,7 +1220,7 @@ STUBS with final signatures:
   "Refactor Strike").
 - `features/battle/commands.ts`: `startBattle(b: BattleCreate): Promise<BattleStart>`, `resolveBattle(id, b:
   BattleResolve): Promise<BattleOutcome>`, `abandonBattle(id): Promise<void>`, `saveSkills(heroId, skills,
-  baseUpdatedAt?): Promise<HeroProgress>`, `equipTitle(heroId, title: LootId | null): Promise<HeroProgress>`,
+  baseSkillsUpdatedAt?): Promise<HeroProgress>`, `equipTitle(heroId, title: LootId | null): Promise<HeroProgress>`,
   `healHero(heroId): Promise<HeroProgress>`. Stub bodies `throw new Error('not implemented')`.
 
 ### 3.3 Encounter prompt (E1, reusing the M13 alerts)
@@ -1427,7 +1428,7 @@ current text (`controller.skip()`). The office scene's input is disabled while t
 - `SkillTreeView.tsx`: 3 columns (branches) × 4 tiers. A node shows its label, rank/maxRank, minLevel, a lock with the
   reason (level / prerequisite), and +/− buttons (keyboard: Tab between nodes, +/− keys).
   - Points left come from `skillPlan`.
-  - "Save" sends the full allocation with `baseUpdatedAt`; a 409 conflict shows the HeroPanel-style reload prompt.
+  - "Save" sends the full allocation with `baseSkillsUpdatedAt`; a 409 whose message carries the stable `skills-conflict` code (status + code, never the prose) shows the HeroPanel-style reload prompt.
   - "Respec" (when `allowRespec`, or the allocation is overspent/invalid) clears the plan.
   - `ui-confirm` / `ui-error` on +/−.
 - `skillPlan.ts` (pure, tested): `planFrom(progress)`, `canAdd(plan, nodeId, ctx)`, `canRemove(plan, nodeId, ctx)` (a
@@ -1746,7 +1747,7 @@ F10 `maxLog` 220) are a follow-up patch on the same files, and the code blocks i
 | U1 | Battle HUD (DOM) | developer (frontend) | `features/battle/hud/{BattleHud,CommandMenu,BattleLog,ResultsPanel,Bar}.tsx`, `features/battle/hud/menuModel.ts`, `features/battle/hud/__tests__/menuModel.test.ts`, `features/battle/hud/__tests__/BattleHud.test.tsx` | W0 (fake controller) | 3.6: menu reducer fully tested (navigation, disabled moves, forced swap, item target, busy → skip, sfx ids); HUD test: aria roles/labels, live region gets lines, Esc never closes the battle, reduced motion has no typewriter; results panel for every result incl. level-up and loot. |
 | C1 | Labels, copy, durations | developer | `features/battle/labels.ts`, `features/battle/content/{modern,guild,rift}.ts`, `features/battle/copy.ts`, `features/battle/durations.ts`, `features/battle/__tests__/{labels,copy,durations}.test.ts` | W0 | 3.7 and its test. |
 | AU1 | Battle audio | developer (audio) | `lib/audio/presets.ts`, `lib/audio/music.ts`, `lib/audio/engine.ts`, `lib/audio/types.ts`, `game/sfxBus.ts`, `features/office/audio/useAudioBridge.ts`, `lib/audio/__tests__/{presets,music,engine}.test.ts`, `game/sfxBus.test.ts` | W0w | Real presets for every battle id (swirl riser ≈ 0.65 s, return whoosh ≈ 0.3 s, sting ≤ 0.2 s, fanfares ≤ 1.5 s, hits ≤ 0.25 s, text blip ≤ 0.03 s). `sfxBus.setMusic(m: { kind: 'battle'; style: BattleStyle } \| null)` + `onMusic` (replayed to late subscribers). `music.ts` is a looping 4-bar chiptune sequencer per style (square lead, triangle bass, noise hats), deterministic, `stop(fadeMs)`. `AudioEngine.setMusic(kind \| null, fadeMs)` ducks the ambient bed to 30 % while music plays. The bridge plays music only when `settings.battle.music && master > 0`. Tests with a fake AudioContext. |
-| H1 | Hero sheet Stats & Skills | developer (frontend) | `features/heroes/HeroEditor.tsx`, `features/heroes/stats/{HeroStatsSheet,SkillTreeView,StatsTable}.tsx`, `features/heroes/stats/skillPlan.ts`, `features/heroes/stats/__tests__/skillPlan.test.ts` | W0 (commands stub) | 3.8 sheet: tab bar, stats with planned deltas, tree with locks/reasons, save with `baseUpdatedAt`, respec rules, read-only without write access; `skillPlan` tested incl. "missing prerequisite rejected". |
+| H1 | Hero sheet Stats & Skills | developer (frontend) | `features/heroes/HeroEditor.tsx`, `features/heroes/stats/{HeroStatsSheet,SkillTreeView,StatsTable}.tsx`, `features/heroes/stats/skillPlan.ts`, `features/heroes/stats/__tests__/skillPlan.test.ts` | W0 (commands stub) | 3.8 sheet: tab bar, stats with planned deltas, tree with locks/reasons, save with `baseSkillsUpdatedAt`, respec rules, read-only without write access; `skillPlan` tested incl. "missing prerequisite rejected". |
 | P1 | Data layer + demo progression | developer (frontend) | `lib/api.ts`, `lib/api.test.ts`, `lib/connection.ts`, `features/battle/commands.ts`, `features/battle/demoProgression.ts`, `features/battle/__tests__/demoProgression.test.ts` | W0 | 3.9 P1: live → REST, demo → local; demo battle create/resolve uses `buildBattleSetup` + `replay` + `computeOutcome` with its own stored `lootSeed`; demo XP from mock usage without double-count across reloads; bad storage never throws; connection seeds/broadcasts progress. |
 | HB1 | HUD level badge + hooks | developer (frontend) | `features/office/hud/PortraitChip.tsx`, `features/battle/useProgress.ts`, `features/battle/__tests__/useProgress.test.ts` | W0 | 3.8 badge (hero, anonymous "~N", KO icons, aria-label); hooks tested (`useAgentLevel` null when disabled, `useNow` re-renders at koUntil). |
 
@@ -1948,6 +1949,17 @@ Hot files in Wave 1: `HeroEditor.tsx` → H1; `textures.ts` → A1; `sfxBus.ts`/
 - **Forked/resumed sessions can re-count copied history (F3).** A fork gets a new session id and starts from zero
   marks; if its transcript contains the parent's earlier messages, that usage is credited again. Detecting copied
   history would need cross-session message-id tracking; accepted because XP is cosmetic. Documented by an S2 test.
+- **XP is only for work done while bound and enabled (M5).** Usage consumed while `progression.enabled` is off, while
+  the agent has no bound hero, or while the hero's row is corrupt is NOT backfilled later: the high-water mark
+  advances regardless, so turning progression on (or binding a hero) starts from "now". A credit above
+  `maxXpPerUpdate` is dropped for the same reason (the mark advances). Both are intended: XP rewards work a hero did
+  while it was bound, and the cap stops a forged or corrupt usage jump from inflating a level.
+- **Open battles outlive the switches (L9).** `battle.enabled` / `progression.enabled` gate only `create`. A battle
+  opened before they were turned off still resolves normally (replay-validated, exactly-once awards): the player
+  already fought it, and discarding the result would be surprising. It still expires with `openTtlMin`.
+- **Hook ingest strips, REST rejects.** The JSON body guard covers HTTP bodies only (socket.io payloads are not
+  parsed by it). On every REST/admin route a `__proto__` or `constructor.prototype` key is a 400; on `/api/hooks` the
+  key is removed (secure-json-parse `remove`) so a legitimate tool payload containing such a key is never lost.
 - **Hard XP clamps (F2).** Counters are clamped to 1e13, XP to 1e12 and one update to 5M XP. Real usage never reaches
   them; forged or corrupt usage can't overflow safe integers or break the zod `.int()` view. An over-cap delta is
   dropped (the mark advances), never re-credited later.
@@ -1971,7 +1983,7 @@ Hot files in Wave 1: `HeroEditor.tsx` → H1; `textures.ts` → A1; `sfxBus.ts`/
   read policy; the `progression`/`battle` settings follow `auth.protect` like every other section (F12).
 - **Sockets.** `hero:progress` goes to `rooms.all` + the hero's project room, with `projectId` from the heroes join;
   nothing is emitted when the hero is gone. No client→server events were added.
-- **Storage and migration.** All SQL goes through Drizzle / prepared statements; migration 12 is additive. The battle
+- **Storage and migration.** All SQL goes through Drizzle / prepared statements; migrations 12 and 13 are additive (13 adds `hero_progress.skills_updated_at`, the skills-only concurrency stamp). The battle
   create limiter counts only successful creates; a battle id PRIMARY KEY collision (48 random bits) retries once.
 - **Encounter prompts ride the alert queue** (tokens, `alerts.enabled`). Battles never spam on top of real alerts, and
   real asks always outrank them. The cost: turning alerts off also turns off battle prompts (documented in the guide).

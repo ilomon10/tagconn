@@ -90,19 +90,23 @@ export interface BattleHudProps {
   outcome?: BattleOutcome | null;
   error?: string | null;
   onContinue: () => void;
+  /** Resend a resolve that failed with a retryable error (the error body shows a Retry button when set). */
+  onRetry?: () => void;
   onOpenHero?: (heroId: string) => void;
   /** Called with the bottom panel's height in CSS px (0 when it is gone) so the stage can keep clear of it. */
   onInsets?: (bottom: number) => void;
 }
 
 export function BattleHud(props: BattleHudProps) {
-  const { controller, style, phase, outcome = null, error = null, onContinue, onOpenHero, onInsets } = props;
+  const { controller, style, phase, outcome = null, error = null, onContinue, onRetry, onOpenHero, onInsets } = props;
   const prefersReduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   const reduced = props.reduced || prefersReduced;
   const rootRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<BattleView>(() => controller.view());
   const [menu, setMenu] = useState<MenuState>(MENU_INITIAL);
   const [panelH, setPanelH] = useState(0);
+  const [heroH, setHeroH] = useState(0);
+  const narrow = useMediaQuery('(max-width: 639px)');
   const entered = useEntered();
   const idPrefix = useRef(`bhud-${Math.random().toString(36).slice(2, 8)}`).current;
 
@@ -170,6 +174,14 @@ export function BattleHud(props: BattleHudProps) {
   const enemyName = battleLabel(style, 'enemy', enemy.ref.kind === 'enemy' ? enemy.ref.npcKind : 'enemy');
   const showPanel = phase === 'fighting';
 
+  // On a narrow screen the hero card sits above the full-width panel, so the stage keeps clear of both.
+  const heroCardH = narrow ? heroH + 8 : 0;
+  const inset = showPanel ? panelH + heroCardH : 0;
+  useEffect(() => {
+    onInsets?.(inset);
+  }, [inset, onInsets]);
+  useEffect(() => () => onInsets?.(0), [onInsets]);
+
   return (
     <div
       ref={rootRef}
@@ -178,7 +190,7 @@ export function BattleHud(props: BattleHudProps) {
       aria-label="Battle"
       data-modal="battle"
       onKeyDown={onKeyDown}
-      className="pointer-events-none fixed inset-0 z-30 select-none outline-none"
+      className="pointer-events-none absolute inset-0 z-30 select-none outline-none"
     >
       {/* Enemy card */}
       <div
@@ -198,7 +210,8 @@ export function BattleHud(props: BattleHudProps) {
 
       {/* Hero card */}
       {active && (
-        <div
+        <Measured
+          onHeight={setHeroH}
           role="group"
           aria-label={`${active.name}, level ${active.level}`}
           style={{ bottom: showPanel ? panelH + 8 : 12 }}
@@ -231,13 +244,13 @@ export function BattleHud(props: BattleHudProps) {
               </ul>
             )}
           </div>
-        </div>
+        </Measured>
       )}
 
       {showPanel ? (
-        <Panel onHeight={(h) => { setPanelH(h); onInsets?.(h); }} entered={entered}>
+        <Panel onHeight={setPanelH} entered={entered}>
           <BattleLog lines={view.lines} current={view.current} reduced={reduced} onSkip={() => view.busy && controller.skip()} />
-          <div className="flex w-[40%] min-w-0 shrink-0 flex-col border-l border-ink-600/70 max-sm:w-[46%]">
+          <div className="flex w-[40%] min-w-0 shrink-0 flex-col border-l border-ink-600/70 max-sm:h-[10.5rem] max-sm:w-full max-sm:border-l-0 max-sm:border-t">
             <CommandMenu ctx={ctx} style={style} state={shownMenu} busy={view.busy || view.state.phase === 'ended'} onInput={dispatch} idPrefix={idPrefix} />
           </div>
         </Panel>
@@ -252,6 +265,7 @@ export function BattleHud(props: BattleHudProps) {
             error={error}
             reduced={reduced}
             onContinue={onContinue}
+            onRetry={onRetry}
             onOpenHero={onOpenHero}
           />
         </div>
@@ -262,6 +276,22 @@ export function BattleHud(props: BattleHudProps) {
 
 /** The full-width bottom box; reports its height (0 when it unmounts). */
 function Panel({ children, onHeight, entered }: { children: React.ReactNode; onHeight: (h: number) => void; entered: boolean }) {
+  return (
+    <Measured
+      onHeight={onHeight}
+      className={cx(
+        'pointer-events-auto absolute inset-x-0 bottom-0 flex h-44 border-t-2 border-cozy/70 bg-ink-950/95 ring-1 ring-inset ring-ink-600/70 backdrop-blur max-sm:h-[15.5rem] max-sm:flex-col',
+        ENTER,
+        entered ? 'translate-y-0 opacity-100' : 'opacity-0 motion-safe:translate-y-full',
+      )}
+    >
+      {children}
+    </Measured>
+  );
+}
+
+/** A div that reports its height (0 when it unmounts). */
+function Measured({ onHeight, children, ...rest }: { onHeight: (h: number) => void } & React.HTMLAttributes<HTMLDivElement>) {
   const ref = useRef<HTMLDivElement>(null);
   const cb = useRef(onHeight);
   cb.current = onHeight;
@@ -279,14 +309,7 @@ function Panel({ children, onHeight, entered }: { children: React.ReactNode; onH
     };
   }, []);
   return (
-    <div
-      ref={ref}
-      className={cx(
-        'pointer-events-auto absolute inset-x-0 bottom-0 flex h-44 border-t-2 border-cozy/70 bg-ink-950/95 ring-1 ring-inset ring-ink-600/70 backdrop-blur max-sm:h-[44%]',
-        ENTER,
-        entered ? 'translate-y-0 opacity-100' : 'opacity-0 motion-safe:translate-y-full',
-      )}
-    >
+    <div ref={ref} {...rest}>
       {children}
     </div>
   );

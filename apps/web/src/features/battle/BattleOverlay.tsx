@@ -3,18 +3,19 @@ import { uiSound } from '../../lib/audio/uiSound';
 import { useHeroPanelStore } from '../heroes/store';
 import { useHeroStore } from '../../stores/heroStore';
 import { BattleHud } from './hud/BattleHud';
-import { dispatch, setBattleInsets, useFlowStore, type BattleGameHost } from './useBattleFlow';
+import { dispatch, setBattleInsets, useFlowStore } from './useBattleFlow';
 
 /**
  * Hosts the DOM HUD (U1) over the battle scene (G2). Renders nothing while the flow is idle or still choosing; the HUD
- * mounts once the scene's entry transition has finished. `game` is accepted so the office view can pass its handle;
- * the scene is driven by `useBattleFlow`, not from here.
+ * mounts once the scene's entry transition has finished. It is positioned inside the office canvas wrapper (not the
+ * viewport), so the top bar stays visible above it; the scene is driven by `useBattleFlow`, not from here.
  */
-export function BattleOverlay(_props: { game?: BattleGameHost | null }) {
+export function BattleOverlay() {
   const state = useFlowStore((s) => s.state);
   const session = useFlowStore((s) => s.session);
 
   const onContinue = useCallback(() => dispatch({ t: 'close' }), []);
+  const onRetry = useCallback(() => dispatch({ t: 'retry' }), []);
   const onOpenHero = useCallback((heroId: string) => {
     const hero = Object.hasOwn(useHeroStore.getState().heroes, heroId) ? useHeroStore.getState().heroes[heroId] : undefined;
     dispatch({ t: 'close' });
@@ -23,7 +24,7 @@ export function BattleOverlay(_props: { game?: BattleGameHost | null }) {
 
   if (state.phase === 'starting') {
     return (
-      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center">
+      <div className="pointer-events-none absolute inset-x-0 bottom-6 z-40 flex justify-center">
         <p role="status" className="rounded-md bg-ink-950/90 px-3 py-1.5 text-xs text-ink-200 shadow-lg">
           Gathering the party…
         </p>
@@ -34,7 +35,7 @@ export function BattleOverlay(_props: { game?: BattleGameHost | null }) {
   if (state.phase === 'fighting' || state.phase === 'resolving' || state.phase === 'results' || state.phase === 'error') {
     if (session?.ready) {
       return (
-        <div className="pointer-events-none fixed inset-0 z-40" data-battle-overlay>
+        <div className="pointer-events-none absolute inset-0 z-40" data-battle-overlay>
           <BattleHud
             controller={session.controller}
             style={session.style}
@@ -43,6 +44,7 @@ export function BattleOverlay(_props: { game?: BattleGameHost | null }) {
             outcome={state.phase === 'results' ? state.outcome : null}
             error={state.phase === 'error' ? state.message : null}
             onContinue={onContinue}
+            onRetry={state.phase === 'error' && state.retry ? onRetry : undefined}
             onOpenHero={onOpenHero}
             onInsets={setBattleInsets}
           />

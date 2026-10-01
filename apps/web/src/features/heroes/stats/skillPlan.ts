@@ -1,4 +1,4 @@
-import { skillPointsSpent, validateSkillAllocation, type HeroProgress, type SkillAllocation, type SkillCheck, type SkillNode, type SkillTree } from '@tagconn/shared';
+import { SKILLS_CONFLICT_CODE, skillPointsSpent, validateSkillAllocation, type HeroProgress, type SkillAllocation, type SkillCheck, type SkillNode, type SkillTree } from '@tagconn/shared';
 
 /**
  * The pure model behind the skill tree view (docs/design/battles.md 3.8). A "plan" is the full desired allocation the
@@ -162,8 +162,13 @@ export function nodeStatus(plan: SkillAllocation, node: SkillNode, ctx: PlanCtx,
 
 export type SaveFailure = { kind: 'conflict'; message: string } | { kind: 'other'; message: string };
 
-/** Classifies a failed `saveSkills` by its message (the REST error text of a stale `baseUpdatedAt` is "... was changed since you loaded it"). */
+/**
+ * Classifies a failed `saveSkills`: a conflict is an HTTP 409 carrying the stable `skills-conflict` code
+ * (SKILLS_CONFLICT_CODE; ApiError keeps only status + message, so the code travels in the message). Other 409s
+ * (respec disabled, progression off, corrupt row) are plain errors, never the Reload/Overwrite card.
+ */
 export function classifySaveError(err: unknown): SaveFailure {
   const message = err instanceof Error ? err.message : String(err);
-  return /changed since|baseUpdatedAt/i.test(message) ? { kind: 'conflict', message } : { kind: 'other', message };
+  const status = (err as { status?: unknown } | null)?.status;
+  return status === 409 && message.includes(SKILLS_CONFLICT_CODE) ? { kind: 'conflict', message } : { kind: 'other', message };
 }

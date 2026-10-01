@@ -26,14 +26,16 @@ export type FlowState =
   | { phase: 'fighting'; offer: EncounterOffer; start: BattleStart }
   | { phase: 'resolving'; offer: EncounterOffer; start: BattleStart; log: readonly PlayerAction[]; result: BattleResult; turns: number }
   | { phase: 'results'; offer: EncounterOffer; start: BattleStart; outcome: BattleOutcome }
-  | { phase: 'error'; offer: EncounterOffer; message: string; start: BattleStart | null };
+  | { phase: 'error'; offer: EncounterOffer; message: string; start: BattleStart | null; /** Set when the failed resolve may be sent again (network / 5xx): the same log and expectation. */ retry?: { log: readonly PlayerAction[]; result: BattleResult; turns: number } };
 
 export type FlowEvent =
   | { t: 'offer'; offer: EncounterOffer } | { t: 'shown'; npcId: string } | { t: 'choice'; npcId: string; choice: EncounterChoice }
   | { t: 'withdraw'; npcId: string } // NPC left / an agent started waiting (before 'picking')
   | { t: 'pick'; party: readonly PartyRef[] } | { t: 'cancel' } // picker cancelled
-  | { t: 'started'; start: BattleStart } | { t: 'ended'; log: readonly PlayerAction[]; result: BattleResult; turns: number }
-  | { t: 'resolved'; outcome: BattleOutcome } | { t: 'failed'; message: string } | { t: 'close' };
+  | { t: 'started'; npcId: string; start: BattleStart } | { t: 'ended'; log: readonly PlayerAction[]; result: BattleResult; turns: number }
+  | { t: 'resolved'; outcome: BattleOutcome }
+  /** `for` is the NPC id (a failed create) or the battle id (a failed resolve / unusable battle); other keys are stale and ignored. */
+  | { t: 'failed'; for: string; message: string; retryable?: boolean } | { t: 'retry' } | { t: 'close' };
 
 export type FlowEffect =
   | { do: 'hold'; npcId: string } | { do: 'release'; npcId: string } | { do: 'dismiss'; npcId: string }

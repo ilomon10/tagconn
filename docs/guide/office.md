@@ -141,13 +141,19 @@ disable clicking.
 
 Named, persistent characters bound to a project + role, so a subagent's "actor" keeps the same name
 and look across restarts instead of spawning a fresh anonymous sprite. Open it from **Heroes** in the
-menu, the `H` hotkey, or "Edit hero" in a character's detail drawer.
+menu, the `H` hotkey, or "Edit hero" in a character's detail drawer. The Heroes panel has several tabs:
 
 - **Roster tab** — per floor: recruit a new hero for a role, then edit its name, title, skin, hair,
   outfit color, hat/costume, prop and accessory with a live preview; **Roll name** picks a new one
   from the role's name pool; **Reset** restores the seeded name/look; a hero can only be **deleted**
   once released (no live agent bound to it).
 - **Name pools tab** — edit which names each role can be assigned, per project.
+- **Hero editor** (when a hero is selected) has two tabs:
+  - **Look** — appearance per style. Hats and props the hero won as battle loot appear under **Unlocked** in the
+    Hat and Prop pickers.
+  - **Stats & Skills** — level, XP bar, battle stats (HP, Attack, Defense, Speed, Focus), the battle record, the skill
+    tree (spend points, **Confirm skills**, **Respec**; changing skills needs a paired browser) and the loot panel,
+    where you equip a won title so it shows on the hero's name plate. See [Battles and progression](battles.md).
 
 `Ctrl/Cmd+S` saves whichever tab is active; closing with unsaved changes asks to confirm.
 

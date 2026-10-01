@@ -88,7 +88,7 @@ export function CommandMenu({ ctx, style, state, busy, onInput, idPrefix }: { ct
         tabIndex={0}
         className={cx(
           'min-h-0 flex-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-cozy/70',
-          root ? 'grid grid-cols-2 content-start gap-1.5' : 'flex flex-col gap-1 overflow-y-auto',
+          root ? 'grid grid-cols-2 content-start gap-1.5 max-sm:grid-cols-3' : 'flex flex-col gap-1 overflow-y-auto',
           busy && 'opacity-60',
         )}
       >
@@ -108,15 +108,17 @@ export function CommandMenu({ ctx, style, state, busy, onInput, idPrefix }: { ct
               onClick={() => onInput({ t: 'click', index: i })}
               className={cx(
                 'flex min-h-9 cursor-pointer select-none items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs transition-colors duration-100 coarse:min-h-11',
-                root && e.kind === 'run' && 'col-span-2',
+                // Phones: a 3-column grid of icon-over-label tiles, so every label stays whole (Skill vs Swap).
+                root && 'max-sm:min-h-12 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 max-sm:px-1',
+                root && e.kind === 'run' && 'col-span-2 max-sm:col-span-1',
                 selected ? 'border-cozy/80 bg-cozy/15 text-ink-50' : 'border-ink-600/70 bg-ink-800/80 text-ink-200',
                 e.disabled && 'text-ink-500',
                 root && e.kind === 'back' && 'hidden',
               )}
             >
-              <span aria-hidden="true" className={cx('w-3 shrink-0 text-center text-[10px] text-cozy', !selected && 'invisible')}>▶</span>
+              <span aria-hidden="true" className={cx('w-3 shrink-0 text-center text-[10px] text-cozy', !selected && 'invisible', root && 'max-sm:hidden')}>▶</span>
               {root && <span aria-hidden="true" className="w-4 shrink-0 text-center">{ROOT_ICON[e.kind as keyof typeof ROOT_ICON]}</span>}
-              <span className="min-w-0 flex-1 truncate font-semibold">{row.label}</span>
+              <span className={cx('min-w-0 flex-1 truncate font-semibold', root && 'max-sm:flex-none max-sm:text-[11px]')}>{row.label}</span>
               {row.note && <span className="hidden min-w-0 shrink truncate text-[10px] text-ink-400 sm:inline">{row.note}</span>}
               {row.detail && <span className="shrink-0 font-pixel text-[10px] tabular-nums text-ink-300">{row.detail}</span>}
               {!root && <span aria-hidden="true" className="hidden w-3 text-right text-[9px] text-ink-500 sm:inline">{i + 1 <= 9 ? i + 1 : ''}</span>}

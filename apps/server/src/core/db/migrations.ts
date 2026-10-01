@@ -147,6 +147,9 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS battles_created_idx ON battles (created_at);
   CREATE INDEX IF NOT EXISTS battles_status_expires_idx ON battles (status, expires_at);
   `,
+  /* 13: M14 skills-only optimistic-concurrency stamp (XP/title/heal bump updated_at, so it cannot guard a skill save) */ `
+  ALTER TABLE hero_progress ADD COLUMN skills_updated_at INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function migrate(sqlite: Database.Database): number {

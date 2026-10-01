@@ -32,7 +32,9 @@ export class KoPresence {
     now: number,
   ): void {
     for (const c of chars) {
-      const kind = c.heroId ? koBadgeFor({ heroId: c.heroId, lifecycle: c.lifecycle, agent: agentOf(c) }, progress(c.heroId), now) : null;
+      // The agent is looked up only for a hero whose progress is KO'd.
+      const p = c.heroId ? progress(c.heroId) : undefined;
+      const kind = c.heroId && isKnockedOut(p, now) ? koBadgeFor({ heroId: c.heroId, lifecycle: c.lifecycle, agent: agentOf(c) }, p, now) : null;
       if (this.last.get(c) === kind && this.last.has(c)) continue;
       this.last.set(c, kind);
       c.setKoBadge(kind);

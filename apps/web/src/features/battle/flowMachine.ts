@@ -43,7 +43,7 @@ export function reduce(s: FlowState, e: FlowEvent): FlowStep {
       return to({ phase: 'starting', offer: s.offer, party: e.party }, { do: 'create', offer: s.offer, party: e.party });
 
     case 'started':
-      return s.phase === 'starting' ? to({ phase: 'fighting', offer: s.offer, start: e.start }, { do: 'openScene', start: e.start }) : stay(s);
+      return s.phase === 'starting' && s.offer.npcId === e.npcId ? to({ phase: 'fighting', offer: s.offer, start: e.start }, { do: 'openScene', start: e.start }) : stay(s);
 
     case 'ended':
       if (s.phase !== 'fighting') return stay(s);
@@ -53,12 +53,25 @@ export function reduce(s: FlowState, e: FlowEvent): FlowStep {
       );
 
     case 'resolved':
-      return s.phase === 'resolving' ? stay({ phase: 'results', offer: s.offer, start: s.start, outcome: e.outcome }) : stay(s);
+      return s.phase === 'resolving' && s.start.id === e.outcome.battleId ? stay({ phase: 'results', offer: s.offer, start: s.start, outcome: e.outcome }) : stay(s);
 
     case 'failed':
-      if (s.phase === 'starting') return to({ phase: 'error', offer: s.offer, message: e.message, start: null }, { do: 'release', npcId: s.offer.npcId });
-      if (s.phase === 'resolving') return stay({ phase: 'error', offer: s.offer, message: e.message, start: s.start });
+      if (s.phase === 'starting' && s.offer.npcId === e.for) return to({ phase: 'error', offer: s.offer, message: e.message, start: null }, { do: 'release', npcId: s.offer.npcId });
+      if (s.phase === 'resolving' && s.start.id === e.for) {
+        const retry = e.retryable ? { log: s.log, result: s.result, turns: s.turns } : undefined;
+        return stay({ phase: 'error', offer: s.offer, message: e.message, start: s.start, retry });
+      }
+      // The battle cannot be played (engine version mismatch): give it back, close the scene and let the NPC go on.
+      if (s.phase === 'fighting' && s.start.id === e.for) {
+        return to({ phase: 'error', offer: s.offer, message: e.message, start: null }, { do: 'abandon', battleId: s.start.id }, { do: 'closeScene' }, { do: 'release', npcId: s.offer.npcId });
+      }
       return stay(s);
+
+    case 'retry':
+      // Resolve is idempotent server-side: the same log and expectation go out again.
+      return s.phase === 'error' && s.start && s.retry
+        ? to({ phase: 'resolving', offer: s.offer, start: s.start, ...s.retry }, { do: 'resolve', start: s.start, ...s.retry })
+        : stay(s);
 
     case 'close':
       return close(s);

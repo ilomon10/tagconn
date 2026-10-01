@@ -55,6 +55,7 @@ export const StoredScalarsSchema = z.object({
   flees: z.number().int().min(0),
   equippedTitle: LootIdSchema.nullable(),
   updatedAt: z.number(),
+  skillsUpdatedAt: z.number().default(0),
 });
 
 /** Sliding-window rate limiter (in memory). `max` is read per call so a settings change applies at once. */

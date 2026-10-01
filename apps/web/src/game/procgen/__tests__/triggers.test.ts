@@ -20,23 +20,28 @@ describe('trigger pass', () => {
     for (const f of map.furniture.filter((x) => x.trigger)) expect(TRIGGER_KINDS[f.trigger!]).toContain(f.kind);
   });
 
-  it('DEFAULT_LAYOUT gets all five placed actions, plus the infirmary only when it has a coffee machine / water cooler', () => {
+  it('DEFAULT_LAYOUT gets every action, including the infirmary', () => {
     const map = generateMap(DEFAULT_LAYOUT);
-    const placed = TRIGGER_ORDER.filter((a) => a !== 'infirmary');
-    const hasHealKind = map.furniture.some((f) => TRIGGER_KINDS.infirmary.includes(f.kind));
-    expect([...actionsOf(map)].sort()).toEqual((hasHealKind ? [...placed, 'infirmary'] : placed).sort());
+    expect([...actionsOf(map)].sort()).toEqual([...TRIGGER_ORDER].sort());
   });
 
-  it('never places a coffee machine / water cooler for the infirmary: it only marks an existing one', () => {
+  it('places a coffee machine only when the floor has no coffee machine / water cooler, and marks exactly one', () => {
+    let placedAny = false;
     for (let seed = 1; seed <= 40; seed++) {
       const layout = asLayout(generateRandomLayout({ width: 48, height: 30, seed }), seed);
       const on = generateMap(layout);
       const off = generateMap(layout, { triggers: false });
       const count = (m: GeneratedMap) => m.furniture.filter((f) => TRIGGER_KINDS.infirmary.includes(f.kind)).length;
-      expect(count(on), `seed ${seed}`).toBe(count(off));
       const marked = on.furniture.filter((f) => f.trigger === 'infirmary');
-      expect(marked.length).toBe(count(off) > 0 ? 1 : 0);
+      if (count(off) > 0) expect(count(on), `seed ${seed}`).toBe(count(off));
+      else if (count(on) > 0) {
+        placedAny = true;
+        expect(count(on), `seed ${seed}`).toBe(1);
+        expect(marked[0]).toMatchObject({ kind: 'coffee-machine', w: 1, h: 1, blocking: true });
+      }
+      expect(marked.length, `seed ${seed}`).toBeLessThanOrEqual(1);
     }
+    expect(placedAny).toBe(true);
   });
 
   it('is deterministic and skipped with triggers: false', () => {

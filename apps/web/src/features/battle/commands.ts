@@ -16,8 +16,8 @@ export const abandonBattle = async (id: string): Promise<void> => {
   if (inDemo()) await run(() => demo.abandonBattle(id));
   else await api.abandonBattle(id);
 };
-export const saveSkills = (heroId: string, skills: SkillAllocation, baseUpdatedAt?: number): Promise<HeroProgress> =>
-  inDemo() ? run(() => demo.saveSkills(heroId, skills, baseUpdatedAt)) : api.saveSkills(heroId, { skills: { ...skills }, baseUpdatedAt });
+export const saveSkills = (heroId: string, skills: SkillAllocation, baseSkillsUpdatedAt?: number): Promise<HeroProgress> =>
+  inDemo() ? run(() => demo.saveSkills(heroId, skills, baseSkillsUpdatedAt)) : api.saveSkills(heroId, { skills: { ...skills }, baseSkillsUpdatedAt });
 export const equipTitle = (heroId: string, title: LootId | null): Promise<HeroProgress> => (inDemo() ? run(() => demo.equipTitle(heroId, title)) : api.equipTitle(heroId, { title }));
 export const healHero = (heroId: string): Promise<HeroProgress> => (inDemo() ? run(() => demo.healHero(heroId)) : api.healHero(heroId));
 

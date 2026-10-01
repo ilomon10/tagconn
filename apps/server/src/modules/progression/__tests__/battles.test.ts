@@ -298,6 +298,19 @@ describe('battles service (M14 S3)', () => {
       expect(get.json().error).toBe('battle details expired');
     });
 
+    it('L9: a battle opened before battle/progression were disabled still resolves (create is gated, resolve is not)', async () => {
+      c = await boot({ battle: { difficulty: 0.5 } });
+      const cr = c.app.diContainer.cradle;
+      const h = await mkHero(c);
+      const b = insertBattle(c, [h], { want: 'won' });
+      cr.settings.update({ battle: { enabled: false }, progression: { enabled: false } });
+      const res = await resolve(c, b.row.id, { log: b.log });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ battleId: b.row.id, result: 'won' });
+      const core = cr.progressionRepository.getCore(h);
+      expect(core.kind === 'ok' && core.core.wins).toBe(1);
+    });
+
     it('two concurrent resolves award once', async () => {
       c = await boot({ battle: { difficulty: 0.5 } });
       const h = await mkHero(c);

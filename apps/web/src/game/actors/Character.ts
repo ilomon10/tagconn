@@ -1230,7 +1230,10 @@ export class Character extends Phaser.GameObjects.Container {
     const ko = this.koKind;
     if (ko) {
       const still = prefersReducedMotion();
-      if (ko === 'dizzy') this.koIcon.setTexture(KO_FRAMES[still ? 0 : Math.floor(t * 2) % KO_FRAMES.length]!);
+      if (ko === 'dizzy') {
+        const frame = KO_FRAMES[still ? 0 : Math.floor(t * 2) % KO_FRAMES.length]!;
+        if (this.koIcon.texture.key !== frame) this.koIcon.setTexture(frame);
+      }
       this.koIcon.setPosition(-7, -17 + (ko === 'dizzy' && !still ? bob : 0)).setVisible(!this.leaving);
     }
     const hasIcon = !!icon || strain !== null || (ko !== null && !this.leaving);

@@ -111,9 +111,9 @@ describe('api: M14 progression routes', () => {
   });
 
   it('posts JSON bodies for skills, title, create and resolve', async () => {
-    await api.saveSkills('h-0123abcd', { skills: { 'developer.0.1': 1 }, baseUpdatedAt: 5 });
+    await api.saveSkills('h-0123abcd', { skills: { 'developer.0.1': 1 }, baseSkillsUpdatedAt: 5 });
     expect(lastCall()[0]).toBe('/api/heroes/h-0123abcd/skills');
-    expect(JSON.parse(lastCall()[1].body as string)).toEqual({ skills: { 'developer.0.1': 1 }, baseUpdatedAt: 5 });
+    expect(JSON.parse(lastCall()[1].body as string)).toEqual({ skills: { 'developer.0.1': 1 }, baseSkillsUpdatedAt: 5 });
     await api.equipTitle('h-0123abcd', { title: null });
     expect(JSON.parse(lastCall()[1].body as string)).toEqual({ title: null });
     await api.createBattle({ projectId: 'p', npcKind: 'guest', encounterId: 'guest-1', party: [{ kind: 'agent', agentId: 'a' }] });

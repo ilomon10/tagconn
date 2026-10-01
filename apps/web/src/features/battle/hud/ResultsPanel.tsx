@@ -157,6 +157,8 @@ export interface ResultsPanelProps {
   error?: string | null;
   reduced: boolean;
   onContinue: () => void;
+  /** Error phase only: sends the failed resolve again (set when it may work on a second try). */
+  onRetry?: () => void;
   onOpenHero?: (heroId: string) => void;
   /** Hero progress by hero id for real XP bars; defaults to the live progress store. */
   progressByHero?: Record<string, HeroProgress>;
@@ -164,7 +166,7 @@ export interface ResultsPanelProps {
 
 /** Centered JRPG results card: headline, per-hero XP / level-up / KO, loot, Continue. */
 export function ResultsPanel(props: ResultsPanelProps) {
-  const { setup, style, result, phase, outcome, error, reduced, onContinue, onOpenHero } = props;
+  const { setup, style, result, phase, outcome, error, reduced, onContinue, onRetry, onOpenHero } = props;
   const enemyName = battleLabel(style, 'enemy', setup.enemy.ref.kind === 'enemy' ? setup.enemy.ref.npcKind : 'enemy');
   const tone = result === 'won' ? 'border-cozy text-cozy' : result === 'lost' ? 'border-rose-300/80 text-rose-200' : 'border-sky-300/80 text-sky-200';
   return (
@@ -174,7 +176,7 @@ export function ResultsPanel(props: ResultsPanelProps) {
     >
       <div className={cx('rounded-md border-2 bg-ink-900/95 p-4 ring-1 ring-inset ring-ink-600/70', phase === 'error' ? 'border-rose-300/80' : tone.split(' ')[0])}>
         {phase === 'error' ? (
-          <ErrorBody message={error ?? 'Something went wrong.'} onContinue={onContinue} />
+          <ErrorBody message={error ?? 'Something went wrong.'} onContinue={onContinue} onRetry={onRetry} />
         ) : phase === 'resolving' || !outcome ? (
           <>
             <h2 className={cx('text-center font-pixel text-lg', tone.split(' ')[1])}>{resultHeadline(result, enemyName)}</h2>
@@ -191,14 +193,15 @@ export function ResultsPanel(props: ResultsPanelProps) {
   );
 }
 
-function ErrorBody({ message, onContinue }: { message: string; onContinue: () => void }) {
+function ErrorBody({ message, onContinue, onRetry }: { message: string; onContinue: () => void; onRetry?: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => ref.current?.querySelector('button')?.focus(), []);
   return (
     <>
       <h2 className="text-center font-pixel text-lg text-rose-200">The battle was interrupted</h2>
       <p role="alert" className="mt-2 break-words text-center text-xs text-ink-300">{message}</p>
-      <div ref={ref} className="mt-4 flex justify-center">
+      <div ref={ref} className="mt-4 flex justify-center gap-2">
+        {onRetry && <Button variant="primary" data-sfx="ui-confirm" onClick={onRetry}>Retry</Button>}
         <Button variant="subtle" data-sfx="ui-close" onClick={onContinue}>Close</Button>
       </div>
     </>

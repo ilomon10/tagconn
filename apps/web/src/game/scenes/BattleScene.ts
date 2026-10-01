@@ -59,6 +59,7 @@ export class BattleScene extends Phaser.Scene {
   private unsub: (() => void) | null = null;
   private heroTextures: string[] = [];
   private musicOn = false;
+  private leaving = false; // `leave()` ran: the entry transition is cancelled and the music must not start
   private offsetX = { hero: 0, enemy: 0 }; // entry/run slide offsets applied on top of the layout
   private enemyKey: { kind: BattleNpcKind; style: BattleStyle } | null = null;
   private idleTimer: Phaser.Time.TimerEvent | null = null;
@@ -262,6 +263,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private startMusic(): void {
+    if (this.leaving) return;
     this.musicOn = true;
     sfxBus.setMusic({ kind: 'battle', style: this.input_.style, fadeMs: BATTLE_TIMING.musicFadeMs });
   }
@@ -297,6 +299,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private reveal(): void {
+    if (this.leaving) return;
     const T = BATTLE_TIMING;
     const iris = { r: 0 };
     const full = irisFullRadius(this.scale.width, this.scale.height);
@@ -326,36 +329,51 @@ export class BattleScene extends Phaser.Scene {
   leave(): Promise<void> {
     const T = BATTLE_TIMING;
     return new Promise((resolve) => {
+      // Always finishes, even when the return transition cannot be built: the office must come back.
       const done = (): void => {
-        this.stage.setVisible(false);
-        this.hooks.closed();
-        resolve();
+        try {
+          this.stage?.setVisible(false);
+        } finally {
+          try {
+            this.hooks.closed();
+          } finally {
+            resolve();
+          }
+        }
       };
-      this.tweens.killTweensOf(this.overlay);
-      const start = (): void => {
-        sfxBus.emit({ id: 'battle-return' });
-        if (this.musicOn) sfxBus.setMusic(null, { fadeMs: BATTLE_TIMING.returnMs });
-        this.musicOn = false;
-      };
-      if (this.reduced) {
-        const { width: w, height: h } = this.scale;
-        this.overlay.clear().fillStyle(BLACK, 1).fillRect(0, 0, w, h).setAlpha(0);
-        this.tweens.add({ targets: this.overlay, alpha: 1, duration: T.stingMs, onStart: start, onComplete: done });
-        return;
+      try {
+        this.leaving = true;
+        // Cancel a running entry (swirl / hold / reveal tweens and timers) so it cannot reveal the stage or start the music.
+        this.tweens.killAll();
+        this.time.removeAllEvents();
+        this.idleTimer = null;
+        const start = (): void => {
+          sfxBus.emit({ id: 'battle-return' });
+          if (this.musicOn) sfxBus.setMusic(null, { fadeMs: BATTLE_TIMING.returnMs });
+          this.musicOn = false;
+        };
+        if (this.reduced) {
+          const { width: w, height: h } = this.scale;
+          this.overlay.clear().fillStyle(BLACK, 1).fillRect(0, 0, w, h).setAlpha(0);
+          this.tweens.add({ targets: this.overlay, alpha: 1, duration: T.stingMs, onStart: start, onComplete: done });
+          return;
+        }
+        const iris = { r: irisFullRadius(this.scale.width, this.scale.height) };
+        this.tweens.add({
+          targets: iris,
+          r: 0,
+          duration: T.returnMs,
+          ease: 'Sine.easeIn',
+          onStart: start,
+          onUpdate: () => this.fillPolys(irisPolygons(iris.r, this.scale.width, this.scale.height)),
+          onComplete: () => {
+            this.fillPolys(irisPolygons(0, this.scale.width, this.scale.height));
+            done();
+          },
+        });
+      } catch {
+        done();
       }
-      const iris = { r: irisFullRadius(this.scale.width, this.scale.height) };
-      this.tweens.add({
-        targets: iris,
-        r: 0,
-        duration: T.returnMs,
-        ease: 'Sine.easeIn',
-        onStart: start,
-        onUpdate: () => this.fillPolys(irisPolygons(iris.r, this.scale.width, this.scale.height)),
-        onComplete: () => {
-          this.fillPolys(irisPolygons(0, this.scale.width, this.scale.height));
-          done();
-        },
-      });
     });
   }
 

@@ -2,7 +2,7 @@ import type { BattleNpcKind, BattleStatus } from '@tagconn/shared';
 import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 /**
- * M14 progression tables (migration slot 12). Defined here (not in core/db/schema.ts) per the module
+ * M14 progression tables (migration slot 12; slot 13 adds hero_progress.skills_updated_at). Defined here (not in core/db/schema.ts) per the module
  * convention; keep the DDL in `core/db/migrations.ts` (slot 12) in sync. JSON columns are stored as text
  * and parsed through zod by the repositories, never trusted.
  */
@@ -21,6 +21,7 @@ export const heroProgress = sqliteTable('hero_progress', {
   loot: text('loot').notNull(),
   equippedTitle: text('equipped_title'),
   updatedAt: integer('updated_at').notNull(),
+  skillsUpdatedAt: integer('skills_updated_at').notNull().default(0), // migration 13
 });
 
 /** Component-wise high-water mark of cumulative token counters per (session, agent): the XP double-count guard. */

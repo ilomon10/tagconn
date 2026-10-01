@@ -212,11 +212,17 @@ export class OfficeGame {
   openBattle(input: BattleSceneInput): BattleSceneHandle | null {
     if (!this.scene || this.battle || this.transitioning) return null;
     this.scene.setBattleActive(true);
-    this.battle = launchBattle(this.game, input, () => {
+    // `launchBattle` may close synchronously (no stage could be built), before the handle is assigned here.
+    let closedEarly = false;
+    let handle: BattleSceneHandle | null = null;
+    handle = launchBattle(this.game, input, () => {
       this.scene?.setBattleActive(false);
-      this.battle = null;
+      if (handle && this.battle === handle) this.battle = null;
+      else closedEarly = true;
     });
-    return this.battle;
+    if (closedEarly) return null;
+    this.battle = handle;
+    return handle;
   }
 
   destroy() {

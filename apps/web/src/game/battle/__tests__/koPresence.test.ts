@@ -49,4 +49,12 @@ describe('KoPresence.apply', () => {
     new KoPresence().apply([c], () => undefined, () => undefined, 1);
     expect(c.setKoBadge).toHaveBeenCalledTimes(1); // initial sync to null
   });
+  it('looks the agent up only for a KO\'d hero', () => {
+    const c: KoTarget = { heroId: 'h', lifecycle: 'quest', setKoBadge: vi.fn() };
+    const agentOf = vi.fn(() => work);
+    new KoPresence().apply([c], () => fine, agentOf, 1000);
+    expect(agentOf).not.toHaveBeenCalled();
+    new KoPresence().apply([c], () => ko, agentOf, 1000);
+    expect(agentOf).toHaveBeenCalledTimes(1);
+  });
 });

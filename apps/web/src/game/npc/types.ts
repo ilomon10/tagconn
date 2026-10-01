@@ -34,6 +34,8 @@ export interface EncounterDef {
   weight: number;
   hours: HourCurve;
   steps: readonly NpcStep[];
+  /** Reduced-motion variant: appears at the door, no walking or reactions (see `staticVisit`). */
+  static?: boolean;
 }
 
 /** M14 hook: OfficeGame forwards these as the 'encounter' event. */

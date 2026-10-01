@@ -254,10 +254,24 @@ describe('request gating (DNS rebinding / CSRF)', () => {
       expect(res.statusCode, payload).toBe(400);
       expect(res.json()).toMatchObject({ statusCode: 400, error: expect.any(String) });
     }
-    // Hook ingest is untrusted JSON too.
-    const hook = await post('{"session_id":"s","hook_event_name":"SessionStart","x":{"__proto__":1}}', '/api/hooks');
-    expect(hook.statusCode).toBe(400);
     expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+
+  it('hook ingest STRIPS __proto__ / constructor.prototype instead of rejecting the event (202)', async () => {
+    app = await buildTestApp();
+    const hook = (payload: string) => app!.inject({ method: 'POST', url: '/api/hooks', headers: { 'content-type': 'application/json' }, payload });
+    const seen: Record<string, unknown>[] = [];
+    app.diContainer.cradle.bus.on('hook.received', (ctx) => seen.push(ctx.payload as Record<string, unknown>));
+    const base = '"session_id":"s-proto","hook_event_name":"SessionStart"';
+    expect((await hook(`{${base},"x":{"__proto__":{"polluted":1},"keep":2}}`)).statusCode).toBe(202);
+    expect((await hook(`{${base},"x":{"constructor":{"prototype":{"p":1},"k":3}}}`)).statusCode).toBe(202);
+    expect(seen).toHaveLength(2);
+    const [first, second] = seen.map((p) => p.x as Record<string, unknown>);
+    expect(Object.keys(first ?? {})).not.toContain('__proto__');
+    expect(first?.keep).toBe(2);
+    expect(Object.hasOwn((second?.constructor ?? {}) as object, 'prototype')).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).p).toBeUndefined();
   });
 
   it('still accepts look-alike keys (proto, __proto, constructor without prototype) and real hook fixtures', async () => {

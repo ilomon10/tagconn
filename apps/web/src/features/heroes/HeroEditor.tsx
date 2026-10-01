@@ -100,7 +100,10 @@ function NullableColorField({ label, colors, value, fallback, onChange }: { labe
 }
 
 type EditorTab = 'base' | HeroLookStyle;
-const TABS: readonly { id: EditorTab; label: string }[] = [{ id: 'base', label: 'Base' }, ...HERO_LOOK_STYLES.map((id) => ({ id, label: id.charAt(0).toUpperCase() + id.slice(1) }))];
+const TABS: readonly { id: EditorTab; label: string }[] = [
+  { id: 'base', label: 'Base' },
+  ...HERO_LOOK_STYLES.map((id) => ({ id, label: id.charAt(0).toUpperCase() + id.slice(1) })),
+];
 
 type EditorSection = 'look' | 'stats';
 const SECTIONS: readonly { id: EditorSection; label: string }[] = [
@@ -140,24 +143,7 @@ export interface HeroEditorProps {
  * Fields are plain labelled controls; the tab strip is a roving-tabindex tablist (arrow keys). Ctrl/Cmd+S
  * is owned by `HeroPanel`, which also owns save/reset/delete/conflict handling and the draft state.
  */
-export function HeroEditor({
-  hero,
-  draft,
-  onDraftChange,
-  roleInfo,
-  officeStyle,
-  roleOptions,
-  dirty,
-  busy,
-  error,
-  onSave,
-  onReset,
-  onDelete,
-  onRandomize,
-  onRollName,
-  onBack,
-  canDelete,
-}: HeroEditorProps) {
+export function HeroEditor({ hero, draft, onDraftChange, roleInfo, officeStyle, roleOptions, dirty, busy, error, onSave, onReset, onDelete, onRandomize, onRollName, onBack, canDelete }: HeroEditorProps) {
   const [section, setSection] = useState<EditorSection>('look');
   const [tab, setTab] = useState<EditorTab>('base');
   const style: HeroLookStyle | null = tab === 'base' ? null : tab;

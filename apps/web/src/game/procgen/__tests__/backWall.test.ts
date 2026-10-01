@@ -110,6 +110,8 @@ function assertParity(layout: OfficeLayout, label: string): void {
 function assertApplianceInvariants(map: GeneratedMap, label: string): void {
   for (const f of map.furniture) {
     if (!isApplianceKind(f.kind)) continue;
+    // The guaranteed coffee-break machine falls back to a free-standing edge cell when no wall slot is open.
+    if (f.trigger === 'infirmary' && !f.againstNorthWall) continue;
     const room = map.rooms.find((r) => r.id === f.roomId);
     expect(room, `${label} appliance ${f.kind}@${f.x},${f.y} has a room`).toBeDefined();
     expect(f.y, `${label} appliance ${f.kind}@${f.x},${f.y} on interior.y`).toBe(room!.interior.y);

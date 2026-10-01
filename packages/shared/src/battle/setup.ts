@@ -213,5 +213,6 @@ export function progressView(heroId: string, projectId: string, role: string, co
     heroId, projectId, classId, xp: core.xp, level, levelXp, nextLevelXp, skillPoints: Math.max(0, total - spent), bonusPoints: core.bonusPoints,
     skills, overspent: spent > total, koUntil: core.koUntil, wins: core.wins, losses: core.losses, flees: core.flees,
     loot: [...core.loot], equippedTitle: core.equippedTitle, updatedAt: core.updatedAt,
+    skillsUpdatedAt: core.skillsUpdatedAt ?? 0,
   };
 }

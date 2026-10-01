@@ -47,6 +47,21 @@ The interface gives short game-style feedback, all soft and under 0.15 s:
 
 UI sounds follow the **SFX** switch, so turning SFX off (Settings, Office, Audio) or muting from the menu silences all of them. The day/night chime is an SFX sound. Nothing plays before your first click or key press, and a hidden tab is silent. Developers can set `data-sfx="none"` on a control to skip its click sound or `data-sfx="<sound id>"` to pick another.
 
+## Battle sounds and music
+
+During a battle (see [Battles and progression](battles.md)), the following sounds play:
+
+| What | Sound | Controlled by |
+|---|---|---|
+| **Battle music** | Looped procedural theme, style-matched (modern synth, tavern fiddle, rift drones) | `battle.music` setting (on by default) |
+| **Damage hits** | Sharp attack hits with pitch variation by damage | SFX category |
+| **Item use** | Healing or buff jingles (type-specific) | SFX category |
+| **Move effects** | Status infliction buzzes, status clears, buffs, shields | SFX category |
+| **Faints and transitions** | Descending tone for a hero faint, whoosh for battle end | SFX category |
+| **Encounter prompt** | Short alert jingle when the NPC appears | Alerts category |
+
+Battle music plays when a battle scene opens (if `battle.music` is on) and fades out when the battle ends. All other battle sounds follow the **SFX** audio category and are silent if you mute SFX or the master audio.
+
 ## Ambient sound
 
 Each floor generates a subtle background bed based on its visual style and time of day:

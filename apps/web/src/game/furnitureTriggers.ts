@@ -16,13 +16,14 @@ export const TRIGGER_KINDS: Record<FurnitureAction, readonly FurnitureKind[]> = 
   infirmary: ['coffee-machine', 'water-cooler'],
 };
 
-/** The item procgen places when a floor has none of the qualifying kinds (the receptionist desk and the infirmary are never placed). */
-export const TRIGGER_PLACE: Record<Exclude<FurnitureAction, 'receptionist' | 'infirmary'>, { kind: FurnitureKind; w: 1 | 2 }> = {
+/** The item procgen places when a floor has none of the qualifying kinds (the receptionist desk has its own spec in procgen/triggers.ts). The coffee machine is the guaranteed coffee-break heal. */
+export const TRIGGER_PLACE: Record<Exclude<FurnitureAction, 'receptionist'>, { kind: FurnitureKind; w: 1 | 2 }> = {
   board: { kind: 'board', w: 2 },
   log: { kind: 'bookcase', w: 2 },
   quests: { kind: 'notice-board', w: 1 },
   settings: { kind: 'console', w: 1 },
   heroes: { kind: 'roster-board', w: 1 },
+  infirmary: { kind: 'coffee-machine', w: 1 },
 };
 
 export const TRIGGER_ORDER: readonly FurnitureAction[] = ['receptionist', 'board', 'log', 'quests', 'settings', 'heroes', 'infirmary'];

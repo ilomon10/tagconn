@@ -15,9 +15,12 @@ export * from './host.js';
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 
 /**
- * JSON.parse reviver: JSON.parse keeps `__proto__` as an OWN key (which zod record schemas then silently
- * drop) and `constructor.prototype` is the other classic pollution gadget. Reject both at any depth
- * (same semantics as secure-json-parse `protoAction/constructorAction: 'error'`, without a new dependency).
+ * JSON.parse revivers for HTTP request bodies (socket.io payloads are parsed elsewhere and not covered).
+ * JSON.parse keeps `__proto__` as an OWN key (which zod record schemas then silently drop) and
+ * `constructor.prototype` is the other classic pollution gadget. Same semantics as secure-json-parse:
+ * - `rejectPollutingKeys` (every REST/admin route): `protoAction/constructorAction: 'error'`, a 400.
+ * - `removePollutingKeys` (hook ingest only): `'remove'`, so a legitimate tool payload that merely contains
+ *   such a key (e.g. a file being edited) is never lost; the key is dropped and the event is kept.
  * The reviver runs bottom-up, so at key `constructor` the value is already parsed.
  */
 function rejectPollutingKeys(this: unknown, key: string, value: unknown): unknown {
@@ -27,6 +30,16 @@ function rejectPollutingKeys(this: unknown, key: string, value: unknown): unknow
   }
   return value;
 }
+
+function removePollutingKeys(this: unknown, key: string, value: unknown): unknown {
+  if (key === '__proto__') return undefined; // a reviver returning undefined deletes the property
+  if (key === 'constructor' && typeof value === 'object' && value !== null && Object.hasOwn(value, 'prototype')) {
+    delete (value as Record<string, unknown>).prototype;
+  }
+  return value;
+}
+
+const isHookIngest = (url: string): boolean => url.split('?', 1)[0] === '/api/hooks';
 
 // QA: a rejected Host/Origin previously returned a bare 403 with nothing in the server log, so a
 // misconfigured `server.corsOrigins`/`allowedHosts` looked like a silent, unexplained failure.
@@ -68,11 +81,11 @@ export const httpPlugin = fp(
     app.removeContentTypeParser('text/plain');
     // A genuinely empty JSON body (e.g. `POST /api/settings/reset` with no payload) parses to `{}`
     // instead of erroring, so no-payload POSTs work as long as content-type is application/json.
-    app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
       const text = (body as string).trim();
       if (!text) return done(null, {});
       try {
-        done(null, JSON.parse(text, rejectPollutingKeys));
+        done(null, JSON.parse(text, isHookIngest(req.url) ? removePollutingKeys : rejectPollutingKeys));
       } catch (err) {
         done(err as Error, undefined);
       }

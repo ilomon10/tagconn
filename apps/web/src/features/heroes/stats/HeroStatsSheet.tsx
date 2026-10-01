@@ -89,7 +89,7 @@ export function HeroStatsSheet({ hero }: { hero: Hero }) {
     setError(null);
     setConflict(null);
     try {
-      const saved = await saveSkills(hero.id, plan, force ? undefined : progress.updatedAt);
+      const saved = await saveSkills(hero.id, plan, force ? undefined : (progress.skillsUpdatedAt ?? 0));
       setPlan(planFrom(saved));
       prevSaved.current = saved.skills;
       setJustSaved(true);

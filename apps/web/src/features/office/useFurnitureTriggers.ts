@@ -5,10 +5,9 @@ import type { OfficeGame } from '../../game/OfficeGame';
 import type { FurnitureAction } from '../../game/procgen/types';
 import { sfxBus } from '../../game/sfxBus';
 import { isModalOpen } from '../../lib/floors';
-import { getProgress } from '../../stores/progressStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useOfficeStore, ALL_FLOORS } from '../../stores/officeStore';
-import { useProgressStore } from '../../stores/progressStore';
+import { getProgress, useProgressStore } from '../../stores/progressStore';
 import { useRequireAdmin } from '../auth/useRequireAdmin';
 import { healHero } from '../battle/commands';
 

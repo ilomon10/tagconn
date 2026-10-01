@@ -25,7 +25,7 @@ import { Button, cx } from '../../components/ui';
 import { useFurnitureTriggers } from './useFurnitureTriggers';
 import { AlertHost } from './alerts/AlertHost';
 import { useAudioBridge } from './audio/useAudioBridge';
-import { useBattleFlow } from '../battle/useBattleFlow';
+import { useBattleFlow, useFlowStore } from '../battle/useBattleFlow';
 import { PartyPicker } from '../battle/PartyPicker';
 import { BattleOverlay } from '../battle/BattleOverlay';
 import { useProgressStore } from '../../stores/progressStore';
@@ -278,6 +278,8 @@ export function OfficeView({ active }: { active: boolean }) {
   useFurnitureTriggers(game);
   useAudioBridge(active);
   useBattleFlow(game);
+  // While a battle scene is up the office-only controls (zoom, party bar, status card) are hidden; the top bar stays.
+  const battleOn = useFlowStore((s) => s.session !== null || s.state.phase === 'starting');
 
   // Stairs (docs/design/guild-hall.md section 6; M8 8h living-office.md section 6.3): take the
   // neighboring floor in `office.floorOrder`, or do nothing at an end. The Multiverse is just
@@ -493,7 +495,7 @@ export function OfficeView({ active }: { active: boolean }) {
       ro.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [game, selected, trayOpen, detailsOpen, phone, noAgents]);
+  }, [game, selected, trayOpen, detailsOpen, phone, noAgents, battleOn]);
 
   // Esc closes the panel, unless the user is mid-typing in a text field (a checkbox like the
   // Follow toggle, or a button, has no text to lose, so Esc still closes from there).
@@ -546,7 +548,7 @@ export function OfficeView({ active }: { active: boolean }) {
       </div>
       <div ref={wrap} className="relative min-w-0 flex-1 bg-ink-900">
         <div ref={host} className="absolute inset-0 touch-none" />
-        {selected && !(phone && trayOpen) && (
+        {selected && !battleOn && !(phone && trayOpen) && (
           <StatusCard
             agent={agents.find((a) => a.id === selected)}
             compact={phone}
@@ -561,8 +563,8 @@ export function OfficeView({ active }: { active: boolean }) {
         <div
           className={cx(
             'pointer-events-none absolute inset-x-3 flex flex-col items-center gap-2',
-            selected && phone && !trayOpen ? 'top-[4.75rem]' : 'top-3',
-            selected && !phone && 'pl-[19rem]',
+            selected && !battleOn && phone && !trayOpen ? 'top-[4.75rem]' : 'top-3',
+            selected && !battleOn && !phone && 'pl-[19rem]',
           )}
         >
           {toast && <span className="rounded-full bg-ink-850/95 px-3 py-1.5 text-xs font-semibold text-ink-100 shadow-lg">{toast}</span>}
@@ -585,9 +587,12 @@ export function OfficeView({ active }: { active: boolean }) {
             </span>
           )}
         </div>
-        <AlertHost onShowMe={selectAgent} />
+        {/* During a battle on a phone the alert stack drops under the enemy card (never over the command menu or results). */}
+        <div className={cx('contents', battleOn && 'max-sm:[&>div]:!top-[4.75rem]')}>
+          <AlertHost onShowMe={selectAgent} />
+        </div>
         <PartyPicker />
-        <BattleOverlay game={game} />
+        <BattleOverlay />
         {/* M9 8f follow-up: a bare dark canvas while the socket connects reads as broken. Only while
             there's no data yet — once agents arrive there's already a populated office to look at.
             Demo mode never reaches `connection === 'connecting'` (it's its own `'demo'` state), so
@@ -601,6 +606,7 @@ export function OfficeView({ active }: { active: boolean }) {
             </span>
           </div>
         )}
+        {!battleOn && (
         <div className="absolute bottom-3 left-3 flex gap-1">
           <Button variant="subtle" onClick={() => game?.zoomBy(1.2)} aria-label="Zoom in">
             +
@@ -612,7 +618,8 @@ export function OfficeView({ active }: { active: boolean }) {
             Fit
           </Button>
         </div>
-        <PartyBar agents={agents} selectedId={selected} onSelect={selectAgent} phone={phone} trayOpen={trayOpen} onTrayOpenChange={setTrayOpen} />
+        )}
+        {!battleOn && <PartyBar agents={agents} selectedId={selected} onSelect={selectAgent} phone={phone} trayOpen={trayOpen} onTrayOpenChange={setTrayOpen} />}
       </div>
       {selected && detailsOpen && (
         <AgentDetailsDialog agentId={selected} onClose={() => setDetailsOpen(false)} compact={phone} follow={follow} onFollowChange={setFollow} />

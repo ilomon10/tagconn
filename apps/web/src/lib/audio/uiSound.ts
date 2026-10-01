@@ -19,12 +19,16 @@ export function resetUiSound(): void {
   lastSemanticAt = -Infinity;
 }
 
-/** Emits `id`, holding a `ui-close` back for the window so a following `ui-open` can swallow it. */
+/** Emits `id`, holding a `ui-close` back for the window so a following `ui-open`, `ui-back` or `ui-confirm` can swallow it. */
 function route(id: SfxId): void {
   if (id === 'ui-open') {
     if (pendingClose) clearTimeout(pendingClose);
     pendingClose = null;
     lastOpenAt = performance.now();
+  } else if (id === 'ui-back' || id === 'ui-confirm') {
+    // An explicit back/confirm already answers the dialog closing: it replaces the pending `ui-close`.
+    if (pendingClose) clearTimeout(pendingClose);
+    pendingClose = null;
   } else if (id === 'ui-close') {
     if (performance.now() - lastOpenAt < CLOSE_OPEN_WINDOW_MS) return;
     if (pendingClose) return;

@@ -1,5 +1,5 @@
 import {
-  PROGRESSION_LIMITS, SKILL_TREES, advanceUsageMark, emptyCore, lootGrant, progressView, skillPointsTotal, validateSkillAllocation,
+  PROGRESSION_LIMITS, SKILLS_CONFLICT_CODE, SKILL_TREES, advanceUsageMark, emptyCore, lootGrant, progressView, skillPointsTotal, validateSkillAllocation,
   type Agent, type Hero, type HeroProgress, type HeroProgressCore, type LootId, type SkillAllocationRequest, type UsageCounters,
 } from '@tagconn/shared';
 import type { Deps } from '../../core/di/index.js';
@@ -157,7 +157,10 @@ export class ProgressionService {
     const s = this.deps.settings.get();
     if (!s.progression.enabled) throw new HttpError(409, 'Progression is disabled');
     const { hero, core } = this.begin(heroId, now);
-    if (body.baseUpdatedAt !== undefined && body.baseUpdatedAt !== core.updatedAt) throw new HttpError(409, 'Progress changed; reload and retry');
+    // Guarded by the skills-only stamp: XP credits, titles and heals bump `updatedAt` but never invalidate a skill plan.
+    if (body.baseSkillsUpdatedAt !== undefined && body.baseSkillsUpdatedAt !== (core.skillsUpdatedAt ?? 0)) {
+      throw new HttpError(409, `Skills changed since you loaded them (${SKILLS_CONFLICT_CODE}); reload and retry`, { code: SKILLS_CONFLICT_CODE });
+    }
     const p = s.progression;
     const cur = progressView(hero.id, hero.projectId, hero.role, core, { curve: p, skillPointsPerLevel: p.skillPointsPerLevel });
     const check = validateSkillAllocation(SKILL_TREES[cur.classId], body.skills, cur.skills, {
@@ -166,7 +169,7 @@ export class ProgressionService {
       allowRespec: p.allowRespec,
     });
     if (!check.ok) throw new HttpError(check.code === 'respec-disabled' ? 409 : 400, `Invalid skill allocation: ${check.code}`, { code: check.code, skillId: check.skillId });
-    return this.save(hero, { ...core, classId: cur.classId, skills: body.skills, updatedAt: now });
+    return this.save(hero, { ...core, classId: cur.classId, skills: body.skills, updatedAt: now, skillsUpdatedAt: now });
   }
 
   equipTitle(heroId: string, title: LootId | null, now = Date.now()): HeroProgress {

@@ -1,7 +1,7 @@
 // M14 F1: runs the battle flow machine (docs/design/battles.md 3.3 / 3.10). Holds the flow in a zustand store and executes
 // the reducer's effects against the office game, the encounter bus and the battle commands.
 import { useEffect } from 'react';
-import { heroLookForStyle, MULTIVERSE_FLOOR_ID, type BattleNpcKind, type BattleSetup, type PartyRef } from '@tagconn/shared';
+import { ENGINE_VERSION, heroLookForStyle, MULTIVERSE_FLOOR_ID, type BattleNpcKind, type BattleSetup, type PartyRef } from '@tagconn/shared';
 import { create } from 'zustand';
 import { FALLBACK_COLOR } from '../../lib/defaultRoles';
 import { anonymousAppearance } from '../../game/heroPreview';
@@ -10,6 +10,7 @@ import { hexToNumber } from '../../game/textures';
 import { prefersReducedMotion } from '../../game/themes';
 import type { BattleController, BattlerLook, BattleSceneHandle, BattleSceneInput, BattleStyle } from '../../game/battle/types';
 import type { EncounterEvent } from '../../game/npc/types';
+import { ApiError } from '../../lib/api';
 import { useAuthStore } from '../../stores/authStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useOfficeStore } from '../../stores/officeStore';
@@ -61,6 +62,8 @@ export function dispatch(e: FlowEvent): void {
 }
 
 const toBattleStyle = (s: string): BattleStyle => (s === 'guild' || s === 'rift' ? s : 'modern');
+/** A rejected request is worth sending again unless the server answered with a client error (4xx). */
+const retryable = (e: unknown): boolean => !(e instanceof ApiError && e.status >= 400 && e.status < 500);
 const errorMessage = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
 
 /** The look of a party member (a hero or an anonymous agent) for the battle stage and the picker. Null when it is gone. */
@@ -112,10 +115,10 @@ function run(fx: FlowEffect): void {
       startBattle({ projectId: offer.projectId, npcKind: offer.kind, encounterId: offer.npcId, party: [...party] }).then(
         (start) => {
           const s = flowState();
-          if (s.phase === 'starting' && s.offer.npcId === offer.npcId) dispatch({ t: 'started', start });
+          if (s.phase === 'starting' && s.offer.npcId === offer.npcId) dispatch({ t: 'started', npcId: offer.npcId, start });
           else void abandonBattle(start.id).catch(() => undefined); // the flow was closed while the call was in flight
         },
-        (err: unknown) => dispatch({ t: 'failed', message: errorMessage(err) }),
+        (err: unknown) => dispatch({ t: 'failed', for: offer.npcId, message: errorMessage(err) }),
       );
       return;
     }
@@ -125,7 +128,7 @@ function run(fx: FlowEffect): void {
     case 'resolve':
       resolveBattle(fx.start.id, { log: [...fx.log], expect: { result: fx.result, turns: fx.turns } }).then(
         (outcome) => dispatch({ t: 'resolved', outcome }),
-        (err: unknown) => dispatch({ t: 'failed', message: errorMessage(err) }),
+        (err: unknown) => dispatch({ t: 'failed', for: fx.start.id, message: errorMessage(err), retryable: retryable(err) }),
       );
       return;
     case 'abandon':
@@ -145,6 +148,11 @@ function run(fx: FlowEffect): void {
 
 function openScene(setup: BattleSetup, battleId: string, state: FlowState): void {
   if (state.phase !== 'fighting' || !host) return;
+  if (setup.engineVersion !== ENGINE_VERSION) {
+    // The web bundle and the server run different engines: every action would be refused, so do not open the stage.
+    dispatch({ t: 'failed', for: battleId, message: 'tagconn was updated - reload to battle.' });
+    return;
+  }
   const style = state.offer.style;
   const reduced = prefersReducedMotion();
   const controller = createBattleController(setup, {

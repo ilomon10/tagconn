@@ -1194,10 +1194,17 @@ export class OfficeScene extends Phaser.Scene {
       }
       views.push(v);
     }
+    // Built lazily: only a hero whose progress is KO'd looks its agent up.
+    let agentsById: Map<string, OfficeState['agents'][number]> | null = null;
     this.ko.apply(
       views,
       (id) => getProgress(state.progress, id),
-      (v) => state.agents.find((a) => a.id === (v as KoView).agentId),
+      (v) => {
+        const id = (v as KoView).agentId;
+        if (id == null) return undefined;
+        agentsById ??= new Map(state.agents.map((a) => [a.id, a] as const));
+        return agentsById.get(id);
+      },
       Date.now(),
     );
   }

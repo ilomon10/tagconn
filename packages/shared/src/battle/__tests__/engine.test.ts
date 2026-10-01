@@ -511,7 +511,7 @@ describe('determinism and properties', () => {
       expect(replay(JSON.parse(JSON.stringify(su)) as BattleSetup, log)).toEqual(rep);
     }
     expect(ended).toBeGreaterThan(100);
-  });
+  }, 30_000); // 500-seed property run: correctness, not a timing budget (~1.3 s idle; slow under load)
   it('a hero type chart check: super-effective is never below neutral on the preview', () => {
     for (const [atk, def] of [['test', 'bug'], ['build', 'bureaucrat'], ['lead', 'feral'], ['review', 'rival']] as const) {
       const su = setup({ party: [hero({ type: atk, moves: [mv('m', { type: atk, power: 50 })] })], enemy: quietEnemy({ type: def }) });

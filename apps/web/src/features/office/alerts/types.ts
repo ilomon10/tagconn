@@ -2,7 +2,7 @@ import type { Agent, Settings } from '@tagconn/shared';
 import type { EncounterOffer } from '../../battle/types';
 
 export type AlertKind = 'ask' | 'failure' | 'done' | 'encounter';
-export const ALERT_PRIORITY: Record<AlertKind, number> = { ask: 3, failure: 2, done: 1, encounter: 0 };
+export const ALERT_PRIORITY: Record<AlertKind, number> = { ask: 4, failure: 3, encounter: 2, done: 1 };
 export type AlertSettings = Settings['office']['alerts'];
 export interface AlertInput {
   kind: AlertKind;

@@ -4,12 +4,13 @@ Starting in v0.7.0, tagconn shows JRPG-style alert boxes in the top-right corner
 
 ## When alerts appear
 
-By default, three kinds of events trigger alerts:
+By default, four kinds of events trigger alerts:
 
 | Event | Icon | When | Triggered by |
 |---|---|---|---|
 | **Asks for you** | ❓ | An agent enters a waiting or blocked state (needs your input) | `AskUserQuestion` or `ExitPlanMode` |
 | **Stumbled** | 💥 | A tool call fails with an error | Tool error / exception |
+| **Encounter** | ⚔️ | A random NPC offers to battle your heroes | Encounter prompt (Battle / Ignore) |
 | **Quest complete** | ⚔️ | A session finishes (all agents done) | Session end |
 
 If an NPC shows up and multiple characters react, one alert might say "3 heroes need you" instead of three separate alerts.

@@ -22,6 +22,7 @@ interface ProgressRow {
   loot: string;
   equipped_title: string | null;
   updated_at: number;
+  skills_updated_at: number;
 }
 type JoinedRow = ProgressRow & { project_id: string; role: string };
 
@@ -32,7 +33,7 @@ export class ProgressionRepository {
     try {
       const scalars = StoredScalarsSchema.parse({
         classId: r.class_id, xp: r.xp, bonusPoints: r.bonus_points, koUntil: r.ko_until, wins: r.wins, losses: r.losses,
-        flees: r.flees, equippedTitle: r.equipped_title, updatedAt: r.updated_at,
+        flees: r.flees, equippedTitle: r.equipped_title, updatedAt: r.updated_at, skillsUpdatedAt: r.skills_updated_at,
       });
       const json = StoredCoreSchema.parse({ skills: JSON.parse(r.skills), loot: JSON.parse(r.loot) });
       return { ...scalars, skills: json.skills, loot: json.loot };
@@ -57,17 +58,18 @@ export class ProgressionRepository {
   upsertCore(heroId: string, core: HeroProgressCore): boolean {
     const r = this.deps.sqlite
       .prepare(
-        `INSERT INTO hero_progress (hero_id, class_id, xp, bonus_points, skills, ko_until, wins, losses, flees, loot, equipped_title, updated_at)
-         SELECT @heroId, @classId, @xp, @bonusPoints, @skills, @koUntil, @wins, @losses, @flees, @loot, @equippedTitle, @updatedAt
+        `INSERT INTO hero_progress (hero_id, class_id, xp, bonus_points, skills, ko_until, wins, losses, flees, loot, equipped_title, updated_at, skills_updated_at)
+         SELECT @heroId, @classId, @xp, @bonusPoints, @skills, @koUntil, @wins, @losses, @flees, @loot, @equippedTitle, @updatedAt, @skillsUpdatedAt
          WHERE EXISTS (SELECT 1 FROM heroes WHERE id = @heroId)
          ON CONFLICT(hero_id) DO UPDATE SET class_id = excluded.class_id, xp = excluded.xp, bonus_points = excluded.bonus_points,
            skills = excluded.skills, ko_until = excluded.ko_until, wins = excluded.wins, losses = excluded.losses, flees = excluded.flees,
-           loot = excluded.loot, equipped_title = excluded.equipped_title, updated_at = excluded.updated_at`,
+           loot = excluded.loot, equipped_title = excluded.equipped_title, updated_at = excluded.updated_at,
+           skills_updated_at = excluded.skills_updated_at`,
       )
       .run({
         heroId, classId: core.classId, xp: core.xp, bonusPoints: core.bonusPoints, skills: JSON.stringify(Object.fromEntries(Object.entries(core.skills))),
         koUntil: core.koUntil, wins: core.wins, losses: core.losses, flees: core.flees, loot: JSON.stringify(core.loot),
-        equippedTitle: core.equippedTitle, updatedAt: core.updatedAt,
+        equippedTitle: core.equippedTitle, updatedAt: core.updatedAt, skillsUpdatedAt: core.skillsUpdatedAt ?? 0,
       });
     return r.changes > 0;
   }

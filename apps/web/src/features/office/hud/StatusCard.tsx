@@ -11,6 +11,7 @@ import { Portrait } from './Portrait';
 import { StrainIcon } from './StrainIcon';
 import { STATUS_STYLE, statusLabel } from './status';
 import { usePortraitLook } from './usePortraitLook';
+import { useAgentLevel } from '../../battle/useProgress';
 
 interface StatusCardProps {
   /** The selected agent, or undefined when it has left the office (the card then says so). */
@@ -72,6 +73,8 @@ function Card({ agent, compact, follow, onFollowChange, onDetails, onClose }: St
   const ratio = contextRatio(usage);
   const manaText = usage ? `${formatTokens(usage.contextTokens)} / ${formatTokens(contextWindowFor(usage.model))}` : 'no data';
   const tokens = usage ? totalTokens(usage) : 0;
+  // The progression level (the party badge and hero sheet agree); the token tier only when progression is off.
+  const progLevel = useAgentLevel(agent, hero);
   const strain = strainFor(agent, now, drama, isAgentOnARoll(agent.id, now, drama));
   const quest = elapsed(agent.startedAt, agent.endedAt ?? now);
 
@@ -128,7 +131,7 @@ function Card({ agent, compact, follow, onFollowChange, onDetails, onClose }: St
         <div className="flex items-center gap-2">
           <span className="w-12 shrink-0 text-[10px] font-medium text-ink-300">{labels.xp}</span>
           <span className="font-pixel text-[10px] text-ink-100">{formatTokens(tokens)}</span>
-          <span className="ml-auto rounded bg-cozy/90 px-1.5 py-0.5 font-pixel text-[10px] font-bold leading-none text-ink-950">Lv {xpLevel(tokens)}</span>
+          <span className="ml-auto rounded bg-cozy/90 px-1.5 py-0.5 font-pixel text-[10px] font-bold leading-none text-ink-950">{progLevel ? `Lv ${progLevel.temporary ? '~' : ''}${progLevel.level}` : `Lv ${xpLevel(tokens)}`}</span>
         </div>
       </div>
       <dl className="grid grid-cols-[3rem_1fr] gap-x-2 gap-y-0.5 text-[11px]">

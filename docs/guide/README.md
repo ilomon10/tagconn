@@ -23,17 +23,19 @@ guide is for using the running app day to day — for the project's architecture
    games when characters are downtime.
 9. **[NPCs and encounters](npcs.md)** (v0.7.0) — routine staff and random visitors who walk through
    the office.
-10. **[Game alerts](alerts.md)** (v0.7.0) — JRPG-style alert boxes for key events (asks, failures,
+10. **[Battles and progression](battles.md)** (v0.8.0) — hero levels from tokens, party battles
+    against encounter NPCs, skill trees, and cosmetic loot.
+11. **[Game alerts](alerts.md)** (v0.7.0) — JRPG-style alert boxes for key events (asks, failures,
     quests done).
-11. **[Sound and audio](sound.md)** (v0.7.0) — procedurally generated sound effects, ambient beds,
+12. **[Sound and audio](sound.md)** (v0.7.0) — procedurally generated sound effects, ambient beds,
     and per-browser audio controls.
-12. **[Attribution](attribution.md)** — the `.tagconn/` marker, saving and importing a project's
+13. **[Attribution](attribution.md)** — the `.tagconn/` marker, saving and importing a project's
     office profile.
-13. **[Display & shaders](display.md)** — visual styles, WebGL post-processing, screen effects,
+14. **[Display & shaders](display.md)** — visual styles, WebGL post-processing, screen effects,
     and edge vignette.
-14. **[Configuration](configuration.md)** — how settings layer, what the GUI can't change, and the
+15. **[Configuration](configuration.md)** — how settings layer, what the GUI can't change, and the
     most useful keys.
-15. **[Troubleshooting](troubleshooting.md)** — the doctor script and common problems.
+16. **[Troubleshooting](troubleshooting.md)** — the doctor script and common problems.
 
 ## The 5-minute path
 

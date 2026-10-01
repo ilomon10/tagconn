@@ -25,6 +25,8 @@ When random encounters are enabled (`office.npcs.encounters`), unexpected visito
 
 The hour shown is **host time** (your system time on your machine).
 
+Some encounter NPCs are **aggressive** and offer you a battle (see [Battles and progression](battles.md)). When they appear, a prompt asks: **"A wild [NPC] appeared!"** with **Battle** or **Ignore** buttons. You can accept the challenge to battle the NPC and earn XP and loot, or decline and carry on with your work.
+
 ### Encounter reactions
 
 When idle characters react to an NPC, they might:

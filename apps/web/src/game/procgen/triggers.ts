@@ -1,7 +1,7 @@
 // apps/web/src/game/procgen/triggers.ts  (M12 G3/G4, docs/design/game-office.md section 5.3)
 //
 // Trigger guarantee: after the room loop, mark exactly one item per panel action (board, log, quests,
-// settings, heroes, receptionist, plus the infirmary on an existing coffee machine / water cooler, never placed) as the floor's trigger, placing a missing one in the entrance or a lounge
+// settings, heroes, receptionist, plus the infirmary on a coffee machine / water cooler, placed if the floor has none) as the floor's trigger, placing a missing one in the entrance or a lounge
 // when it can do so without cutting anything off. Mutates `furniture` and `tallColumnsByRoom`; pure otherwise.
 import type { RoomType } from '@tagconn/shared';
 import { TRIGGER_KINDS, TRIGGER_ORDER, TRIGGER_PLACE } from '../furnitureTriggers';
@@ -102,9 +102,6 @@ export function assignTriggers(input: TriggerPassInput): void {
       existing[0]!.trigger = action;
       continue;
     }
-
-    // The infirmary only marks an existing coffee machine / water cooler; it is never placed.
-    if (action === 'infirmary') continue;
 
     // 2. Place the missing kind where it cannot split the room. The design says the reception desk is never
     // placed, but ~45% of generated entrances lose theirs to a door apron on the top row, which would break the

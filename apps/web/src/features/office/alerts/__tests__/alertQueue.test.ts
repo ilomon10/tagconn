@@ -222,11 +222,25 @@ describe('alertQueue encounters', () => {
     expect(r.state.pending).toHaveLength(1);
   });
 
-  it('ranks below done', () => {
+  it('ranks above done and below ask and failure', () => {
     let s = initialAlertQueue(c, 0);
-    s = offerAlert(s, enc('a'), c, 0);
     s = offerAlert(s, inp('x', 'done'), c, 0);
-    expect(tickAlerts(s, c, W, false).shown.map((i) => i.kind)).toEqual(['done', 'encounter']);
+    s = offerAlert(s, enc('a'), c, 0);
+    s = offerAlert(s, inp('y', 'failure', 'Bash'), c, 0);
+    s = offerAlert(s, inp('z', 'ask'), c, 0);
+    expect(tickAlerts(s, c, W, false).shown.map((i) => i.kind)).toEqual(['ask', 'failure', 'encounter', 'done']);
+  });
+
+  it('is not starved by done alerts when slots are scarce, and is evicted after done', () => {
+    const t = cfg({ ...c, maxVisible: 1 });
+    let s = initialAlertQueue(t, 0);
+    s = offerAlert(s, inp('x', 'done'), t, 0);
+    s = offerAlert(s, enc('a'), t, 0);
+    expect(tickAlerts(s, t, W, false).shown.map((i) => i.kind)).toEqual(['encounter']);
+    let f = initialAlertQueue(t, 0);
+    f = offerAlert(f, enc('a'), t, 0);
+    for (let i = 0; i < ALERT_LIMITS.pendingMax; i++) f = offerAlert(f, inp(`d${i}`, 'done', 'done', 0), t, 2000 * (i + 1));
+    expect(f.pending.some((p) => p.kind === 'encounter')).toBe(true);
   });
 
   it('reports a visible encounter past its ttl as expired, even with autoDismissSec 0', () => {
