@@ -238,6 +238,22 @@ export const SettingsSchema = z.object({
       idleLeaveSec: z.number().min(0).max(86_400).default(300),
       /** 8h. Realms drawn on the Multiverse floor; extra projects are grouped into one "Other realms". */
       multiverseMaxRealms: z.number().int().min(1).max(MULTIVERSE_LIMITS.maxRealms).default(MULTIVERSE_LIMITS.maxRealms),
+      /** M12: idle banter and work-strain emotes (tired, dizzy, sweating). Pure presentation. */
+      drama: z
+        .object({
+          enabled: z.boolean().default(true),
+          /** Average seconds between idle chats/antics on a floor. */
+          idleChatSec: z.number().min(5).max(3600).default(45),
+          /** A character on one quest longer than this looks tired. */
+          tiredAfterSec: z.number().min(30).max(86_400).default(1200),
+          /** A single tool running longer than this makes the character dizzy. */
+          dizzyToolSec: z.number().min(5).max(3600).default(90),
+        })
+        .prefault({}),
+      /** M12: furniture in the canvas opens panels (board → Board, ledger → Log, notice board → Quests, terminal → Settings…). */
+      furnitureTriggers: z.boolean().default(true),
+      /** M12: a counter-scaled arrow + ring over the selected character, and an edge arrow when it is off-screen. */
+      selectionBeacon: z.boolean().default(true),
       /** 8h. Character cap on the Multiverse floor (split fairly across realms; Guild Masters first). */
       multiverseMaxCharacters: z.number().int().min(1).max(MULTIVERSE_LIMITS.maxCharacters).default(60),
     })

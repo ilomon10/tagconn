@@ -96,6 +96,8 @@ export interface Agent {
   activity: Activity;
   zone: Zone;
   currentTool?: string;
+  /** M12: when `currentTool` started (PreToolUse); cleared with it. Drives the "dizzy" long-tool emote. */
+  toolStartedAt?: number;
   /** Short human text for a speech bubble, e.g. "Editing auth.ts". */
   bubble?: string;
   lastMessage?: string;

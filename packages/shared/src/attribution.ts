@@ -51,6 +51,16 @@ export const HeroProfileSchema = z.strictObject({
     .record(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,31}$/), z.union([z.string().max(64), z.number(), z.boolean()]))
     .refine((r) => Object.keys(r).length <= 32, 'too many look keys')
     .optional(),
+  /** M12: per-style overrides (style → look keys, plus an optional `title`). Unknown styles/keys are dropped. */
+  styles: z
+    .record(
+      z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
+      z
+        .record(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,31}$/), z.union([z.string().max(64), z.number(), z.boolean(), z.null()]))
+        .refine((r) => Object.keys(r).length <= 32, 'too many look keys'),
+    )
+    .refine((r) => Object.keys(r).length <= 8, 'too many styles')
+    .optional(),
 });
 export type HeroProfile = z.infer<typeof HeroProfileSchema>;
 

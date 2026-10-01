@@ -199,6 +199,27 @@ default, Docker optional; installer + auto-update. Design: `docs/design/desktop.
   - [ ] Signed releases: user creates the `release` environment (reviewers, v* tag rule), a v* tag ruleset and the signing key; PM sets the updater pubkey → updates on
   - [ ] Real-Windows checklist (docs/design/desktop.md, 17 items; N4 path aliases first) → drop the "preview" label
 
+## M12: Office fixes + "the office is the game" → v0.5.2 (fixes) / v0.6.0 (features) [in progress]
+
+Plan: `~/.claude-sessions/profiles/ilomon/plans/fix-the-role-serene-creek.md`. User decisions (2026-10-01): floors = git root
+(session pinned to its first floor, subfolder floors merged), compact top bar + ☰ game menu with overlay panels, a hero's
+role can't change while bound, fixes ship first.
+
+- [x] W0 contract: hook `x-tagconn-project-root` + `parseProjectRootHeader`; hero `role` patch + per-style `styles`;
+      `PinnedFurniture` + `pinned-*` issues; `office.drama/furnitureTriggers/selectionBeacon`; `Agent.toolStartedAt`; web `titleFor` [PM]
+- Wave 1 (fixes + shell → v0.5.2)
+  - [ ] F1 Floors: session pinned to its first project, hook sends the git root, boot merge of subfolder floors (+ heroes server: role move, styles) [Developer: server]
+  - [ ] F2+F3+F5 Scene: themed titles everywhere in the scene, selection beacon + off-screen arrow, Receptionist as a real Character, pinch zoom [Developer: game]
+  - [ ] F4 Heroes UI: name pools accept space/Enter, role select (disabled while bound), per-style tabs, Rift preview [Developer: heroes]
+  - [ ] F6 Shell: compact top bar + ☰ menu, overlay panels, responsive phone/tablet, floor-style titles in React [Developer: shell]
+  - [ ] Gate 1: QA (375×667, 667×375, 1280×800) + review + security → v0.5.2
+- Wave 2 (features → v0.6.0)
+  - [ ] G1 Drama: idle banter per style, tired/dizzy/sweat emotes, `toolStartedAt`
+  - [ ] G2 HUD: party bar, RPG status card, Details dialog
+  - [ ] G3 Furniture triggers: board/ledger/notice board/terminal/banner/reception desk open panels
+  - [ ] G4 Furniture locking: pins in procgen, Hall Planner drag-to-lock, release
+  - [ ] Gate 2: QA + review + security + docs → v0.6.0
+
 ## Backlog
 
 - [ ] Flaky under the full turbo run only: one `apps/web/src/lib/socket.test.ts` case timed out once at 11.7 s (passes alone and in 2 full web reruns); find the real-timer case and make it deterministic

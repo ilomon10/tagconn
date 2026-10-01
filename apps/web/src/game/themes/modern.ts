@@ -6,6 +6,7 @@ import { paintModernFurniture } from './paint/furniture';
 import { paintModernWallDecor } from './paint/wallDecor';
 import { paintModernBackWall, paintModernDoor, paintModernVoid, paintModernWall } from './paint/walls';
 import type { Costume, ThemeDefinition } from './types';
+import { SHIPPED_ROLE_TITLES } from './shippedTitles';
 
 /** A straight port of the pre-M7 office: `renderMap.ts` colours and furniture art, `ZONE_LABELS`
  *  for names, and identity titles (no guild flavour, no verbs, no fx). */
@@ -30,18 +31,7 @@ const ROOM_NAMES: Record<RoomType, string> = {
 };
 
 // Identical to `defaultRoles.ts`'s `title` field — an identity mapping, not an override.
-const ROLE_TITLES: Record<string, string> = {
-  pm: 'Project Manager',
-  analyst: 'Business Analyst',
-  architect: 'Architect',
-  developer: 'Developer',
-  'qa-engineer': 'QA Engineer',
-  'code-reviewer': 'Code Reviewer',
-  'security-engineer': 'Security Engineer',
-  'devops-engineer': 'DevOps Engineer',
-  devops: 'DevOps Engineer',
-  'tech-writer': 'Tech Writer',
-};
+const ROLE_TITLES: Record<string, string> = SHIPPED_ROLE_TITLES;
 
 // No costume art: an empty costume is a no-op (no hat, cloak, or prop overlay).
 const NO_COSTUME: Costume = {};

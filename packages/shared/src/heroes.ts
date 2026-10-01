@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { Activity } from './domain.js';
+import { OFFICE_STYLES } from './layout.js';
+import { MULTIVERSE_THEME_ID } from './multiverse.js';
 import { MAIN_ROLE } from './roles.js';
 
 /**
@@ -94,6 +96,34 @@ export const HeroAppearanceSchema = z.strictObject({
 });
 export type HeroAppearance = z.infer<typeof HeroAppearanceSchema>;
 
+/** M12: styles a hero can carry per-style look/title overrides for (office styles + the Multiverse rift). */
+export const HERO_LOOK_STYLES = [...OFFICE_STYLES, MULTIVERSE_THEME_ID] as const;
+export type HeroLookStyle = (typeof HERO_LOOK_STYLES)[number];
+
+/** One style's overrides; omitted fields use the hero's base appearance/title. */
+export const HeroStyleOverrideSchema = z.strictObject({
+  ...HeroAppearanceSchema.partial().shape,
+  title: HeroTitleSchema.nullable().optional(),
+});
+export type HeroStyleOverride = z.infer<typeof HeroStyleOverrideSchema>;
+
+/** Per-style overrides keyed by style. A key set to null in a PATCH clears that style. */
+export const HeroStylesSchema = z.partialRecord(z.enum(HERO_LOOK_STYLES), HeroStyleOverrideSchema);
+export type HeroStyles = z.infer<typeof HeroStylesSchema>;
+
+/** Resolve the look a style sees: base appearance with that style's overrides on top. */
+export function heroLookForStyle(
+  hero: Pick<Hero, 'appearance' | 'title' | 'styles'>,
+  style: string,
+): { appearance: HeroAppearance; title: string | null } {
+  const o = (hero.styles as Record<string, HeroStyleOverride | undefined> | undefined)?.[style];
+  if (!o) return { appearance: hero.appearance, title: hero.title };
+  const { title, ...look } = o;
+  const appearance = { ...hero.appearance };
+  for (const [k, v] of Object.entries(look)) if (v !== undefined) (appearance as Record<string, unknown>)[k] = v;
+  return { appearance, title: title === undefined ? hero.title : title };
+}
+
 export const HeroRoleSchema = z.string().regex(HERO_ROLE_RE);
 const ProjectIdSchema = z.string().min(1).max(HERO_LIMITS.maxProjectIdLength);
 
@@ -112,6 +142,8 @@ export const HeroSchema = z.object({
   /** Pronoun-free title override, e.g. "Keeper of Tests". null = the themed role title. */
   title: HeroTitleSchema.nullable(),
   appearance: HeroAppearanceSchema,
+  /** M12: per-style look/title overrides (Modern / Guild / Rift). Omitted = none. */
+  styles: HeroStylesSchema.optional(),
   /** True once a user edited the name, title or appearance; `reset` clears it. */
   customized: z.boolean(),
   /** Agent currently (or last) bound. Kept after release so a finished agent keeps its hero look. */
@@ -133,14 +165,22 @@ export const HeroCreateSchema = z.strictObject({
   title: HeroTitleSchema.nullable().optional(),
   /** Omitted fields come from the seeded default appearance. */
   appearance: HeroAppearanceSchema.partial().optional(),
+  styles: HeroStylesSchema.optional(),
 });
 export type HeroCreate = z.input<typeof HeroCreateSchema>;
 
 /** `PATCH /api/heroes/:id`. Appearance fields merge into the stored appearance. */
 export const HeroPatchSchema = z.strictObject({
+  /**
+   * M12: move the hero to another role (takes the lowest free slot there). The server refuses with
+   * 409 while the hero is bound to a live agent, and with 409 when the new role is full.
+   */
+  role: HeroRoleSchema.optional(),
   name: HeroNameSchema.optional(),
   title: HeroTitleSchema.nullable().optional(),
   appearance: HeroAppearanceSchema.partial().optional(),
+  /** Per style: fields merge into that style's overrides; `null` removes the style's overrides. */
+  styles: z.partialRecord(z.enum(HERO_LOOK_STYLES), HeroStyleOverrideSchema.nullable()).optional(),
   /** Optimistic concurrency, same semantics as layouts: 409 when the stored `updatedAt` differs. */
   baseUpdatedAt: z.number().optional(),
 });

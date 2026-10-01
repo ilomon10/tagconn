@@ -80,6 +80,8 @@ export function resolveZone(zone: Zone, available: ReadonlySet<RoomType>): Zone 
 
 export const LAYOUT_LIMITS = {
   maxDoorsPerRoom: 8,
+  /** M12: furniture items a user locked in place in one room. */
+  maxPinnedPerRoom: 48,
   maxSeatsPerRoom: 64,
   minWidth: 16,
   maxWidth: 128,
@@ -141,6 +143,23 @@ export const DoorSpecSchema = z.object({
 });
 export type DoorSpec = z.infer<typeof DoorSpecSchema>;
 
+/**
+ * M12: a furniture item the user moved in the Hall Planner, locked in place. Coordinates are
+ * relative to the room's INTERIOR top-left, in tiles. Pinned items are placed before the procedural
+ * recipe runs and are never removed by the reachability retry. `kind` is a web procgen furniture kind
+ * (validated by the web; unknown kinds are skipped at render time).
+ */
+export const PinnedFurnitureSchema = z.object({
+  kind: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  w: z.number().int().min(1).max(8),
+  h: z.number().int().min(1).max(8),
+  /** Paint variant index, as generated. */
+  variant: z.number().int().min(0).max(255).optional(),
+});
+export type PinnedFurniture = z.infer<typeof PinnedFurnitureSchema>;
+
 export const LayoutRoomSchema = z.object({
   id: z.string().regex(ROOM_ID_RE),
   type: z.enum(ROOM_TYPES),
@@ -159,6 +178,8 @@ export const LayoutRoomSchema = z.object({
    * `[]` = no doors (the room is sealed — the reachability check will flag it).
    */
   doors: z.array(DoorSpecSchema).max(LAYOUT_LIMITS.maxDoorsPerRoom).optional(),
+  /** M12: furniture locked by the user (omitted = fully procedural). See `PinnedFurnitureSchema`. */
+  furniture: z.array(PinnedFurnitureSchema).max(LAYOUT_LIMITS.maxPinnedPerRoom).optional(),
 });
 export type LayoutRoom = z.infer<typeof LayoutRoomSchema>;
 
@@ -233,6 +254,9 @@ export const LAYOUT_ISSUE_CODES = [
   'door-overlap',
   'room-sealed',
   'unreachable-seat',
+  // M12 pinned furniture
+  'pinned-invalid',
+  'pinned-blocks',
 ] as const;
 export type LayoutIssueCode = (typeof LAYOUT_ISSUE_CODES)[number];
 
@@ -365,7 +389,45 @@ export function validateLayout(layout: LayoutGeometry): LayoutIssue[] {
     }
   }
 
+  // Pinned furniture (M12): inside the interior, no overlaps between pins, never on a door span.
+  for (const r of rooms) {
+    if (!r.furniture?.length) continue;
+    const name = r.name ?? r.type;
+    const inner = roomInterior(r);
+    const placed: TileRect[] = [];
+    for (const f of r.furniture) {
+      if (f.x + f.w > inner.w || f.y + f.h > inner.h) {
+        err('pinned-invalid', `${name}: a locked ${f.kind} sits outside the room.`, [r.id]);
+        continue;
+      }
+      if (placed.some((p) => rectsIntersect(p, f))) {
+        err('pinned-invalid', `${name}: two locked items overlap.`, [r.id]);
+      }
+      if (isRoomWalled(r) && r.doors && pinOnDoorApron(r, f)) {
+        err('pinned-invalid', `${name}: a locked ${f.kind} blocks a door.`, [r.id]);
+      }
+      placed.push(f);
+    }
+  }
+
   return issues;
+}
+
+/** True when a pin (interior-relative) covers the interior tile just inside an explicit door. */
+function pinOnDoorApron(r: LayoutRoom, f: PinnedFurniture): boolean {
+  const iw = Math.max(0, r.w - 2);
+  const ih = Math.max(0, r.h - 2);
+  for (const d of r.doors ?? []) {
+    const width = d.width ?? 1;
+    for (let k = 0; k < width; k++) {
+      // Door tile offset along the side, minus 1 for the wall corner → interior coordinate.
+      const along = d.offset + k - 1;
+      const tile =
+        d.side === 'n' ? { x: along, y: 0 } : d.side === 's' ? { x: along, y: ih - 1 } : d.side === 'w' ? { x: 0, y: along } : { x: iw - 1, y: along };
+      if (tile.x >= f.x && tile.x < f.x + f.w && tile.y >= f.y && tile.y < f.y + f.h) return true;
+    }
+  }
+  return false;
 }
 
 export const hasLayoutErrors = (issues: readonly LayoutIssue[]): boolean => issues.some((i) => i.severity === 'error');
