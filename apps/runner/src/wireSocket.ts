@@ -102,6 +102,7 @@ export function announceVerified(sock: Socket, deps: Pick<WireRunnerSocketDeps, 
       deps.logger.error('runner:hello rejected by server', { error: res.error });
       return;
     }
+    deps.logger.info('connected to the office server (verified)');
     // Runs the server no longer knows about (e.g. after its own restart) must be killed here.
     for (const runId of res.data.killRunIds) deps.runManager.stop({ runId, reason: 'runner_shutdown' });
     for (const item of deps.offlineQueue.drain()) {

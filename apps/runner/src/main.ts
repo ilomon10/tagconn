@@ -60,6 +60,7 @@ async function probeCapabilities(claudePath: string, cwd: string, stateDir: stri
 
   const cached = loadCachedCapabilities(stateDir, version);
   if (cached) return { caps: cached, version };
+  logger.info('probing the claude CLI (first start after a claude update; this can take about a minute)', { version });
 
   const helpResult = realSpawn(claudePath, ['--help'], { cwd, env: probeEnv });
   if (helpResult.status !== 0 || !helpResult.stdout) {
