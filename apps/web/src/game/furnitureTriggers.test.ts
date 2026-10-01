@@ -12,14 +12,15 @@ function item(kind: PlacedFurniture['kind'], trigger?: FurnitureAction): PlacedF
 
 describe('furnitureTriggers mapping', () => {
   it('covers every action in every table', () => {
-    expect(new Set(TRIGGER_ORDER).size).toBe(6);
+    expect(new Set(TRIGGER_ORDER).size).toBe(7);
     for (const a of ACTIONS) {
       expect(TRIGGER_KINDS[a].length).toBeGreaterThan(0);
       expect(TRIGGER_PANEL[a]).toBeDefined();
     }
   });
   it('hotkeys equal MENU_HOTKEYS', () => {
-    for (const a of ACTIONS) expect(TRIGGER_PANEL[a].hotkey).toBe(MENU_HOTKEYS[a]);
+    for (const a of ACTIONS) if (a !== 'infirmary') expect(TRIGGER_PANEL[a].hotkey).toBe(MENU_HOTKEYS[a]);
+    expect(TRIGGER_PANEL.infirmary.hotkey).toBe('');
   });
   it('the placed kind qualifies for its action', () => {
     for (const [a, p] of Object.entries(TRIGGER_PLACE) as [keyof typeof TRIGGER_PLACE, (typeof TRIGGER_PLACE)[keyof typeof TRIGGER_PLACE]][]) {
@@ -30,14 +31,18 @@ describe('furnitureTriggers mapping', () => {
     for (const s of STYLES) for (const a of ACTIONS) expect(triggerLabel(s, a).length).toBeGreaterThan(0);
     expect(triggerLabel('guild', 'quests')).toBe('Quest board');
     expect(triggerLabel('rift', 'log')).toBe('Archive crystal');
+    expect([triggerLabel('modern', 'infirmary'), triggerLabel('guild', 'infirmary'), triggerLabel('rift', 'infirmary')]).toEqual(['Coffee machine', 'Healing fountain', 'Med-bay']);
   });
   it('formats the tooltip', () => {
     expect(triggerTooltip('guild', 'quests')).toBe('Quest board · Open Quests (Q)');
+    expect(triggerTooltip('guild', 'infirmary')).toBe('Healing fountain · Coffee break');
     expect(triggerTooltip('modern', 'receptionist')).toBe('Reception desk · Open Receptionist (D)');
   });
   it('triggersOf returns marked items in TRIGGER_ORDER', () => {
     const map = { furniture: [item('console', 'settings'), item('plant'), item('board', 'board'), item('reception-desk', 'receptionist'), item('roster-board', 'heroes')] };
     expect(triggersOf(map).map((f) => f.trigger)).toEqual(['receptionist', 'board', 'settings', 'heroes']);
+    const withHeal = { furniture: [item('coffee-machine', 'infirmary'), item('board', 'board')] };
+    expect(triggersOf(withHeal).map((f) => f.trigger)).toEqual(['board', 'infirmary']);
     expect(triggersOf({ furniture: [] })).toEqual([]);
   });
 });

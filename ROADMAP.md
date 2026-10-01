@@ -250,10 +250,11 @@ Design: `docs/design/battles.md`.
 - [x] W0 design `docs/design/battles.md` + threat model (14 findings, none Critical/High, all folded in) + shared contract, settings, battle engine, content/setup, web stubs [Architect + Security + Developers]
 - [x] W0d balance simulation (median 4–8 turns; solo 57–79 % wins, parties 88–100 %, difficulty 2 harder) [Developer]
 - [x] UI interaction sounds + transition sounds (floor, Multiverse, day/night): game-like feedback on menu/panel open-close, character selection, toggles, tabs, floor switch, save (user request 2026-10-01) [Developer: audio/web]
-- [~] Server `progression` module: S1 storage + migration 12 [x]; S2 XP/skills routes, S3 battles routes + security tests [ ] [Developer: server]
+- [x] Server `progression` module: S1 storage + migration 12, S2 XP crediting + skills/title/heal routes, S3 battles create/resolve/abandon with replay validation + 26 security tests [Developer: server]
 - [x] BattleScene (swirl + iris, stage, animations) + controller timeline + enemy/FX/KO art + battle HUD (menu, bars, log, results) + battle audio and music + themed copy [Developers]
 - [x] Hero sheet "Stats & Skills" tab (skill tree, spend/respec/confirm) + HUD level badge + data layer and demo battles [Developers]
-- [ ] Encounter prompt + party picker + KO presence + loot cosmetics [Developer: web]
+- [x] Encounter prompt + battle flow + party picker + overlay + KO presence + loot cosmetics + coffee-break heal [Developers]
+- [ ] Wave 3 wiring into OfficeGame/OfficeScene/OfficeView + results XP bar from progress [Developer]
 - [ ] Gate → v0.8.0
 
 ## M15: Light, time and harmonious rooms → v0.9.0 [todo]

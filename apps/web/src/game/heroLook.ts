@@ -40,14 +40,17 @@ export function resolveHeroCostume(themeCostume: Costume, a: HeroAppearance, rol
   const outfit = a.outfitColor !== null ? hexToNumber(a.outfitColor) : (themeCostume.robe ?? roleColor);
 
   let hat: Costume['hat'];
-  if (a.hat === 'none') hat = 'none';
+  // M14: an equipped loot hat/prop overrides the regular pick (the editor clears it when a normal one is chosen).
+  if (a.lootHat) hat = a.lootHat;
+  else if (a.hat === 'none') hat = 'none';
   else if (a.hat === 'auto') hat = themeCostume.hat ?? 'none';
   else hat = a.hat;
   // null = "the theme's hat colour for the role, else the outfit colour" (schema comment).
   const hatColor = hat !== 'none' ? (a.hatColor !== null ? hexToNumber(a.hatColor) : (themeCostume.hatColor ?? outfit)) : undefined;
 
   let staff: Costume['staff'];
-  if (a.prop === 'none') staff = 'none';
+  if (a.lootProp) staff = a.lootProp;
+  else if (a.prop === 'none') staff = 'none';
   else if (a.prop === 'auto') staff = themeCostume.staff ?? 'none';
   else staff = a.prop;
 

@@ -13,6 +13,8 @@ import {
   type HeroHat,
   type HeroLookStyle,
   type HeroProp,
+  type LootHat,
+  type LootProp,
   type HeroStyleOverride,
   type OfficeStyle,
 } from '@tagconn/shared';
@@ -20,6 +22,9 @@ import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { draftLookForStyle, validateHeroName, validateHeroTitle, withStyleOverride, type HeroDraft } from './formState';
 import { HeroPreview } from './HeroPreview';
 import { HeroStatsSheet } from './stats/HeroStatsSheet';
+import { battleLabel } from '../battle/labels';
+import { battleStyleOf, ownedLoot } from '../battle/lootTitle';
+import { useHeroProgress } from '../battle/useProgress';
 import { titleFor } from '../../game/lookResolver';
 import { getTheme } from '../../game/themes';
 import { hexToNumber } from '../../game/textures';
@@ -164,6 +169,13 @@ export function HeroEditor({
   const previewStyle: HeroLookStyle = style ?? officeStyle;
   const placeholderTitle = titleFor(getTheme(previewStyle), draft.role, role.title);
   const look = style ? draftLookForStyle(draft, style).appearance : draft.appearance;
+  // M14: loot hats/props are listed only when owned (the current pick stays listed so the select never goes blank).
+  const progress = useHeroProgress(hero.id);
+  const lootStyle = battleStyleOf(previewStyle);
+  const lootHats = ownedLoot(progress, 'hat');
+  const lootProps = ownedLoot(progress, 'prop');
+  if (look.lootHat && !lootHats.includes(look.lootHat)) lootHats.push(look.lootHat);
+  if (look.lootProp && !lootProps.includes(look.lootProp)) lootProps.push(look.lootProp);
 
   const nameError = validateHeroName(draft.name);
   const titleError = validateHeroTitle(draft.title);
@@ -182,10 +194,22 @@ export function HeroEditor({
   };
 
   /** Props of the "Use base" toggle for appearance field `k` (null on the Base tab). */
-  const baseToggle = (k: keyof HeroAppearance) => ({
-    useBase: style === null ? null : override[k] === undefined,
-    onUseBase: (on: boolean) => (on ? unsetField(k) : setOverride({ ...override, [k]: draft.appearance[k] })),
-  });
+  const baseToggle = (k: keyof HeroAppearance) => {
+    // The hat and prop travel with their loot twin so "Use base" never leaves a stray loot override.
+    const keys: (keyof HeroAppearance)[] = k === 'hat' ? ['hat', 'lootHat'] : k === 'prop' ? ['prop', 'lootProp'] : [k];
+    return {
+      useBase: style === null ? null : override[k] === undefined,
+      onUseBase: (on: boolean) => {
+        if (on) {
+          const rest: Record<string, unknown> = { ...override };
+          for (const key of keys) delete rest[key];
+          setOverride(rest as HeroStyleOverride);
+        } else {
+          setOverride({ ...override, ...Object.fromEntries(keys.map((key) => [key, draft.appearance[key] ?? null])) });
+        }
+      },
+    };
+  };
 
   const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
     const i = TABS.findIndex((t) => t.id === tab);
@@ -352,12 +376,28 @@ export function HeroEditor({
               <NullableColorField label="(role colour)" colors={HERO_HAIR_COLORS} value={look.outfitColor} fallback={roleColorHex} onChange={(outfitColor) => setAppearance({ outfitColor })} />
             </AppField>
             <AppField label="Hat" {...baseToggle('hat')}>
-              <Select aria-label="Hat" value={look.hat} onChange={(e) => setAppearance({ hat: e.target.value as HeroHat })}>
+              <Select
+                aria-label="Hat"
+                value={look.lootHat ? `loot:${look.lootHat}` : look.hat}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAppearance(v.startsWith('loot:') ? { lootHat: v.slice(5) as LootHat } : { hat: v as HeroHat, lootHat: null });
+                }}
+              >
                 {HERO_HATS.map((h) => (
                   <option key={h} value={h}>
                     {HAT_LABELS[h]}
                   </option>
                 ))}
+                {lootHats.length > 0 && (
+                  <optgroup label="Unlocked">
+                    {lootHats.map((h) => (
+                      <option key={h} value={`loot:${h}`}>
+                        {battleLabel(lootStyle, 'loot', `hat-${h}`)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </Select>
             </AppField>
             <AppField label="Hat colour" {...baseToggle('hatColor')}>
@@ -370,12 +410,28 @@ export function HeroEditor({
               />
             </AppField>
             <AppField label="Prop" {...baseToggle('prop')}>
-              <Select aria-label="Prop" value={look.prop} onChange={(e) => setAppearance({ prop: e.target.value as HeroProp })}>
+              <Select
+                aria-label="Prop"
+                value={look.lootProp ? `loot:${look.lootProp}` : look.prop}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAppearance(v.startsWith('loot:') ? { lootProp: v.slice(5) as LootProp } : { prop: v as HeroProp, lootProp: null });
+                }}
+              >
                 {HERO_PROPS.map((p) => (
                   <option key={p} value={p}>
                     {PROP_LABELS[p]}
                   </option>
                 ))}
+                {lootProps.length > 0 && (
+                  <optgroup label="Unlocked">
+                    {lootProps.map((p) => (
+                      <option key={p} value={`loot:${p}`}>
+                        {battleLabel(lootStyle, 'loot', `prop-${p}`)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </Select>
             </AppField>
             <AppField label="Accessory" {...baseToggle('accessory')}>

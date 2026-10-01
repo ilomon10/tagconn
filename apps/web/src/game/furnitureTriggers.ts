@@ -13,10 +13,11 @@ export const TRIGGER_KINDS: Record<FurnitureAction, readonly FurnitureKind[]> = 
   settings: ['console'],
   heroes: ['roster-board'],
   receptionist: ['reception-desk'],
+  infirmary: ['coffee-machine', 'water-cooler'],
 };
 
-/** The item procgen places when a floor has none of the qualifying kinds (the receptionist desk is never placed). */
-export const TRIGGER_PLACE: Record<Exclude<FurnitureAction, 'receptionist'>, { kind: FurnitureKind; w: 1 | 2 }> = {
+/** The item procgen places when a floor has none of the qualifying kinds (the receptionist desk and the infirmary are never placed). */
+export const TRIGGER_PLACE: Record<Exclude<FurnitureAction, 'receptionist' | 'infirmary'>, { kind: FurnitureKind; w: 1 | 2 }> = {
   board: { kind: 'board', w: 2 },
   log: { kind: 'bookcase', w: 2 },
   quests: { kind: 'notice-board', w: 1 },
@@ -24,7 +25,7 @@ export const TRIGGER_PLACE: Record<Exclude<FurnitureAction, 'receptionist'>, { k
   heroes: { kind: 'roster-board', w: 1 },
 };
 
-export const TRIGGER_ORDER: readonly FurnitureAction[] = ['receptionist', 'board', 'log', 'quests', 'settings', 'heroes'];
+export const TRIGGER_ORDER: readonly FurnitureAction[] = ['receptionist', 'board', 'log', 'quests', 'settings', 'heroes', 'infirmary'];
 
 /** The panel each action opens and the menu hotkey that also opens it (a test pins these to `MENU_HOTKEYS`). */
 export const TRIGGER_PANEL: Record<FurnitureAction, { panel: string; hotkey: string }> = {
@@ -34,12 +35,14 @@ export const TRIGGER_PANEL: Record<FurnitureAction, { panel: string; hotkey: str
   settings: { panel: 'Settings', hotkey: 'S' },
   heroes: { panel: 'Heroes', hotkey: 'H' },
   receptionist: { panel: 'Receptionist', hotkey: 'D' },
+  // M14 T1: no panel and no hotkey; a click heals the floor's KO'd heroes (useFurnitureTriggers).
+  infirmary: { panel: 'Coffee break', hotkey: '' },
 };
 
 const LABELS: Record<StyleId, Record<FurnitureAction, string>> = {
-  modern: { board: 'Kanban board', log: 'Bookcase', quests: 'Notice board', settings: 'Server console', heroes: 'Team roster', receptionist: 'Reception desk' },
-  guild: { board: 'War map', log: 'Guild ledger', quests: 'Quest board', settings: 'Arcane terminal', heroes: 'Hall of Heroes', receptionist: "Gatekeeper's desk" },
-  rift: { board: 'Star chart', log: 'Archive crystal', quests: 'Bounty shard', settings: 'Rift console', heroes: 'Hero constellation', receptionist: 'Nexus gate desk' },
+  modern: { board: 'Kanban board', log: 'Bookcase', quests: 'Notice board', settings: 'Server console', heroes: 'Team roster', receptionist: 'Reception desk', infirmary: 'Coffee machine' },
+  guild: { board: 'War map', log: 'Guild ledger', quests: 'Quest board', settings: 'Arcane terminal', heroes: 'Hall of Heroes', receptionist: "Gatekeeper's desk", infirmary: 'Healing fountain' },
+  rift: { board: 'Star chart', log: 'Archive crystal', quests: 'Bounty shard', settings: 'Rift console', heroes: 'Hero constellation', receptionist: 'Nexus gate desk', infirmary: 'Med-bay' },
 };
 
 export function triggerLabel(styleId: StyleId, action: FurnitureAction): string {
@@ -49,6 +52,7 @@ export function triggerLabel(styleId: StyleId, action: FurnitureAction): string 
 /** "Quest board · Open Quests (Q)" */
 export function triggerTooltip(styleId: StyleId, action: FurnitureAction): string {
   const { panel, hotkey } = TRIGGER_PANEL[action];
+  if (!hotkey) return `${triggerLabel(styleId, action)} · ${panel}`;
   return `${triggerLabel(styleId, action)} · Open ${panel} (${hotkey})`;
 }
 

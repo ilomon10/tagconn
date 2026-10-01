@@ -270,7 +270,7 @@ describe('progression module wiring', () => {
     const c = app.diContainer.cradle;
     expect(c.progressionRepository).toBeDefined();
     expect(c.battlesRepository).toBeDefined();
-    expect(() => c.battlesService.create({} as never)).toThrow(/Not implemented/);
+    expect(() => c.battlesService.create({ projectId: 'nope', npcKind: 'sales-dog', encounterId: 'e', party: [] } as never)).toThrow(/not found/i);
     const snap = (await app.inject({ url: '/api/snapshot' })).json<{ progress?: unknown[] }>();
     expect(snap.progress).toEqual([]);
     expect(adminHeaders(app).authorization).toBeTruthy();

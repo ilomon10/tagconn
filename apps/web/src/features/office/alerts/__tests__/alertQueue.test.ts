@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SettingsSchema, type Agent } from '@tagconn/shared';
-import { dismissAlert, initialAlertQueue, offerAlert, tickAlerts } from '../alertQueue';
+import { dismissAlert, initialAlertQueue, offerAlert, tickAlerts, withdrawAlert } from '../alertQueue';
 import { ALERT_LIMITS } from '../types';
 import type { AlertInput, AlertKind, AlertSettings } from '../types';
 
@@ -191,5 +191,78 @@ describe('alertQueue', () => {
     const r = tickAlerts(s, c, W + 10, false);
     expect(r.shown).toHaveLength(0);
     expect(r.state.pending).toHaveLength(0);
+  });
+});
+
+describe('alertQueue encounters', () => {
+  const offer = { npcId: 'n1', kind: 'monster', name: 'Slime', style: 'modern', projectId: 'p', at: 0 } as const;
+  const enc = (npcId: string, ttlMs = 20_000): AlertInput => ({ kind: 'encounter', agentId: `encounter:${npcId}`, key: 'appeared', at: 0, encounter: { ...offer, npcId }, ttlMs });
+  const c = cfg({ agentCooldownSec: 60, autoDismissSec: 0, maxVisible: 5, burst: 5 });
+
+  it('never coalesces, ignores the agent cooldown and uses tokens', () => {
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, enc('a'), c, 0);
+    s = offerAlert(s, enc('b'), c, 10);
+    expect(s.pending).toHaveLength(2);
+    const r = tickAlerts(s, c, W + 10, false);
+    expect(r.shown).toHaveLength(2);
+    expect(r.state.tokens).toBe(3);
+    expect(r.state.lastShown).toEqual({});
+    const again = offerAlert(r.state, enc('a'), c, W + 20);
+    expect(again.pending).toHaveLength(1); // no cooldown
+  });
+
+  it('is rate limited with the other kinds', () => {
+    const t = cfg({ burst: 1, perMinute: 1, agentCooldownSec: 0, autoDismissSec: 0 });
+    let s = initialAlertQueue(t, 0);
+    s = offerAlert(s, enc('a'), t, 0);
+    s = offerAlert(s, enc('b'), t, 0);
+    const r = tickAlerts(s, t, W, false);
+    expect(r.shown).toHaveLength(1);
+    expect(r.state.pending).toHaveLength(1);
+  });
+
+  it('ranks below done', () => {
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, enc('a'), c, 0);
+    s = offerAlert(s, inp('x', 'done'), c, 0);
+    expect(tickAlerts(s, c, W, false).shown.map((i) => i.kind)).toEqual(['done', 'encounter']);
+  });
+
+  it('reports a visible encounter past its ttl as expired, even with autoDismissSec 0', () => {
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, enc('a', 5000), c, 0);
+    s = tickAlerts(s, c, W, false).state;
+    expect(tickAlerts(s, c, W + 4000, false).expired).toHaveLength(0);
+    const r = tickAlerts(s, c, W + 5000, false);
+    expect(r.expired.map((i) => i.encounter?.npcId)).toEqual(['a']);
+    expect(r.state.visible).toHaveLength(0);
+  });
+
+  it('reports a pending encounter dropped by the pending ttl or a hidden tab', () => {
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, enc('a'), c, 0);
+    expect(tickAlerts(s, c, ALERT_LIMITS.pendingTtlMs + 1, true).expired).toHaveLength(1);
+    expect(tickAlerts(s, cfg({ ...c, burst: 0, perMinute: 0 }), ALERT_LIMITS.pendingTtlMs + 1, false).expired).toHaveLength(1);
+  });
+
+  it('withdrawAlert drops pending and visible items', () => {
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, enc('a'), c, 0);
+    s = offerAlert(s, enc('b'), c, 0);
+    s = tickAlerts(s, c, W, false).state;
+    s = offerAlert(s, enc('d'), c, W);
+    s = withdrawAlert(s, 'encounter:a');
+    s = withdrawAlert(s, 'encounter:d');
+    expect(s.visible.map((i) => i.encounter?.npcId)).toEqual(['b']);
+    expect(s.pending).toHaveLength(0);
+    expect(withdrawAlert(s, 'nobody')).toBe(s);
+  });
+
+  it('does not offer a duplicate pending encounter for the same npc', () => {
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, enc('a'), c, 0);
+    s = offerAlert(s, enc('a'), c, 5000);
+    expect(s.pending).toHaveLength(1);
   });
 });

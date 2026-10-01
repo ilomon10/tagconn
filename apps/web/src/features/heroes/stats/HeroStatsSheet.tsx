@@ -9,6 +9,7 @@ import { battleLabel } from '../../battle/labels';
 import { healHero, saveSkills } from '../../battle/commands';
 import { useHeroProgress, useNow } from '../../battle/useProgress';
 import type { BattleStyle } from '../../../game/battle/types';
+import { LootPanel } from './LootPanel';
 import { StatsTable } from './StatsTable';
 import { SkillTreeView } from './SkillTreeView';
 import { apply, canRespec, checkPlan, classifySaveError, describeCheck, planFrom, pointsLeft, pointsSpent, sameAllocation, type PlanCtx } from './skillPlan';
@@ -246,6 +247,8 @@ export function HeroStatsSheet({ hero }: { hero: Hero }) {
         <SkillTreeView tree={tree} plan={plan} ctx={ctx} style={style} readOnly={readOnly} onOp={(op) => setPlan(apply(plan, op, ctx))} />
         <p className="mt-2 text-[10px] text-ink-400">Tab to a skill, then press + to learn or − to unlearn. Nothing is saved until you confirm.</p>
       </section>
+
+      <LootPanel heroId={hero.id} progress={progress} style={style} canEdit={allowed} onGuard={guard} />
 
       {conflict && (
         <div className="rounded-md bg-amber-900/30 p-3 text-xs text-amber-100" role="alert">

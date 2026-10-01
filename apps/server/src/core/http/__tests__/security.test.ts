@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { DEFAULT_LAYOUT, OFFICE_NAMESPACE } from '@tagconn/shared';
 import Fastify from 'fastify';
 import { io as connect, type Socket } from 'socket.io-client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { App } from '../../../app.js';
 import { adminHeaders, buildTestApp, makeTempDir } from '../../../../test/helpers.js';
 import { registerAdminAccess } from '../admin.js';
@@ -403,5 +403,136 @@ describe('rejected Host/Origin logging (core/http + core/realtime)', () => {
     expect(meta.origin).toBe('http://evil.example.com');
     expect(msg).toMatch(/corsOrigins/);
     expect(msg).toMatch(/handshake/);
+  });
+});
+
+// M14 (docs/design/battles.md 6.4): HTTP guards on every progression and battle route.
+describe('progression and battle routes (M14 guards)', () => {
+  let app: App | undefined;
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  const HERO = 'h-00000000';
+  const BATTLE = 'b-000000000000';
+  const POSTS: { url: string; payload: object }[] = [
+    { url: '/api/battles', payload: { projectId: 'p', npcKind: 'sales-dog', encounterId: 'e-1', party: [{ kind: 'hero', heroId: HERO }] } },
+    { url: `/api/battles/${BATTLE}/resolve`, payload: { log: [] } },
+    { url: `/api/battles/${BATTLE}/abandon`, payload: {} },
+    { url: `/api/heroes/${HERO}/skills`, payload: { skills: {} } },
+    { url: `/api/heroes/${HERO}/title`, payload: { title: null } },
+    { url: `/api/heroes/${HERO}/heal`, payload: {} },
+  ];
+  const GETS = ['/api/progress', `/api/heroes/${HERO}/progress`, `/api/battles/${BATTLE}`];
+  const JSON_HEADERS = { 'content-type': 'application/json' };
+
+  it('every new POST: foreign Origin 403, text/plain 415, no token 401, the hook token alone 401', async () => {
+    app = await buildTestApp({ settings: { server: { hookToken: 's3cret' } } });
+    const origin = app.diContainer.cradle.settings.get().server.corsOrigins[0];
+    for (const { url, payload } of POSTS) {
+      const foreign = await app.inject({ method: 'POST', url, payload, headers: { origin: 'http://evil.example.com', ...adminHeaders(app) } });
+      expect([url, foreign.statusCode]).toEqual([url, 403]);
+      const plain = await app.inject({ method: 'POST', url, payload: '{}', headers: { 'content-type': 'text/plain', origin, ...adminHeaders(app) } });
+      expect([url, plain.statusCode]).toEqual([url, 415]);
+      const anon = await app.inject({ method: 'POST', url, payload, headers: JSON_HEADERS });
+      expect([url, anon.statusCode]).toEqual([url, 401]);
+      const hookOnly = await app.inject({ method: 'POST', url, payload, headers: { ...JSON_HEADERS, 'x-office-token': 's3cret' } });
+      expect([url, hookOnly.statusCode]).toEqual([url, 401]);
+    }
+  });
+
+  it('every new GET: foreign Host 403; the battle read needs the admin token, the progress reads stay public', async () => {
+    app = await buildTestApp();
+    for (const url of GETS) expect([url, (await app.inject({ url, headers: { host: 'evil.example.com' } })).statusCode]).toEqual([url, 403]);
+    expect((await app.inject({ url: '/api/progress' })).statusCode).toBe(200);
+    expect((await app.inject({ url: `/api/battles/${BATTLE}` })).statusCode).toBe(401);
+    expect((await app.inject({ url: `/api/battles/${BATTLE}`, headers: adminHeaders(app) })).statusCode).toBe(404);
+  });
+
+  it('strict bodies: unknown keys, bad action indices and over-long logs are 400', async () => {
+    app = await buildTestApp();
+    const headers = adminHeaders(app);
+    const create = { projectId: 'p', npcKind: 'sales-dog', encounterId: 'e-1', party: [{ kind: 'hero', heroId: HERO }] };
+    for (const extra of [{ seed: 1 }, { setup: {} }, { lootSeed: 1 }]) {
+      expect((await app.inject({ method: 'POST', url: '/api/battles', payload: { ...create, ...extra }, headers })).statusCode).toBe(400);
+    }
+    const resolve = (payload: object) => app!.inject({ method: 'POST', url: `/api/battles/${BATTLE}/resolve`, payload, headers });
+    expect((await resolve({ log: [], seed: 1 })).statusCode).toBe(400);
+    expect((await resolve({ log: [{ t: 'move', move: 8 }] })).statusCode).toBe(400);
+    expect((await resolve({ log: [{ t: 'swap', to: 4 }] })).statusCode).toBe(400);
+    expect((await resolve({ log: Array.from({ length: 221 }, () => ({ t: 'run' })) })).statusCode).toBe(400);
+    for (const key of ['__proto__', 'constructor', 'toString']) {
+      const res = await app.inject({ method: 'POST', url: `/api/heroes/${HERO}/skills`, payload: `{"skills":{"${key}":1}}`, headers: { ...JSON_HEADERS, ...headers } });
+      expect([key, res.statusCode]).toEqual([key, 400]);
+    }
+    const many = Object.fromEntries(Array.from({ length: 49 }, (_, i) => [`developer.0.${i}`, 1]));
+    expect((await app.inject({ method: 'POST', url: `/api/heroes/${HERO}/skills`, payload: { skills: many }, headers })).statusCode).toBe(400);
+  });
+
+  it('bodies over the route bodyLimit are 413', async () => {
+    app = await buildTestApp();
+    const headers = adminHeaders(app);
+    const big = (n: number) => ({ pad: 'x'.repeat(n) });
+    expect((await app.inject({ method: 'POST', url: '/api/battles', payload: big(17_000), headers })).statusCode).toBe(413);
+    expect((await app.inject({ method: 'POST', url: `/api/battles/${BATTLE}/resolve`, payload: big(33_000), headers })).statusCode).toBe(413);
+    expect((await app.inject({ method: 'POST', url: `/api/heroes/${HERO}/heal`, payload: big(17_000), headers })).statusCode).toBe(413);
+  });
+
+  it('malformed hero and battle ids are 400 before any repository access', async () => {
+    app = await buildTestApp();
+    const cr = app.diContainer.cradle;
+    const spies = [vi.spyOn(cr.battlesRepository, 'get'), vi.spyOn(cr.heroesRepository, 'get'), vi.spyOn(cr.progressionRepository, 'getCore'), vi.spyOn(cr.progressionRepository, 'view')];
+    const headers = adminHeaders(app);
+    for (const { url, payload } of POSTS.slice(1)) {
+      const bad = url.replace(HERO, 'not-a-hero').replace(BATTLE, 'not-a-battle');
+      expect([bad, (await app.inject({ method: 'POST', url: bad, payload, headers })).statusCode]).toEqual([bad, 400]);
+    }
+    for (const url of GETS.slice(1)) {
+      const bad = url.replace(HERO, 'not-a-hero').replace(BATTLE, 'not-a-battle');
+      expect([bad, (await app.inject({ url: bad, headers })).statusCode]).toEqual([bad, 400]);
+    }
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('errors are { error, statusCode } with no stack, and the 429 limiters are per app instance', async () => {
+    app = await buildTestApp();
+    const headers = adminHeaders(app);
+    const missing = await app.inject({ method: 'POST', url: `/api/battles/${BATTLE}/abandon`, payload: {}, headers });
+    expect(missing.statusCode).toBe(404);
+    expect(Object.keys(missing.json()).sort()).toEqual(['error', 'statusCode']);
+    expect(missing.body).not.toMatch(/stack|\.ts:|node_modules/);
+    for (let i = 0; i < 29; i++) await app.inject({ method: 'POST', url: `/api/battles/${BATTLE}/abandon`, payload: {}, headers });
+    expect((await app.inject({ method: 'POST', url: `/api/battles/${BATTLE}/abandon`, payload: {}, headers })).statusCode).toBe(429);
+    const other = await buildTestApp();
+    try {
+      expect((await other.inject({ method: 'POST', url: `/api/battles/${BATTLE}/abandon`, payload: {}, headers: adminHeaders(other) })).statusCode).toBe(404);
+    } finally {
+      await other.close();
+    }
+  });
+
+  it('hero:progress for project A never reaches a socket subscribed only to project B', async () => {
+    app = await buildTestApp();
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('no address');
+    const base = `http://127.0.0.1:${address.port}${OFFICE_NAMESPACE}`;
+    const sock: ClientSocket = connect(base, { transports: ['websocket'], forceNew: true });
+    const got: string[] = [];
+    try {
+      await new Promise<void>((resolve, reject) => {
+        sock.on('connect', () => resolve());
+        sock.on('connect_error', reject);
+      });
+      sock.on('hero:progress', (p) => got.push(p.projectId));
+      await new Promise<void>((resolve) => sock.emit('office:subscribe', 'pB', () => resolve()));
+      app.diContainer.cradle.bus.emit('progress.upserted', { heroId: HERO, projectId: 'pA' } as never);
+      app.diContainer.cradle.bus.emit('progress.upserted', { heroId: HERO, projectId: 'pB' } as never);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(got).toEqual(['pB']);
+    } finally {
+      sock.disconnect();
+    }
   });
 });

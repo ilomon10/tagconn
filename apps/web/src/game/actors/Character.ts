@@ -5,7 +5,7 @@ import { INITIAL_LIFECYCLE, type LifecycleFrame } from '../actorLifecycle';
 import { DIZZY_FRAMES, EMOTE_ICON, STRAIN_ICON } from '../drama';
 import type { Point } from '../procgen/types';
 import type { Size } from '../labels';
-import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '../textures';
+import { HAIR_COLORS, HAIR_STYLES, KO_FRAMES, SKIN_TONES } from '../textures';
 import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, prefersReducedMotion, staffTextureKey, type ActivityFxKind, type Costume, type DramaEmote, type StrainKind } from '../themes';
 import type { CreatureId, LifePose } from '../themes/types';
 import { SHADES_TEXTURE, creatureTextureKey } from '../npc/types';
@@ -119,6 +119,9 @@ export class Character extends Phaser.GameObjects.Container {
   private strainIcon: Phaser.GameObjects.Image;
   /** M12 "on a roll" sparks (a second fx container beside the activity `fx`). */
   private strainFx: Phaser.GameObjects.Container;
+  /** M14 K1 KO badge (dizzy bob / bandage), mirrored to the strain slot; never moves the character. */
+  private koIcon: Phaser.GameObjects.Image;
+  private koKind: 'dizzy' | 'bandage' | null = null;
   private cloak: Phaser.GameObjects.Image;
   private hat: Phaser.GameObjects.Image;
   /** An icon/strain badge is up this frame, so the plate sits `PLATE_ICON_LIFT` higher. */
@@ -269,8 +272,9 @@ export class Character extends Phaser.GameObjects.Container {
     this.fx = scene.add.container(0, -8);
     this.strainIcon = scene.add.image(6, -17, STRAIN_ICON.dizzy).setOrigin(0.5, 1).setVisible(false);
     this.strainFx = scene.add.container(0, -8);
+    this.koIcon = scene.add.image(-7, -17, KO_FRAMES[0]).setOrigin(0.5, 1).setVisible(false);
     this.creatureImg = scene.add.image(0, 0, creatureTextureKey('dog', 0)).setOrigin(0.5, 1).setVisible(false);
-    this.add([this.canvasGlow, this.shadow, this.legs, this.upper, this.creatureImg, this.icon, this.strainIcon, this.fx, this.strainFx]);
+    this.add([this.canvasGlow, this.shadow, this.legs, this.upper, this.creatureImg, this.icon, this.strainIcon, this.koIcon, this.fx, this.strainFx]);
 
     this.plateBack = scene.add.graphics();
     this.plate = scene.add.container(0, PLATE_BOTTOM_Y, [this.plateBack]).setVisible(false);
@@ -841,6 +845,14 @@ export class Character extends Phaser.GameObjects.Container {
     else this.strainIcon.setVisible(false);
   }
 
+  /** M14 K1: KO badge beside the head; `null` clears. Pure overlay, so the pose, seat and bubble are untouched. */
+  setKoBadge(kind: 'dizzy' | 'bandage' | null): void {
+    if (kind === this.koKind) return;
+    this.koKind = kind;
+    if (kind) this.koIcon.setTexture(kind === 'bandage' ? 'icon-bandage' : KO_FRAMES[0]).setPosition(-7, -17);
+    this.koIcon.setVisible(!!kind && !this.leaving);
+  }
+
   /** Emote in the main head-icon slot during an antic; `null` clears. */
   setDramaEmote(emote: DramaEmote | null): void {
     this.dramaEmote = emote;
@@ -1215,7 +1227,13 @@ export class Character extends Phaser.GameObjects.Container {
       if (this.icon.texture.key !== icon) this.icon.setTexture(icon);
       this.icon.setVisible(true).setPosition(0, iconY + bob).setAlpha(iconAlpha);
     } else this.icon.setVisible(false);
-    const hasIcon = !!icon || strain !== null;
+    const ko = this.koKind;
+    if (ko) {
+      const still = prefersReducedMotion();
+      if (ko === 'dizzy') this.koIcon.setTexture(KO_FRAMES[still ? 0 : Math.floor(t * 2) % KO_FRAMES.length]!);
+      this.koIcon.setPosition(-7, -17 + (ko === 'dizzy' && !still ? bob : 0)).setVisible(!this.leaving);
+    }
+    const hasIcon = !!icon || strain !== null || (ko !== null && !this.leaving);
     this.plateIconUp = hasIcon;
     this.plate.setY(this.plateBottomY);
     // The GM chip sits just past the right end of the name line.

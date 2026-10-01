@@ -74,7 +74,7 @@ export type FurnitureKind =
   | 'board-game-table';
 
 /** M12 G3: the panel a furniture item opens. A subset of `app/menuHotkeys.ts` MenuActionId (asserted by a test in G3). */
-export type FurnitureAction = 'board' | 'log' | 'quests' | 'settings' | 'heroes' | 'receptionist';
+export type FurnitureAction = 'board' | 'log' | 'quests' | 'settings' | 'heroes' | 'receptionist' | 'infirmary';
 
 export interface PlacedFurniture extends Rect {
   kind: FurnitureKind;

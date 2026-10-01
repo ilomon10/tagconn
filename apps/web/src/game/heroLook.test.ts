@@ -180,3 +180,16 @@ describe('resolveHeroCostume: determinism', () => {
     expect(a0).not.toEqual(a1);
   });
 });
+
+describe('resolveHeroCostume: M14 loot', () => {
+  it('lootHat / lootProp override hat and prop (even none); null or omitted keeps them', () => {
+    const r = resolveHeroCostume(GUILD_PM_COSTUME, baseAppearance({ hat: 'none', prop: 'none', lootHat: 'fedora', lootProp: 'mop' }), ROLE_COLOR);
+    expect(r.costume.hat).toBe('fedora');
+    expect(r.costume.staff).toBe('mop');
+    const k = resolveHeroCostume(GUILD_PM_COSTUME, baseAppearance({ hat: 'hood', prop: 'wand', lootHat: null, lootProp: null }), ROLE_COLOR);
+    expect(k.costume.hat).toBe('hood');
+    expect(k.costume.staff).toBe('wand');
+    const o = resolveHeroCostume(MODERN_COSTUME, baseAppearance({ hat: 'auto', prop: 'auto' }), ROLE_COLOR);
+    expect(o.costume.hat).toBe('none');
+  });
+});

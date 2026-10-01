@@ -1,7 +1,8 @@
 import type { Agent, Settings } from '@tagconn/shared';
+import type { EncounterOffer } from '../../battle/types';
 
-export type AlertKind = 'ask' | 'failure' | 'done';
-export const ALERT_PRIORITY: Record<AlertKind, number> = { ask: 3, failure: 2, done: 1 };
+export type AlertKind = 'ask' | 'failure' | 'done' | 'encounter';
+export const ALERT_PRIORITY: Record<AlertKind, number> = { ask: 3, failure: 2, done: 1, encounter: 0 };
 export type AlertSettings = Settings['office']['alerts'];
 export interface AlertInput {
   kind: AlertKind;
@@ -12,6 +13,10 @@ export interface AlertInput {
   toolName?: string;
   /** Snapshot of the agent at offer time, so the box can still show who it was after the store drops it. */
   agent?: Agent;
+  /** Encounter prompts only (agentId is `encounter:<npcId>`). */
+  encounter?: EncounterOffer;
+  /** Visible lifetime override (encounters: battle.autoIgnoreSec). */
+  ttlMs?: number;
 }
 export interface AlertItem {
   id: string;
@@ -21,6 +26,8 @@ export interface AlertItem {
   toolName?: string;
   /** agentId -> snapshot taken at offer time (fallback when the live store no longer has the agent). */
   agents?: Readonly<Record<string, Agent>>;
+  encounter?: EncounterOffer;
+  ttlMs?: number;
   createdAt: number;
   shownAt: number | null;
 }

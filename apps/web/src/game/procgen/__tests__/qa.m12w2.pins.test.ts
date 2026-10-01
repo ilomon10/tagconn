@@ -31,7 +31,8 @@ describe('QA M12 W2: adversarial pins', () => {
     const map = generateMap(layout);
     const acts = map.furniture.filter((f) => f.trigger).map((f) => f.trigger!);
     expect(new Set(acts).size).toBe(acts.length);
-    expect([...acts].sort()).toEqual([...TRIGGER_ORDER].sort());
+    // M14 T1: the infirmary only marks an existing coffee machine / water cooler, so it is not guaranteed.
+    expect([...acts].filter((a) => a !== 'infirmary').sort()).toEqual(TRIGGER_ORDER.filter((a) => a !== 'infirmary').sort());
   });
 
   it('48 pins in one room (the cap) plus triggers still generate deterministically', () => {

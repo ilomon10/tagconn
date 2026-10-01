@@ -20,8 +20,23 @@ describe('trigger pass', () => {
     for (const f of map.furniture.filter((x) => x.trigger)) expect(TRIGGER_KINDS[f.trigger!]).toContain(f.kind);
   });
 
-  it('DEFAULT_LAYOUT gets all six actions', () => {
-    expect([...actionsOf(generateMap(DEFAULT_LAYOUT))].sort()).toEqual([...TRIGGER_ORDER].sort());
+  it('DEFAULT_LAYOUT gets all five placed actions, plus the infirmary only when it has a coffee machine / water cooler', () => {
+    const map = generateMap(DEFAULT_LAYOUT);
+    const placed = TRIGGER_ORDER.filter((a) => a !== 'infirmary');
+    const hasHealKind = map.furniture.some((f) => TRIGGER_KINDS.infirmary.includes(f.kind));
+    expect([...actionsOf(map)].sort()).toEqual((hasHealKind ? [...placed, 'infirmary'] : placed).sort());
+  });
+
+  it('never places a coffee machine / water cooler for the infirmary: it only marks an existing one', () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const layout = asLayout(generateRandomLayout({ width: 48, height: 30, seed }), seed);
+      const on = generateMap(layout);
+      const off = generateMap(layout, { triggers: false });
+      const count = (m: GeneratedMap) => m.furniture.filter((f) => TRIGGER_KINDS.infirmary.includes(f.kind)).length;
+      expect(count(on), `seed ${seed}`).toBe(count(off));
+      const marked = on.furniture.filter((f) => f.trigger === 'infirmary');
+      expect(marked.length).toBe(count(off) > 0 ? 1 : 0);
+    }
   });
 
   it('is deterministic and skipped with triggers: false', () => {
@@ -30,7 +45,7 @@ describe('trigger pass', () => {
     expect(off.furniture.some((f) => f.trigger)).toBe(false);
   });
 
-  it('>= 95% of 200 BSP seeds have all six actions, never two of one, and add no unreachable issues', () => {
+  it('>= 95% of 200 BSP seeds have all five placed actions, never two of one, and add no unreachable issues', () => {
     let full = 0;
     for (let seed = 1; seed <= 200; seed++) {
       const layout = asLayout(generateRandomLayout({ width: 48, height: 30, seed, background: seed % 2 ? 'hall' : 'void' }), seed);
@@ -38,7 +53,7 @@ describe('trigger pass', () => {
       const off = generateMap(layout, { triggers: false });
       const acts = actionsOf(on);
       expect(new Set(acts).size, `seed ${seed}`).toBe(acts.length);
-      if (acts.length === TRIGGER_ORDER.length) full++;
+      if (acts.filter((a) => a !== 'infirmary').length === TRIGGER_ORDER.length - 1) full++;
       expect(unreachable(on), `seed ${seed} unreachable`).toBeLessThanOrEqual(unreachable(off));
       expect(on.reachability.unreachableSeats, `seed ${seed} seats`).toBeLessThanOrEqual(off.reachability.unreachableSeats);
       expect(on.issues.filter((i) => i.severity === 'error').length, `seed ${seed} errors`).toBeLessThanOrEqual(off.issues.filter((i) => i.severity === 'error').length);

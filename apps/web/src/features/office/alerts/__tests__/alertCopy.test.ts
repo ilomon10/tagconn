@@ -30,3 +30,19 @@ describe('alertCopy', () => {
     expect(alertCopy(item('failure', ['a', 'b'], 'Bash'), 'modern', []).title).toBe('2 teammates stumbled');
   });
 });
+
+describe('alertCopy encounters', () => {
+  const enc = (name: string): AlertItem => ({
+    ...item('encounter', ['encounter:n1']),
+    encounter: { npcId: 'n1', kind: 'monster', name, style: 'modern', projectId: 'p', at: 0 },
+  });
+  it('titles per style', () => {
+    expect(alertCopy(enc('Slime'), 'modern', []).title).toBe('A wild Slime appeared!');
+    expect(alertCopy(enc('Slime'), 'guild', []).title).toBe('A wild Slime blocks the hall!');
+    expect(alertCopy(enc('Slime'), 'rift', []).title).toBe('Hostile Slime detected!');
+    expect(alertCopy(enc('Slime'), 'rift', []).body).toBeTruthy();
+  });
+  it('clips a hostile name', () => {
+    expect(alertCopy(enc('x'.repeat(500)), 'modern', []).title.length).toBeLessThan(80);
+  });
+});
