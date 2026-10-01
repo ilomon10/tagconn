@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-01
+
 ### Added
 - **HUD**: the party bar (bottom, one portrait chip per character in roster order) replaces the docked roster column; on a phone it collapses to a pill. The status card (top-left, shown while a character is selected) shows name, role title, status, **Mana** meter (context window use), **XP** tokens and level, current tool and tool time, quest time, and work strain summary; a **Details** button opens the full agent panel (activity, recent tools, Edit hero) in a focus-trapping dialog; **Follow** checkbox keeps the camera on the character. The card compresses to one row on phones.
 - **Office and tavern drama**: roughly every `office.drama.idleChatSec` (45 s), one or two idle characters walk to a piece of furniture (cooler, machine, counter, fireplace, etc.) and perform a short scene — speech bubbles and an emote icon (mug, dice, phone, laugh, etc.). Modern style plays office chat; guild plays tavern tales; antics controlled by `office.drama.enabled` (default `true`).
@@ -171,7 +173,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/ilomon10/tagconn/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/ilomon10/tagconn/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ilomon10/tagconn/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ilomon10/tagconn/compare/v0.5.0...v0.5.1

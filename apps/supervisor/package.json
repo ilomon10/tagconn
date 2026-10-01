@@ -1,6 +1,6 @@
 {
   "name": "@tagconn/supervisor",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "description": "Node sidecar of tagconn Desktop: JSON-RPC over stdio, setup, and the server/runner/docker service manager.",
