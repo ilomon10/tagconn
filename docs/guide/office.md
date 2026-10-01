@@ -57,20 +57,85 @@ by a blended "rift" style. Click a realm to travel straight to its floor; an ove
 realms" bucket opens the floor picker instead. It's capped by `office.multiverseMaxRealms` and
 `office.multiverseMaxCharacters` (characters are split fairly across realms, Guild Masters first).
 
-## Roster & selection
+## Party bar and character selection
 
-The roster lists every character on the current floor (or, on the Multiverse, every project),
-grouped and colored by role, with a status pill (`active` / `waiting` / `blocked` / `done`),
-elapsed time and token usage. Click a character (in the roster or on the map) to open its detail
-drawer: current activity, recent tool calls, its task board from the handoff report, and (for a
-named hero) an "Edit hero" link into the Heroes panel. Click empty map space, or press `Esc`, to
-close it. A **Follow** toggle keeps the camera centered on the selected character as it moves.
+The **party bar** at the bottom shows one portrait chip per character on this floor, in roster order
+(so `[` / `]` cycling moves left and right along the bar). Each chip displays a portrait, role colour
+ring, status dot (showing whether the character is `active`, `waiting`, `blocked`, or `done`), and a
+strain icon when the character is experiencing work strain (see below). Selected chips are raised.
+On a phone, the bar collapses to a pill that opens a tray showing all characters in a grid.
+
+Click any character's chip or portrait on the map to select them and open the **status card** at the
+top-left:
+- Character name (or themed title if no hero is named)
+- Status badge and plain role title (when it differs from the themed title)
+- **Mana** bar (context window use: `contextTokens` / `contextWindowFor(model)`)
+- **XP** display (total tokens used) with **Lv** level (1–99, based on tokens)
+- Current **Tool** and how long it has been running (if any)
+- **Quest** time (how long this agent has been on this floor's quest)
+- Work strain description (e.g., "Dizzy · tool running 2m 10s")
+- **Details** button to open the full agent panel (activity, recent tool calls, task board, Edit hero link)
+- **Follow** checkbox to keep the camera centered on this character as it moves
+- Close button (or press `Esc`)
+
+On a phone, the status card compresses to one row: portrait, name, mana bar, Details button, and
+close. Press `Esc` again to deselect the character. Click empty map space to deselect.
 
 Idle characters with no live agent rest in a lounge/tavern zone, and leave (walk out) after
 `office.idleLeaveSec`. One project can have several live sessions at once — the most recently active
 one is the floor's "Guild Master"; the rest collapse into a small "+N sessions" chip you can click
 to switch which one the Guild Master represents (`office.pmMode: single` — the default — vs
 `per-session`, which shows every session as its own character).
+
+## Idle drama and work strain
+
+When characters have downtime (waiting in the lounge or tavern), they interact with their
+surroundings. Roughly every `office.drama.idleChatSec` (45 s default) per floor, one or two idle
+characters walk to a piece of furniture (water cooler, coffee machine, tavern counter, fireplace,
+etc.) and perform a short scene: speech bubbles in turn and a small emote icon (mug, dice, phone,
+laugh, etc.), then walk back to their seat. In the **modern** style, they chat about work and
+office life; in the **guild** style, they bandy tavern tales and quest banter. Dramatic antics occur
+only when `office.drama.enabled` is `true` (default).
+
+Characters on an active quest show **work strain** when they run into trouble:
+
+| Strain | Icon | Shows when | Setting |
+|---|---|---|---|
+| **Tired** | Yawn | On a quest longer than `office.drama.tiredAfterSec` (default 20 min) | `office.drama.tiredAfterSec` |
+| **Dizzy** | Spinning stars | A single tool runs longer than `office.drama.dizzyToolSec` (default 90 s) | `office.drama.dizzyToolSec` |
+| **Sweating** | Sweat drop | Waiting on you or blocked longer than `office.drama.sweatAfterSec` (default 2 min) | `office.drama.sweatAfterSec` |
+| **On a roll** | Flame | Made >= `office.drama.streakTools` tool calls (default 8) within `office.drama.streakWindowSec` (default 60 s) | `office.drama.streakTools`, `office.drama.streakWindowSec` |
+
+When a strain icon appears, the character also speaks a strain line (e.g., "Still compiling..." for
+dizzy, "Ship it!" for on a roll). These lines come last in the speech-bubble priority, so if a server
+message arrives, it takes precedence. Turn off `office.drama.enabled` to hide antics and strain,
+though status icons will still show. Turning off `office.ambientEffects` hides the motion and
+particle effects but keeps icons and speech.
+
+You cannot disable ambient effects by themselves: they respect your system's **reduced motion**
+preference (`prefers-reduced-motion: reduce`). Antics play in place (no walking) when reduced motion
+is on.
+
+## Furniture triggers
+
+Some furniture on each floor opens UI panels when clicked — a **Kanban board** (modern style) or
+**War map** (guild style) opens the Board, a **Bookcase** or **Guild ledger** opens the Log, and so
+on. Hover over any furniture to see what it opens (e.g., "Quest board · Open Quests (Q)"). The first
+time you approach a trigger, it pulses gently to catch your eye. Click to open the panel, or use the
+menu hotkey instead (B, L, Q, S, H, D) — the furniture is purely visual.
+
+| Furniture | Panel | Hotkey | Modern label | Guild label | Rift label |
+|---|---|---|---|---|---|
+| **Kanban board** / War map / Star chart | Board | B | Kanban board | War map | Star chart |
+| **Bookcase** / Guild ledger / Archive crystal | Log | L | Bookcase | Guild ledger | Archive crystal |
+| **Notice board** / Quest board / Bounty shard | Quests | Q | Notice board | Quest board | Bounty shard |
+| **Server console** / Arcane terminal / Rift console | Settings | S | Server console | Arcane terminal | Rift console |
+| **Team roster** / Hall of Heroes / Hero constellation | Heroes | H | Team roster | Hall of Heroes | Hero constellation |
+| Reception desk / Gatekeeper's desk / Nexus gate desk | Receptionist | D | Reception desk | Gatekeeper's desk | Nexus gate desk |
+
+The ☰ menu (hotkey `M`) lists every panel with its hotkey; furniture triggers are just a shortcut
+for the impatient. Turn off `office.furnitureTriggers` in Settings to hide the hover rings and
+disable clicking.
 
 ## Heroes (`H`)
 
@@ -96,7 +161,7 @@ either visual style before you save.
 
 | Key | Action |
 |---|---|
-| `V` / `R` / `S` / `D` / `H` (or Space) | Select / Room / Stairs / Doors / Hand tool |
+| `V` / `R` / `S` / `D` / `F` / `H` (or Space) | Select / Room / Stairs / Doors / Furniture / Hand tool |
 | Drag (Room/Stairs tool) | Draw a room; release to pick its type |
 | `1`–`9`, `0` | Pick a room type from the popover |
 | Click / Shift+click | Select / add to selection |
@@ -111,6 +176,12 @@ either visual style before you save.
 | Doors tool: drag its end handle | Resize it (width 1–3) |
 | Doors tool: select + Delete | Remove a door |
 | Doors tool: select + Arrows | Nudge a door along its wall |
+| Furniture tool: click a furniture item | Select it (shows kind, position, size; buttons to Lock or Release) |
+| Furniture tool: drag a selected item | Move it (or Lock it in place if it is not already pinned) |
+| Furniture tool: Arrows | Nudge the selected pin by 1 tile (Shift+Arrows = 5 tiles) |
+| Furniture tool: Delete | Release a locked pin back to procedural generation |
+| Room section: **Lock all** | Lock every pinnable generated furniture in the room (limit 48 per room) |
+| Room section: **Release all** | Release all locked furniture in the room to procedural generation |
 | Ctrl/Cmd+Z | Undo |
 | Ctrl/Cmd+Shift+Z or Ctrl+Y | Redo |
 | Ctrl/Cmd+G | "Surprise me" (random layout) |
@@ -119,8 +190,15 @@ either visual style before you save.
 | `?` | Show this help |
 | Esc | Cancel the open popover, then clear the door/room selection, then close |
 
-Room furnishing (desk/seat count, density, decoration amount, aisle width, re-roll seed) and a
-reachability overlay are in the Inspector panel while a room is selected.
+**Room furnishing:** while a room is selected, the Inspector panel shows:
+- Desk count, seat count, density, decoration amount, and aisle width (controls for procedural generation)
+- Re-roll seed (change to shuffle the layout)
+- Number of locked furniture items and buttons to **Lock all** / **Release all**
+
+Locked furniture (marked with a **padlock** 🔒 icon on the canvas) stays in place when you change
+the seed or regenerate. Generated furniture can be dragged to lock in place; once locked, locked
+furniture can be nudged with arrow keys or dragged to a new position. Reachability checking is
+shown as an overlay while a room is selected.
 
 ## Manage floors (`F`)
 

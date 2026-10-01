@@ -71,6 +71,14 @@ or env var that controls it — rather than hiding them. Secret-shaped values (`
 | `office` | `floorOrder` | `created` | `created` \| `name` \| `recent` — stair order. |
 | `office` | `shaders.*` | — | See [Display & shaders](display.md). |
 | `office` | `pmMode` | `single` | `single` \| `per-session` — see [Using the office](office.md). |
+| `office.drama` | `enabled` | `true` | Master switch for idle antics and work strain (see [Using the office](office.md#idle-drama-and-work-strain)). |
+| `office.drama` | `idleChatSec` | `45` | Approx. seconds between idle chats/antics per floor. |
+| `office.drama` | `tiredAfterSec` | `1200` | Character on one quest longer than this looks tired. |
+| `office.drama` | `dizzyToolSec` | `90` | A single tool running longer than this makes the character dizzy. |
+| `office.drama` | `sweatAfterSec` | `120` | Character waiting / blocked longer than this starts sweating. |
+| `office.drama` | `streakTools` | `8` | Tool calls for a "on a roll" streak. |
+| `office.drama` | `streakWindowSec` | `60` | Time window for counting streak tool calls. |
+| `office` | `furnitureTriggers` | `true` | Enable/disable furniture triggers (hover rings and clickable items). See [Using the office](office.md#furniture-triggers). |
 | `notifications` | `onWaiting` / `onBlocked` / `onDone` | `true` / `true` / `false` | Browser notification triggers. |
 | `runner` | `enabled` | `false` | GUI-immutable. `pnpm office:install --allow-dir` flips it on for you. |
 | `runner` | `allowedProjectDirs` | `[]` | GUI-immutable. Where quests/project-scope Receptionist may run. |

@@ -7,6 +7,16 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- **HUD**: the party bar (bottom, one portrait chip per character in roster order) replaces the docked roster column; on a phone it collapses to a pill. The status card (top-left, shown while a character is selected) shows name, role title, status, **Mana** meter (context window use), **XP** tokens and level, current tool and tool time, quest time, and work strain summary; a **Details** button opens the full agent panel (activity, recent tools, Edit hero) in a focus-trapping dialog; **Follow** checkbox keeps the camera on the character. The card compresses to one row on phones.
+- **Office and tavern drama**: roughly every `office.drama.idleChatSec` (45 s), one or two idle characters walk to a piece of furniture (cooler, machine, counter, fireplace, etc.) and perform a short scene — speech bubbles and an emote icon (mug, dice, phone, laugh, etc.). Modern style plays office chat; guild plays tavern tales; antics controlled by `office.drama.enabled` (default `true`).
+- **Work strain**: characters on quests show icons and text when under stress: tired (over `tiredAfterSec`, 20 min), dizzy (tool over `dizzyToolSec`, 90 s), sweating (blocked/waiting over `sweatAfterSec`, 2 min), on a roll (`streakTools` calls in `streakWindowSec`). When strain starts, the character speaks a strain line. Strain is controlled by `office.drama.*` settings; with `office.ambientEffects` off, icons are static (no motion/fx); with reduced motion, antics stay in place.
+- **Furniture triggers**: click a **Kanban board** (modern) / **War map** (guild) on the map to open the Board, or a **Bookcase** to open the Log, etc. (six furniture kinds per action). Hover shows the label and hotkey. The first time you approach a trigger, it pulses. Disable with `office.furnitureTriggers` in Settings.
+- **Hall Planner Furniture tool** (F key): lock generated furniture in place by selecting it (shows kind, position, size) and dragging to pin; or click **Lock in place** in the Inspector. Pinned furniture (marked with a 🔒 padlock) stays when you reroll the seed. Nudge with arrows, Delete to release, or use **Lock all** / **Release all** in the room section. Up to 48 pins per room; each pin must be <= 8×8 tiles.
+
+### Changed
+- The roster now floats at the bottom as the **party bar**, no longer docked on the right; on phones and tablets it becomes a tray. The right-hand drawer is replaced by the **Details** button on the status card, which opens a focus-trapping dialog with the full agent panel.
+
 ### Fixed
 - `pnpm office:runner` failed at start with `ERR_MODULE_NOT_FOUND` (`packages/shared/src/hook.js`): it now runs through `tsx`. The runner also logs when it is connected, and says when it is probing a newly updated `claude` CLI (about a minute, once per version).
 
