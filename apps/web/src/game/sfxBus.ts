@@ -9,6 +9,9 @@ export const SFX_IDS = [
   'ui-click', 'ui-open', 'ui-close',
   'ui-select', 'ui-confirm', 'ui-back', 'ui-toggle', 'ui-tab', 'ui-hover', 'ui-error',
   'transition-floor', 'transition-multiverse', 'transition-daynight',
+  // M14 battles (docs/design/battles.md 3.2).
+  'battle-encounter', 'battle-text',
+  'battle-swirl', 'battle-sting', 'battle-return', 'battle-hit', 'battle-hit-super', 'battle-hit-weak', 'battle-crit', 'battle-miss', 'battle-heal', 'battle-buff', 'battle-shield', 'battle-status', 'battle-faint', 'battle-enemy-faint', 'battle-swap', 'battle-item', 'battle-run', 'battle-victory', 'battle-defeat', 'battle-level-up', 'battle-loot', 'battle-xp-tick',
 ] as const;
 export type SfxId = (typeof SFX_IDS)[number];
 /** Which `office.audio` toggle gates an id (`ui` follows `sfx`). */
@@ -21,6 +24,8 @@ export const SFX_CATEGORY: Record<SfxId, SfxCategory> = {
   'ui-click': 'ui', 'ui-open': 'ui', 'ui-close': 'ui',
   'ui-select': 'ui', 'ui-confirm': 'ui', 'ui-back': 'ui', 'ui-toggle': 'ui', 'ui-tab': 'ui', 'ui-hover': 'ui', 'ui-error': 'ui',
   'transition-floor': 'ui', 'transition-multiverse': 'ui', 'transition-daynight': 'sfx',
+  'battle-encounter': 'alerts', 'battle-text': 'ui',
+  'battle-swirl': 'sfx', 'battle-sting': 'sfx', 'battle-return': 'sfx', 'battle-hit': 'sfx', 'battle-hit-super': 'sfx', 'battle-hit-weak': 'sfx', 'battle-crit': 'sfx', 'battle-miss': 'sfx', 'battle-heal': 'sfx', 'battle-buff': 'sfx', 'battle-shield': 'sfx', 'battle-status': 'sfx', 'battle-faint': 'sfx', 'battle-enemy-faint': 'sfx', 'battle-swap': 'sfx', 'battle-item': 'sfx', 'battle-run': 'sfx', 'battle-victory': 'sfx', 'battle-defeat': 'sfx', 'battle-level-up': 'sfx', 'battle-loot': 'sfx', 'battle-xp-tick': 'sfx',
 };
 
 export interface SfxEvent {

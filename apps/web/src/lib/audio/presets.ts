@@ -12,6 +12,9 @@ const JINGLE = (freqs: number[]): SfxParams => ({
   notes: seq(freqs, 0.11, 0.16),
 });
 
+/** M14 W0w placeholder: a barely audible blip until AU1 writes the real battle presets. */
+const BLANK: SfxParams = { wave: 'sine', attack: 0.004, sustain: 0.01, decay: 0.03, freq: 440, gain: 0.15 };
+
 export const SFX_PRESETS: Record<SfxId, SfxParams> = {
   'alert-ask': {
     wave: 'square', duty: 0.25, attack: 0.01, sustain: 0.08, decay: 0.12, freq: 660, gain: 0.4, lowpass: 2600,
@@ -74,6 +77,30 @@ export const SFX_PRESETS: Record<SfxId, SfxParams> = {
     wave: 'sine', attack: 0.01, sustain: 0.06, decay: 0.2, freq: 784, gain: 0.2,
     notes: [{ freq: 784, at: 0, len: 0.2 }, { freq: 1047, at: 0.12, len: 0.26 }],
   },
+  // Battle presets: blank until AU1.
+  'battle-encounter': BLANK, 'battle-text': BLANK,
+  'battle-swirl': BLANK,
+  'battle-sting': BLANK,
+  'battle-return': BLANK,
+  'battle-hit': BLANK,
+  'battle-hit-super': BLANK,
+  'battle-hit-weak': BLANK,
+  'battle-crit': BLANK,
+  'battle-miss': BLANK,
+  'battle-heal': BLANK,
+  'battle-buff': BLANK,
+  'battle-shield': BLANK,
+  'battle-status': BLANK,
+  'battle-faint': BLANK,
+  'battle-enemy-faint': BLANK,
+  'battle-swap': BLANK,
+  'battle-item': BLANK,
+  'battle-run': BLANK,
+  'battle-victory': BLANK,
+  'battle-defeat': BLANK,
+  'battle-level-up': BLANK,
+  'battle-loot': BLANK,
+  'battle-xp-tick': BLANK,
 };
 
 // Compile-time/runtime guard that no id is missing.

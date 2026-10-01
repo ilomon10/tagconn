@@ -675,6 +675,26 @@ plus the copied move/item definitions, so a content change between create and re
    buff/shield are cleared on swap-out.
 9. Every applied action increments `actions`; `turns` in `ReplayResult` = `state.turn - 1` when ended.
 
+#### 1.6.1 Engine rulings (W0c, accepted by the PM)
+1. A battle that ends mid-turn still advances `turn`; `turns = state.turn - 1`; a timeout gives exactly `maxTurns`.
+2. The timeout check runs before the forced-swap phase (a battle may end `timeout` with the active hero just fainted).
+3. Stun is cleared by the skip it causes (exactly one lost action); only burnout and merge-conflict tick down, and only
+   for the active hero and the enemy; benched heroes keep their status.
+4. A stunned or merge-conflicted actor loses any action type (swap, item and run included).
+5. Enemy intent draws `r1`, `r2` at the start of every `choose` action, even when the player runs.
+6. Attack category: `r2 % 100 < 60` picks the highest `power × hits × typeEffect`, else `attackList[floor(r2/100) % n]`;
+   status/self categories pick `list[r2 % n]`.
+7. Enemy self-heal condition: `hp * 100 <= 60 * maxHp`.
+8. Events: `start` on the first action only; `turn` at the start of every `choose`; `focus` uses a negative amount for
+   focus spent; heal events carry the HP actually gained.
+9. `legalActions` lists an item without a target for the active hero plus an explicit target per other living member
+   (except `heal-party`); in `forced-swap` only swaps.
+10. `damagePreview`: per-hit damage × `hits`, no crit; `min` spread 85, `max` spread 100.
+11. `rngNext`/`seedState` are re-exported from `battle/engine.ts` (the package index exports the engine, not `rng.ts`).
+12. Loot draw order in `computeOutcome` (W0b): chance roll `% 1000 < round(lootChance*1000)`, then the recipient among
+   living heroes (all heroes if everyone fainted), then the weighted pick over the enemy table restricted to unowned
+   loot. Changing it changes which loot a stored `lootSeed` yields.
+
 ### 1.7 Content (`src/progressionContent.ts`, W0b) and setup (`src/battle/setup.ts`, W0b)
 
 ```ts

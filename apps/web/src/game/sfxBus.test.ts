@@ -64,5 +64,8 @@ describe('sfxBus', () => {
     expect(SFX_CATEGORY.footstep).toBe('footsteps');
     expect(SFX_CATEGORY['ui-open']).toBe('ui');
     expect(SFX_CATEGORY.roar).toBe('sfx');
+    expect(SFX_CATEGORY['battle-encounter']).toBe('alerts');
+    expect(SFX_CATEGORY['battle-text']).toBe('ui');
+    expect(SFX_CATEGORY['battle-hit']).toBe('sfx');
   });
 });
