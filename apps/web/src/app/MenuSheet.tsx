@@ -35,6 +35,7 @@ function Row({ id, label, hint, actions, onPick }: { id: MenuActionId; label: st
     <button
       type="button"
       className={ROW}
+      data-sfx-hover
       disabled={a.disabled}
       aria-keyshortcuts={MENU_HOTKEYS[id]}
       onClick={() => {

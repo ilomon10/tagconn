@@ -17,6 +17,7 @@ import { IssueList } from './IssueList';
 import { PreviewGame } from './PreviewScene';
 import { Button, Select, cx } from '../../components/ui';
 import { useOverlayEscape } from '../../lib/overlayStack';
+import { useDialogSound } from '../../lib/audio/useDialogSound';
 
 const TOOLS: { tool: EditorTool; label: string; hotkey: string }[] = [
   { tool: 'select', label: 'Select', hotkey: 'V' },
@@ -62,6 +63,7 @@ const HELP_LINES = [
  * old behavior (whatever floor is currently selected).
  */
 export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void; targetProjectId?: string }) {
+  useDialogSound();
   const store = useEditorStore();
   const { draft, selection, selectedDoor, selectedFurniture, pruneNotice, tool, history, future, dirty, builtin, originalId, originalUpdatedAt } = store;
   const layouts = useLayoutStore((s) => s.layouts);

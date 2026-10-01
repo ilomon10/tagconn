@@ -48,6 +48,32 @@ export const SFX_PRESETS: Record<SfxId, SfxParams> = {
   'ui-click': { wave: 'square', duty: 0.5, attack: 0.002, sustain: 0.008, decay: 0.03, freq: 900, gain: 0.25, lowpass: 3000 },
   'ui-open': { wave: 'triangle', attack: 0.005, sustain: 0.03, decay: 0.08, freq: 500, slide: 1200, gain: 0.3, lowpass: 3000 },
   'ui-close': { wave: 'triangle', attack: 0.005, sustain: 0.03, decay: 0.08, freq: 900, slide: -1200, gain: 0.3, lowpass: 3000 },
+  // Soft UI feedback: triangle/sine, low-passed, quiet, <= 0.15 s. Pitches stay in the same pentatonic family as the jingles.
+  'ui-select': {
+    wave: 'triangle', attack: 0.004, sustain: 0.02, decay: 0.05, freq: 659, gain: 0.26, lowpass: 3200,
+    notes: [{ freq: 659, at: 0, len: 0.07 }, { freq: 988, at: 0.05, len: 0.08 }],
+  },
+  'ui-confirm': {
+    wave: 'triangle', attack: 0.004, sustain: 0.025, decay: 0.06, freq: 523, gain: 0.3, lowpass: 3400,
+    notes: [{ freq: 523, at: 0, len: 0.06 }, { freq: 659, at: 0.04, len: 0.06 }, { freq: 784, at: 0.08, len: 0.06 }],
+  },
+  'ui-back': {
+    wave: 'triangle', attack: 0.004, sustain: 0.02, decay: 0.05, freq: 587, gain: 0.26, lowpass: 2800,
+    notes: [{ freq: 587, at: 0, len: 0.07 }, { freq: 392, at: 0.05, len: 0.08 }],
+  },
+  'ui-toggle': { wave: 'sine', attack: 0.003, sustain: 0.012, decay: 0.04, freq: 740, slide: 700, gain: 0.26 },
+  'ui-tab': { wave: 'triangle', attack: 0.003, sustain: 0.01, decay: 0.035, freq: 784, gain: 0.22, lowpass: 3000 },
+  'ui-hover': { wave: 'sine', attack: 0.004, sustain: 0.004, decay: 0.025, freq: 1320, gain: 0.08, lowpass: 3000 },
+  'ui-error': { wave: 'triangle', attack: 0.004, sustain: 0.05, decay: 0.07, freq: 220, slide: -60, gain: 0.3, lowpass: 1200 },
+  // Transitions: slow soft sweeps (<= 0.4 s) played as the animation starts.
+  'transition-floor': { wave: 'noise', attack: 0.09, sustain: 0.1, decay: 0.2, freq: 0, gain: 0.2, lowpass: 900, highpass: 120, seed: 31 },
+  'transition-multiverse': {
+    wave: 'sine', attack: 0.08, sustain: 0.12, decay: 0.2, freq: 330, slide: 700, gain: 0.24, vibratoHz: 9, vibratoDepth: 0.02,
+  },
+  'transition-daynight': {
+    wave: 'sine', attack: 0.01, sustain: 0.06, decay: 0.2, freq: 784, gain: 0.2,
+    notes: [{ freq: 784, at: 0, len: 0.2 }, { freq: 1047, at: 0.12, len: 0.26 }],
+  },
 };
 
 // Compile-time/runtime guard that no id is missing.

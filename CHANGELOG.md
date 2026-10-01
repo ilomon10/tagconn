@@ -7,6 +7,9 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- **UI and transition sounds**: soft chiptune feedback for menus, panels and dialogs (open/close), character selection, buttons, switches and tabs, a quiet hover tick on the party bar and menu rows, settings Save (confirm or error), plus gentle sweeps for floor and Multiverse transitions and a chime when day turns to night. They follow the existing Sound toggle (nothing plays while muted) and the SFX category. Opt a control out with `data-sfx="none"`.
+
 ## [0.7.0] - 2026-10-01
 
 ### Added

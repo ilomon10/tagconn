@@ -241,13 +241,14 @@ encounters may cause brief cosmetic chaos (never cover a waiting bubble, never t
   - [x] PM wiring into OfficeScene / OfficeView (W1-W plates/alerts/audio, W2-W life + NPCs; smoke fixes: plate gap, "unknown" alert, kickoff invitees may be mid-tool)
 - [x] Gate: QA (all suites green; plates/alerts/Show me/Sound row/phone pass; NPC + reduced motion covered by unit tests only) + review (High: repeat alerts dropped forever; Med: stranded walkers on script timeouts, reactions outliving their NPC, ambient attenuated twice + no fade, alert voices starved) + security (Med: unbounded description in plate layout O(L²) and alert typewriter; Low: control/bidi chars, second ask never shown) + docs (5 guide pages, CHANGELOG) → fixes [x]: `lib/displayText` clip+sanitize, binary-search cuts, 5x9 pixel font with real descenders, forced goHome on timeouts, `cancelFor`, janitor cooldown kept, single ambient stage + fades/crossfade, alert voice reserve, allocation-free proximity tick → re-review [x] (code: 1 Med duplicate pending alerts; security: arrow label unsanitized) → final fixes [x] → v0.7.0
 
-## M14: Encounters, battles and hero progression → v0.8.0 [todo]
+## M14: Encounters, battles and hero progression → v0.8.0 [in progress]
 
 Pokémon-style turn-based battles from M13 encounters (Battle / Ignore), party of 1–4 heroes, level from tokens spent
 (`Agent.usage` deltas credited to the bound hero), stats + per-class skill trees, XP + cosmetic loot, soft KO.
 Design: `docs/design/battles.md`.
 
 - [ ] W0 design + threat model + shared contract (`progression.ts`, seeded battle engine replayed by the server) [Architect + Security]
+- [x] UI interaction sounds + transition sounds (floor, Multiverse, day/night): game-like feedback on menu/panel open-close, character selection, toggles, tabs, floor switch, save (user request 2026-10-01) [Developer: audio/web]
 - [ ] Server `progression` module (hero_progress table, usage-delta XP, skills, battles create/resolve) [Developer: server]
 - [ ] BattleScene (swirl transition, command menu, HP bars, log, results) + enemy art [Developer: game]
 - [ ] Hero sheet "Stats & Skills" tab + HUD level badge [Developer: heroes]

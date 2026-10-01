@@ -8,7 +8,7 @@ import type { AmbientKind, AudioEngine, AudioMix } from './types';
 
 export const MAX_VOICES = 8;
 const DEFAULT_MIN_INTERVAL_MS = 60;
-const MIN_INTERVAL_MS: Partial<Record<SfxId, number>> = { footstep: 250, typing: 150 };
+const MIN_INTERVAL_MS: Partial<Record<SfxId, number>> = { footstep: 250, typing: 150, 'ui-hover': 120 };
 /** Voices kept free for alerts and ui; footsteps and other sfx can only use MAX_VOICES - PRIORITY_RESERVE. */
 const PRIORITY_RESERVE = 2;
 const MASTER_FADE_S = 0.1;

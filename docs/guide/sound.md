@@ -30,6 +30,23 @@ Click the **🔊** (sound on) or **🔇** (sound off) button in the menu:
 
 Your choice is saved **in this browser only** (localStorage) and survives a page reload — no pairing needed.
 
+## Interface and transition sounds
+
+The interface gives short game-style feedback, all soft and under 0.15 s:
+
+| When | Sound |
+|---|---|
+| Open or close the menu, a panel or a dialog (Settings, Heroes, Receptionist, Hall Planner, agent details) | open / close sweep |
+| A character becomes selected (scene click, party bar, `[` / `]`, alert "Show me") | select blip; clearing the selection plays a lower "back" blip |
+| Any other button (zoom, Fit, menu rows) | click |
+| Switches, checkboxes, radio choices | toggle; tabs get a tab tick |
+| Hovering a party portrait or menu row with a mouse | very quiet tick |
+| Settings **Save** | rising confirm on success, low buzz on failure |
+| Switching floors or entering and leaving the Multiverse | soft whoosh or shimmer as the transition starts |
+| Day turning to night (or back) on the current floor | two-note chime |
+
+UI sounds follow the **SFX** switch, so turning SFX off (Settings, Office, Audio) or muting from the menu silences all of them. The day/night chime is an SFX sound. Nothing plays before your first click or key press, and a hidden tab is silent. Developers can set `data-sfx="none"` on a control to skip its click sound or `data-sfx="<sound id>"` to pick another.
+
 ## Ambient sound
 
 Each floor generates a subtle background bed based on its visual style and time of day:

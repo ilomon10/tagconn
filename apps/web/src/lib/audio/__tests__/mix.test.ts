@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveMix } from '../mix';
+import { dayNightChanged, resolveMix } from '../mix';
 
 const office = { sound: true, audio: { volume: 0.6, sfx: true, ambient: false, alerts: true, footsteps: false } };
 
@@ -18,5 +18,15 @@ describe('resolveMix', () => {
   });
   it('hidden tab is silent', () => {
     expect(resolveMix(office, { muted: false, volume: 1 }, true).master).toBe(0);
+  });
+});
+
+describe('dayNightChanged', () => {
+  it('only fires when the light flips on the same style', () => {
+    const modernDay = { style: 'modern', night: false } as const;
+    expect(dayNightChanged(null, modernDay)).toBe(false);
+    expect(dayNightChanged(modernDay, modernDay)).toBe(false);
+    expect(dayNightChanged(modernDay, { style: 'modern', night: true })).toBe(true);
+    expect(dayNightChanged(modernDay, { style: 'guild', night: true })).toBe(false);
   });
 });

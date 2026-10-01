@@ -10,6 +10,7 @@ import { useHeroPanelStore } from '../heroes/store';
 import { useRequireAdmin } from '../auth/useRequireAdmin';
 import { PendingImportsPanel } from '../attribution/PendingImportsPanel';
 import { SaveProfilePanel } from '../attribution/SaveProfilePanel';
+import { uiSound } from '../../lib/audio/uiSound';
 import { Badge, Button, Checkbox, Field, Input, Panel, Select, Textarea } from '../../components/ui';
 import { ENUM_OPTIONS, HIDDEN_SETTINGS, KEY_HINTS, NUMBER_STEP, SECTION_LABELS, envVarName, humanize, numberBounds } from './meta';
 import { RulesTable } from './RulesTable';
@@ -376,6 +377,7 @@ export function SettingsPanel() {
     const parsed = SettingsSchema.safeParse(draft);
     if (!parsed.success) {
       setMessage({ tone: 'error', text: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(' · ') });
+      uiSound('ui-error');
       return;
     }
     for (const r of draft.activity.rules) {
@@ -384,6 +386,7 @@ export function SettingsPanel() {
         if (r.input) new RegExp(r.input);
       } catch {
         setMessage({ tone: 'error', text: `Invalid regex in activity rule "${r.tool}"` });
+        uiSound('ui-error');
         return;
       }
     }
@@ -393,6 +396,7 @@ export function SettingsPanel() {
       const next = await updateSettings(patch);
       setBase(next);
       setDraft(next);
+      uiSound('ui-confirm');
       setMessage(
         restart.length
           ? { tone: 'warn', text: `Saved. Restart the server to apply: ${restart.join(', ')}` }
@@ -400,6 +404,7 @@ export function SettingsPanel() {
       );
     } catch (err) {
       setMessage({ tone: 'error', text: err instanceof Error ? err.message : String(err) });
+      uiSound('ui-error');
     } finally {
       setBusy(false);
     }
@@ -437,7 +442,7 @@ export function SettingsPanel() {
           <Button onClick={() => (setDraft(base), setMessage(null))} disabled={!dirty || busy}>
             Revert
           </Button>
-          <Button variant="primary" onClick={() => guard(save)} disabled={!dirty || busy}>
+          <Button variant="primary" data-sfx="none" onClick={() => guard(save)} disabled={!dirty || busy}>
             Save
           </Button>
         </div>

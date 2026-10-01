@@ -23,6 +23,8 @@ export const PortraitChip = memo(function PortraitChip({ agent, selected, offCan
       aria-pressed={selected}
       title={`${name} · ${statusLabel(agent)}`}
       data-agent-chip={agent.id}
+      data-sfx="none"
+      data-sfx-hover
       className={cx(
         'relative grid size-12 shrink-0 place-items-center rounded-xl bg-ink-900 outline-offset-2 transition-[transform,opacity,box-shadow,background-color] duration-150 ease-out active:scale-[0.96] coarse:size-14',
         selected ? '-translate-y-1 bg-ink-700' : 'hover:-translate-y-0.5 hover:bg-ink-800',

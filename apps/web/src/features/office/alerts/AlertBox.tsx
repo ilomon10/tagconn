@@ -78,7 +78,7 @@ export function AlertBox({ kind, agent, copy, onShowMe, onDismiss }: { kind: Ale
           </div>
         </div>
         <div className="mt-2 flex items-center justify-end gap-1.5">
-          <Button variant="subtle" onClick={onShowMe} aria-label={`Show me: ${copy.title}`}>
+          <Button variant="subtle" data-sfx="ui-select" onClick={onShowMe} aria-label={`Show me: ${copy.title}`}>
             Show me
           </Button>
           <Button variant="ghost" onClick={onDismiss} aria-label={`Dismiss: ${copy.title}`} title="Dismiss">

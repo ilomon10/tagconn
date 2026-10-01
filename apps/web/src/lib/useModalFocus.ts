@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { useOverlayEscape } from './overlayStack';
+import { useDialogSound } from './audio/useDialogSound';
 
 /** Selects the elements a keyboard user can land on with Tab — the same rough list every focus-trap
  * implementation uses, since there's no single DOM API that returns it. */
@@ -108,6 +109,8 @@ export function useModalFocus(open: boolean, containerRef: RefObject<HTMLElement
     container.addEventListener('keydown', onKeyDown);
     return () => container.removeEventListener('keydown', onKeyDown);
   }, [open, trap]);
+
+  useDialogSound(open);
 
   // Esc closes the top-most open overlay wherever focus is (`lib/overlayStack.ts`).
   useOverlayEscape(open, onEscape);

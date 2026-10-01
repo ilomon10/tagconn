@@ -12,6 +12,7 @@ import { useReceptionistStore } from '../../stores/receptionistStore';
 import { useReceptionistUiStore } from '../receptionist/uiStore';
 import { useFloorAgents, useThemedRoleLookup } from '../../lib/hooks';
 import { PHONE_QUERY, useMediaQuery } from '../../lib/useMediaQuery';
+import { selectionSound, uiSound } from '../../lib/audio/uiSound';
 import { cycleIndex, firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isMultiverseFloor, isTypingTarget, neighborFloor, topProjectFloor } from '../../lib/floors';
 import { layoutForProject, useLayoutStore } from '../../stores/layoutStore';
 import { ZERO_INSETS, combineInsets, insetsFromOverlay, type InsetEdge } from '../../game/camera/insets';
@@ -197,6 +198,8 @@ async function goToFloor(game: OfficeGame | null, target: Project, ms: number, l
   const index = order.findIndex((p) => p.id === target.id);
   const label = floorLabelForEntry(target, index, layouts, settings);
   const select = () => useOfficeStore.getState().selectProject(target.id);
+  const multiverse = isMultiverseFloor(target.id) || isMultiverseFloor(useOfficeStore.getState().selectedProjectId);
+  uiSound(multiverse ? 'transition-multiverse' : 'transition-floor');
   if (game) await game.transitionFloor(ms, select, dir);
   else select();
   showToast(label);
@@ -502,6 +505,14 @@ export function OfficeView({ active }: { active: boolean }) {
   useEffect(() => {
     game?.setFollow(follow ? selected : null);
   }, [game, follow, selected]);
+
+  // Selection sounds cover every path (scene click, party bar, `[`/`]`, alert "Show me"); the first render is silent.
+  const prevSelected = useRef<string | null>(null);
+  useEffect(() => {
+    const id = selectionSound(prevSelected.current, selected);
+    prevSelected.current = selected;
+    if (id) uiSound(id);
+  }, [selected]);
 
   // M8 8d: the selected character glows (and, with `office.focusDim`, everyone else dims).
   useEffect(() => {
