@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-01
+
 ### Added
 - **RPG name plates** (v0.7.0): each character displays a multi-line label above their head showing name, role title, and current task. The label is drawn in a hand-made pixel font that stays crisp at any zoom. Configure which lines show and the plate width with `office.labels.*` settings; plates fall back to system text in canvas mode or when glyphs are missing.
 - **Office life — meetings and activities** (v0.7.0): when subagents gather during a kickoff, they hold a meeting at a conference table. Every ~30 minutes, idle characters hold stand-ups. Between meetings, characters take breaks roughly every minute: coffee chats, arcade games, ping-pong, foosball, board games, stretches, naps on the sofa, and more. Meetings last ~20 seconds; activities last a few seconds. All controlled by `office.life.*` settings. Reduced motion disables walking and meetings; on low graphics quality, only 1 concurrent activity runs.
@@ -184,7 +186,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ilomon10/tagconn/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ilomon10/tagconn/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/ilomon10/tagconn/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ilomon10/tagconn/compare/v0.5.1...v0.5.2
