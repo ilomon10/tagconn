@@ -1,0 +1,187 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AudioMix } from '../types';
+
+vi.mock('../sfxr', () => ({ renderSfx: vi.fn(() => new Float32Array(10)) }));
+vi.mock('../presets', () => ({ SFX_PRESETS: new Proxy({}, { get: () => ({}) }) }));
+const stopAmbient = vi.fn();
+vi.mock('../ambient', () => ({ createAmbient: vi.fn(() => ({ stop: stopAmbient })) }));
+
+import { createAmbient } from '../ambient';
+import { createAudioEngine } from '../engine';
+import { renderSfx } from '../sfxr';
+
+class FakeNode {
+  gain = { value: 1 };
+  pan = { value: 0 };
+  buffer: unknown = null;
+  onended: (() => void) | null = null;
+  connect = vi.fn();
+  disconnect = vi.fn();
+  start = vi.fn();
+}
+class FakeCtx {
+  currentTime = 0;
+  sampleRate = 1000;
+  destination = new FakeNode();
+  sources: FakeNode[] = [];
+  suspend = vi.fn(async () => {});
+  resume = vi.fn(async () => {});
+  close = vi.fn(async () => {});
+  createGain = () => new FakeNode();
+  createStereoPanner = () => new FakeNode();
+  createBufferSource = () => {
+    const n = new FakeNode();
+    this.sources.push(n);
+    return n;
+  };
+  createBuffer = vi.fn(() => ({ getChannelData: () => new Float32Array(10) }));
+}
+
+const ALL: AudioMix = { master: 0.5, sfx: true, ambient: true, alerts: true, footsteps: true };
+
+function setup() {
+  const ctx = new FakeCtx();
+  const target = new EventTarget();
+  const engine = createAudioEngine({ createContext: () => ctx as unknown as AudioContext, target });
+  return { ctx, target, engine };
+}
+const unlock = (t: EventTarget) => t.dispatchEvent(new Event('pointerdown'));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('audio engine', () => {
+  it('is inert without a context', () => {
+    const e = createAudioEngine({ createContext: () => null, target: new EventTarget() });
+    e.setMix(ALL);
+    e.play('ui-click');
+    e.setAmbient('office-day');
+    e.destroy();
+    expect(e.unlocked).toBe(false);
+  });
+
+  it('drops sounds until the first gesture, then unlocks once and resumes', () => {
+    const { ctx, target, engine } = setup();
+    engine.setMix(ALL);
+    engine.play('door-bell');
+    expect(ctx.sources).toHaveLength(0);
+    unlock(target);
+    expect(engine.unlocked).toBe(true);
+    expect(ctx.resume).toHaveBeenCalledTimes(1);
+    target.dispatchEvent(new Event('keydown'));
+    expect(ctx.resume).toHaveBeenCalledTimes(1);
+    engine.play('door-bell');
+    expect(ctx.sources).toHaveLength(1);
+    expect(ctx.sources[0]!.start).toHaveBeenCalled();
+  });
+
+  it('gates by category (ui follows sfx)', () => {
+    const { ctx, target, engine } = setup();
+    unlock(target);
+    engine.setMix({ ...ALL, sfx: false, alerts: false });
+    engine.play('door-bell');
+    engine.play('ui-click');
+    engine.play('alert-done');
+    expect(ctx.sources).toHaveLength(0);
+    engine.play('footstep');
+    expect(ctx.sources).toHaveLength(1);
+    engine.setMix({ ...ALL, footsteps: false });
+    ctx.currentTime = 10;
+    engine.play('footstep');
+    expect(ctx.sources).toHaveLength(1);
+  });
+
+  it('caps concurrent voices at 8 and frees them on end', () => {
+    const { ctx, target, engine } = setup();
+    unlock(target);
+    engine.setMix(ALL);
+    const ids = ['door-bell', 'meeting-gong', 'bark', 'meow', 'slime', 'whistle', 'roar', 'mop', 'ui-click'] as const;
+    for (const id of ids) engine.play(id);
+    expect(ctx.sources).toHaveLength(8);
+    ctx.sources[0]!.onended?.();
+    engine.play('ui-open');
+    expect(ctx.sources).toHaveLength(9);
+  });
+
+  it('enforces per-id min interval (60 ms, footstep 250, typing 150)', () => {
+    const { ctx, target, engine } = setup();
+    unlock(target);
+    engine.setMix(ALL);
+    engine.play('bark');
+    ctx.currentTime = 0.03;
+    engine.play('bark');
+    expect(ctx.sources).toHaveLength(1);
+    ctx.currentTime = 0.07;
+    engine.play('bark');
+    expect(ctx.sources).toHaveLength(2);
+    engine.play('footstep');
+    ctx.currentTime = 0.25;
+    engine.play('footstep');
+    expect(ctx.sources).toHaveLength(3);
+    ctx.currentTime = 0.33;
+    engine.play('footstep');
+    expect(ctx.sources).toHaveLength(4);
+    engine.play('typing');
+    ctx.currentTime = 0.4;
+    engine.play('typing');
+    expect(ctx.sources).toHaveLength(5);
+  });
+
+  it('renders each id once (buffer cache)', () => {
+    const { ctx, target, engine } = setup();
+    unlock(target);
+    engine.setMix(ALL);
+    engine.play('bark');
+    ctx.currentTime = 1;
+    engine.play('bark');
+    expect(renderSfx).toHaveBeenCalledTimes(1);
+    expect(ctx.createBuffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips empty (stub) renders without throwing', () => {
+    vi.mocked(renderSfx).mockReturnValueOnce(new Float32Array(0));
+    const { ctx, target, engine } = setup();
+    unlock(target);
+    engine.setMix(ALL);
+    engine.play('bark');
+    expect(ctx.sources).toHaveLength(0);
+  });
+
+  it('suspends at master 0 and resumes after', () => {
+    const { ctx, target, engine } = setup();
+    unlock(target);
+    engine.setMix({ ...ALL, master: 0 });
+    expect(ctx.suspend).toHaveBeenCalled();
+    engine.play('bark');
+    expect(ctx.sources).toHaveLength(0);
+    engine.setMix(ALL);
+    expect(ctx.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs ambient only when unlocked, enabled and audible; restarts on kind change', () => {
+    const { target, engine } = setup();
+    engine.setMix(ALL);
+    engine.setAmbient('office-day');
+    expect(createAmbient).not.toHaveBeenCalled();
+    unlock(target);
+    expect(createAmbient).toHaveBeenCalledTimes(1);
+    engine.setAmbient('rift');
+    expect(stopAmbient).toHaveBeenCalledTimes(1);
+    expect(createAmbient).toHaveBeenCalledTimes(2);
+    engine.setMix({ ...ALL, ambient: false });
+    expect(stopAmbient).toHaveBeenCalledTimes(2);
+    engine.setMix(ALL);
+    expect(createAmbient).toHaveBeenCalledTimes(3);
+    engine.setAmbient(null);
+    expect(stopAmbient).toHaveBeenCalledTimes(3);
+  });
+
+  it('destroy removes listeners and closes the context', () => {
+    const { ctx, target, engine } = setup();
+    engine.destroy();
+    unlock(target);
+    expect(engine.unlocked).toBe(false);
+    expect(ctx.close).toHaveBeenCalled();
+  });
+});

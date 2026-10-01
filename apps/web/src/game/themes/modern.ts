@@ -7,6 +7,8 @@ import { paintModernWallDecor } from './paint/wallDecor';
 import { paintModernBackWall, paintModernDoor, paintModernVoid, paintModernWall } from './paint/walls';
 import type { Costume, DramaContent, ThemeDefinition } from './types';
 import { SHIPPED_ROLE_TITLES } from './shippedTitles';
+import { MODERN_LIFE } from './content/modernLife';
+import { MODERN_NPCS } from './content/modernNpcs';
 
 /** A straight port of the pre-M7 office: `renderMap.ts` colours and furniture art, `ZONE_LABELS`
  *  for names, and identity titles (no guild flavour, no verbs, no fx). */
@@ -177,6 +179,8 @@ export const modernTheme: ThemeDefinition = {
   activityVerbs: {},
   activityFx: {},
   drama: MODERN_DRAMA,
+  life: MODERN_LIFE,
+  npcs: MODERN_NPCS,
   lighting: { dayTint: 0xffffff, nightTint: 0x0b1030, nightAlpha: 0.42, glowAtNight: false },
   floorLabel: (index, projectName) => `Floor ${index + 1} — ${projectName}`,
 };

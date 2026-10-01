@@ -1,0 +1,53 @@
+import { useEffect } from 'react';
+import { sfxBus } from '../../../game/sfxBus';
+import { getAudioEngine } from '../../../lib/audio/engine';
+import { ambientFor } from '../../../lib/audio/ambient';
+import { resolveMix } from '../../../lib/audio/mix';
+import { spatialGain, spatialPan } from '../../../lib/audio/spatial';
+import type { AudioMix } from '../../../lib/audio/types';
+import { useAudioPrefsStore } from '../../../stores/audioPrefsStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
+
+/**
+ * Connects the sfx bus to the audio engine (docs/design/office-life.md 3.7.2). `active` is false on a
+ * non-office tab (master 0). Mix changes follow settings, this browser's prefs and tab visibility.
+ */
+export function useAudioBridge(active: boolean): void {
+  const office = useSettingsStore((s) => s.settings.office);
+  const muted = useAudioPrefsStore((s) => s.muted);
+  const volume = useAudioPrefsStore((s) => s.volume);
+
+  useEffect(() => {
+    const engine = getAudioEngine();
+    let mix: AudioMix = resolveMix(office, { muted, volume }, document.hidden);
+    const apply = (): void => {
+      mix = resolveMix(office, { muted, volume }, document.hidden);
+      engine.setMix(active ? mix : { ...mix, master: 0 });
+    };
+    apply();
+
+    const offSfx = sfxBus.on((e) => {
+      const l = sfxBus.listener();
+      let gain = e.gain ?? 1;
+      let pan: number | undefined;
+      if (e.at && l) {
+        const g = spatialGain(e.at, l);
+        if (g <= 0) return;
+        gain *= g;
+        pan = spatialPan(e.at, l);
+      }
+      engine.play(e.id, pan === undefined ? { gain } : { gain, pan });
+    });
+    const offAmbient = sfxBus.onAmbient((a) => engine.setAmbient(mix.ambient ? ambientFor(a.style, a.night) : null));
+    // Re-evaluate the ambient bed after a mix change (the bus replays the last context to this subscriber only).
+    const ambient = sfxBus.ambient();
+    if (ambient) engine.setAmbient(mix.ambient ? ambientFor(ambient.style, ambient.night) : null);
+
+    document.addEventListener('visibilitychange', apply);
+    return () => {
+      document.removeEventListener('visibilitychange', apply);
+      offSfx();
+      offAmbient();
+    };
+  }, [office, muted, volume, active]);
+}

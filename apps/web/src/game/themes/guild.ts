@@ -7,6 +7,8 @@ import { paintGuildFurniture } from './paint/furniture';
 import { paintGuildWallDecor } from './paint/wallDecor';
 import { paintGuildBackWall, paintGuildDoor, paintGuildVoid, paintGuildWall } from './paint/walls';
 import type { Costume, DramaContent, ThemeDefinition } from './types';
+import { GUILD_LIFE } from './content/guildLife';
+import { GUILD_NPCS } from './content/guildNpcs';
 import { ambientMotes, channelAura, portalShimmer, potionBubbles, prefersReducedMotion, runeGlow, torchFlicker } from './fx';
 
 // `Phaser.BlendModes.ADD` (only a type import of `phaser` is safe under vitest's node
@@ -278,6 +280,8 @@ export const guildTheme: ThemeDefinition = {
   activityVerbs: ACTIVITY_VERBS,
   activityFx: ACTIVITY_FX,
   drama: GUILD_DRAMA,
+  life: GUILD_LIFE,
+  npcs: GUILD_NPCS,
   lighting: { dayTint: 0xfff1d6, nightTint: 0x1b1030, nightAlpha: 0.5, glowAtNight: true },
   floorLabel: (index, projectName) => `Floor ${index + 1} · ${projectName}`,
 };

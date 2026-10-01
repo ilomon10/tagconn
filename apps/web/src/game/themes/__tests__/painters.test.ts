@@ -138,7 +138,13 @@ const TRIGGER_SHAPES: { kind: FurnitureKind; w: number }[] = [
   { kind: 'roster-board', w: 1 },
   { kind: 'notice-board', w: 2 },
   { kind: 'roster-board', w: 2 },
+  // Office life (W1-8): break-room play furniture; painted strictly inside the footprint (see the next test).
+  { kind: 'arcade', w: 1 },
+  { kind: 'ping-pong', w: 2 },
+  { kind: 'foosball', w: 2 },
+  { kind: 'board-game-table', w: 2 },
 ];
+const PLAY_SHAPES = TRIGGER_SHAPES.slice(4);
 
 function wallDecorFixture(kind: WallDecorKind, span: number, variant: number): WallDecorSlot {
   return { kind, x: 2, y: 5, span, roomId: 'r1', variant };
@@ -278,6 +284,23 @@ describe.each(THEMES)('%s theme painters', (name, theme) => {
           expect(Math.max(...rects.map((r) => r.x + r.w))).toBeLessThanOrEqual((f.x + w) * T + 1);
           expect(Math.min(...rects.map((r) => r.y))).toBeGreaterThanOrEqual(f.y * T - (against ? MAX_OVERDRAW_PX : 0));
           expect(Math.max(...rects.map((r) => r.y + r.h))).toBeLessThanOrEqual((f.y + 1) * T + 1);
+        }
+      }
+    }
+  });
+
+  it('paints the play furniture strictly inside its footprint, with no overdraw even against a north wall', () => {
+    const T = 16;
+    for (const { kind, w } of PLAY_SHAPES) {
+      for (const against of [false, true]) {
+        for (let variant = 0; variant < 4; variant++) {
+          const f: PlacedFurniture = { x: 2, y: 5, w, h: 1, kind, blocking: true, roomId: 'r1', roomType: 'desks', variant, againstNorthWall: against };
+          const { g, rects } = makeBoundsGraphics();
+          theme.paintFurniture(g, f, T);
+          expect(Math.min(...rects.map((r) => r.x))).toBeGreaterThanOrEqual(f.x * T);
+          expect(Math.max(...rects.map((r) => r.x + r.w))).toBeLessThanOrEqual((f.x + w) * T);
+          expect(Math.min(...rects.map((r) => r.y))).toBeGreaterThanOrEqual(f.y * T);
+          expect(Math.max(...rects.map((r) => r.y + r.h))).toBeLessThanOrEqual((f.y + 1) * T);
         }
       }
     }

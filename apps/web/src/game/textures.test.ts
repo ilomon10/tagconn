@@ -1,5 +1,6 @@
 import { HERO_HAIR_COLORS, HERO_HAIR_STYLE_COUNT, HERO_SKIN_TONES } from '@tagconn/shared';
 import { describe, expect, it } from 'vitest';
+import { POSE_PROP } from './actors/poses';
 import { DIZZY_FRAMES, EMOTE_ICON, STRAIN_ICON } from './drama';
 import { CHARACTER_BITMAPS, HAIR_COLORS, HAIR_STYLES, hexToNumber, SKIN_TONES } from './textures';
 
@@ -42,6 +43,17 @@ describe('M12 drama textures', () => {
         expect(r.length, k).toBeLessThanOrEqual(7);
         for (const ch of r) if (ch !== ' ') expect(b.palette[ch], `${k} '${ch}'`).toBeDefined();
       }
+    }
+  });
+});
+
+describe('M13 life art', () => {
+  it('every POSE_PROP texture key has a bitmap using only its palette', () => {
+    for (const k of Object.values(POSE_PROP)) {
+      if (!k) continue;
+      const b = CHARACTER_BITMAPS[k];
+      expect(b, k).toBeDefined();
+      for (const r of b!.rows) for (const ch of r) if (ch !== ' ') expect(b!.palette[ch], `${k} '${ch}'`).toBeDefined();
     }
   });
 });

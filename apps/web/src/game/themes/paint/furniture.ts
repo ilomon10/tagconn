@@ -18,11 +18,87 @@ function pick<T>(arr: readonly T[], seed: number): T {
 // ==================================================================== modern (port of renderMap.ts)
 
 const MODERN: Record<FurnitureKind, Painter> = {
-  // Office life (W0c) placeholders: replaced by real art in W1-8.
-  arcade: (g, f, T, rect) => MODERN.equipment(g, f, T, rect),
-  'ping-pong': (g, f, T, rect) => MODERN.equipment(g, f, T, rect),
-  foosball: (g, f, T, rect) => MODERN.equipment(g, f, T, rect),
-  'board-game-table': (g, f, T, rect) => MODERN.equipment(g, f, T, rect),
+  // Office life (W1-8): break-room play furniture, painted inside the footprint (no overdraw).
+  arcade: (g, f, T, rect) => {
+    // An upright cabinet: marquee, bezel + glowing screen, angled control deck with stick and buttons.
+    const x = f.x * T;
+    const y = f.y * T;
+    const cab = pick([0x3a4a8a, 0x8a3a4a, 0x3a7a5a], f.variant);
+    rect(0x000000, x + 2, y + 14, T - 4, 2, 0.25);
+    rect(darken(cab, 0.35), x + 2, y, T - 4, 15);
+    rect(cab, x + 3, y, T - 6, 15);
+    rect(0xffd84a, x + 4, y + 1, T - 8, 2);
+    rect(0xfff3a0, x + 5, y + 1, 3, 1);
+    rect(0x14161c, x + 4, y + 4, T - 8, 5);
+    rect(pick([0x5fb8ff, 0x6cf08a, 0xff7ad0], f.variant + 1), x + 5, y + 5, T - 10, 3);
+    rect(0xffffff, x + 6, y + 5, 2, 1, 0.8);
+    rect(0xffffff, x + 9, y + 7, 1, 1, 0.8);
+    rect(lighten(cab, 0.25), x + 3, y + 9, T - 6, 3);
+    rect(0x22252e, x + 5, y + 9, 1, 2);
+    rect(0xff5a5a, x + 5, y + 8, 1, 1);
+    rect(0xff5a5a, x + 8, y + 10, 2, 1);
+    rect(0x5fb8ff, x + 11, y + 10, 2, 1);
+    rect(darken(cab, 0.5), x + 3, y + 12, T - 6, 3);
+  },
+  'ping-pong': (g, f, T, rect) => {
+    // A blue table seen from the front: white border and centre line, net across the middle, two legs.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.25);
+    rect(0x3a3e4a, x + 3, y + 11, 2, 4);
+    rect(0x3a3e4a, x + w - 5, y + 11, 2, 4);
+    rect(0x1f4f8a, x + 1, y + 4, w - 2, 8);
+    rect(0x2f78c8, x + 2, y + 5, w - 4, 5);
+    rect(0xf5f5f5, x + 2, y + 5, w - 4, 1);
+    rect(0xf5f5f5, x + 2, y + 9, w - 4, 1);
+    rect(0xf5f5f5, x + w / 2 - 1, y + 5, 1, 5, 0.7);
+    rect(0x22252e, x + w / 2 - 1, y + 2, 1, 4);
+    rect(0xe8e8e8, x + w / 2 - 1, y + 2, 1, 3, 0.9);
+    rect(0xeceae2, x + w / 2, y + 3, 1, 3, 0.6);
+    rect(0xffa94a, x + 6, y + 6, 1, 1);
+  },
+  foosball: (g, f, T, rect) => {
+    // A wooden cabinet from above: green pitch, rods with red/blue players and end handles.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.25);
+    rect(0x5a3a1e, x + 3, y + 12, 2, 3);
+    rect(0x5a3a1e, x + w - 5, y + 12, 2, 3);
+    rect(0x6a4a30, x + 2, y + 2, w - 4, 11);
+    rect(0x3a8a4a, x + 3, y + 3, w - 6, 8);
+    rect(0xe8f0e0, x + w / 2, y + 3, 1, 8, 0.5);
+    for (let i = 0; i < 4; i++) {
+      const rx = x + 6 + i * ((w - 14) / 3);
+      rect(0xc0c4cc, rx, y + 1, 1, 13);
+      rect(i % 2 === 0 ? 0xd8453a : 0x3a7ab5, rx - 1, y + 4, 3, 2);
+      rect(i % 2 === 0 ? 0xd8453a : 0x3a7ab5, rx - 1, y + 8, 3, 2);
+      rect(0x22252e, rx, y + 0, 1, 1);
+    }
+    rect(0xffffff, x + 12, y + 7, 1, 1);
+  },
+  'board-game-table': (g, f, T, rect) => {
+    // A small table with a checkers board (alternating squares) and a few round pieces.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.25);
+    rect(0x4a2e18, x + 3, y + 11, 2, 4);
+    rect(0x4a2e18, x + w - 5, y + 11, 2, 4);
+    rect(0x6a4a30, x + 1, y + 3, w - 2, 9);
+    rect(0x9a7450, x + 2, y + 4, w - 4, 6);
+    const bx = x + w / 2 - 8;
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 8; c++) {
+        rect((r + c) % 2 === 0 ? 0xeceae2 : 0x2a2e35, bx + c * 2, y + 4 + r * 1.5, 2, 1.5);
+      }
+    }
+    rect(0xd8453a, bx + 2, y + 5, 1, 1);
+    rect(0xd8453a, bx + 6, y + 6, 1, 1);
+    rect(0xf5f0e0, bx + 11, y + 8, 1, 1);
+    rect(0xf5f0e0, bx + 13, y + 5, 1, 1);
+  },
   // M12 G3 trigger furniture: 1 row deep, wall-standing; tall only when `againstNorthWall` (<= MAX_OVERDRAW_PX).
   'notice-board': (g, f, T, rect) => {
     // A cork board in a wood frame with pinned notes and a pen ledge.
@@ -602,11 +678,93 @@ function candleAndScroll(rect: RectFn, x: number, y: number): void {
 }
 
 const GUILD: Record<FurnitureKind, Painter> = {
-  // Office life (W0c) placeholders: replaced by real art in W1-8.
-  arcade: (g, f, T, rect) => GUILD.table(g, f, T, rect),
-  'ping-pong': (g, f, T, rect) => GUILD.table(g, f, T, rect),
-  foosball: (g, f, T, rect) => GUILD.table(g, f, T, rect),
-  'board-game-table': (g, f, T, rect) => GUILD.table(g, f, T, rect),
+  // Office life (W1-8): tavern-hall pastimes, painted inside the footprint (no overdraw).
+  arcade: (g, f, T, rect) => {
+    // A dartboard (rings in a pixel disc) mounted on a wooden post with darts stuck in it.
+    const x = f.x * T;
+    const y = f.y * T;
+    const cx = x + T / 2;
+    rect(0x000000, x + 3, y + 14, T - 6, 2, 0.22);
+    rect(WOOD_DARK, cx - 1, y + 9, 2, 6);
+    rect(WOOD_DARK, x + 4, y + 14, T - 8, 1);
+    rect(WOOD_DARK, x + 4, y + 2, T - 8, 8);
+    rect(WOOD_DARK, x + 3, y + 3, T - 6, 6);
+    rect(0x1b1e26, x + 4, y + 3, T - 8, 6);
+    rect(0x1b1e26, x + 5, y + 2, T - 10, 8);
+    rect(0xf2ecd8, x + 5, y + 4, T - 10, 4);
+    rect(0xf2ecd8, x + 6, y + 3, T - 12, 6);
+    rect(0xb5433a, x + 6, y + 5, T - 12, 2);
+    rect(0x3a7a4a, cx - 1, y + 5, 2, 2);
+    rect(0xffd84a, cx - 1, y + 5, 1, 1);
+    rect(0xc0c4cc, x + 4, y + 4, 2, 1);
+    rect(0xb5433a, x + 3, y + 4, 1, 1);
+    rect(0xc0c4cc, x + 10, y + 7, 2, 1);
+    rect(GOLD, x + 12, y + 7, 1, 1);
+  },
+  'ping-pong': (g, f, T, rect) => {
+    // An arm-wrestling trestle: a plank on two barrel ends, elbow pads, a peg, and a tankard each side.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.25);
+    for (const bx of [x + 3, x + w - 9]) {
+      rect(WOOD_DARK, bx, y + 7, 6, 8);
+      rect(WOOD, bx + 1, y + 7, 4, 8);
+      rect(0x6a6a7a, bx, y + 9, 6, 1);
+      rect(0x6a6a7a, bx, y + 13, 6, 1);
+    }
+    rect(WOOD_DARK, x + 1, y + 4, w - 2, 5);
+    rect(lighten(WOOD, 0.15), x + 1, y + 4, w - 2, 3);
+    for (const px of [x + 8, x + w - 12]) rect(0xb5433a, px, y + 4, 4, 2);
+    rect(WOOD_DARK, x + w / 2 - 1, y + 2, 2, 3);
+    rect(GOLD, x + w / 2 - 1, y + 1, 2, 1);
+    rect(0xc0c4cc, x + 2, y + 2, 3, 3);
+    rect(0xf2ecd8, x + 2, y + 2, 3, 1);
+    rect(0xc0c4cc, x + w - 5, y + 2, 3, 3);
+    rect(0xf2ecd8, x + w - 5, y + 2, 3, 1);
+  },
+  foosball: (g, f, T, rect) => {
+    // A dice table: green felt tray, a pair of dice, a leather cup, scattered coins.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.25);
+    rect(WOOD_DARK, x + 3, y + 11, 2, 4);
+    rect(WOOD_DARK, x + w - 5, y + 11, 2, 4);
+    rect(WOOD_DARK, x + 1, y + 3, w - 2, 9);
+    rect(0x2f6a4a, x + 2, y + 4, w - 4, 6);
+    rect(0x3f8a5e, x + 2, y + 4, w - 4, 1);
+    rect(0xf2ecd8, x + 9, y + 6, 3, 3);
+    rect(0x22252e, x + 10, y + 7, 1, 1);
+    rect(0xf2ecd8, x + 14, y + 5, 3, 3);
+    rect(0x22252e, x + 14, y + 5, 1, 1);
+    rect(0x22252e, x + 16, y + 7, 1, 1);
+    rect(0x6a3a1e, x + w - 10, y + 5, 4, 5);
+    rect(0x8a5a2b, x + w - 11, y + 4, 6, 1);
+    rect(GOLD, x + 21, y + 8, 2, 1);
+    rect(GOLD, x + 24, y + 6, 2, 1);
+  },
+  'board-game-table': (g, f, T, rect) => {
+    // A card and dice table: a round-cornered top with fanned cards, a die, and a candle stub.
+    const x = f.x * T;
+    const y = f.y * T;
+    const w = f.w * T;
+    rect(0x000000, x + 2, y + 14, w - 4, 2, 0.25);
+    rect(WOOD_DARK, x + 4, y + 11, 2, 4);
+    rect(WOOD_DARK, x + w - 6, y + 11, 2, 4);
+    rect(WOOD_DARK, x + 2, y + 3, w - 4, 9);
+    rect(WOOD, x + 3, y + 4, w - 6, 6);
+    rect(darken(WOOD, 0.25), x + 3, y + 7, w - 6, 1, 0.5);
+    for (let i = 0; i < 3; i++) {
+      rect(0xf2ecd8, x + 7 + i * 2, y + 5 + i, 4, 4);
+      rect(i === 1 ? 0xb5433a : 0x22252e, x + 8 + i * 2, y + 6 + i, 1, 1);
+    }
+    rect(0xf2ecd8, x + 17, y + 6, 3, 3);
+    rect(0x22252e, x + 18, y + 7, 1, 1);
+    rect(0xf2ecd8, x + w - 7, y + 5, 1, 3);
+    rect(0xffd84a, x + w - 7, y + 4, 1, 1);
+    rect(0xdcc9a0, x + w - 9, y + 8, 3, 1);
+  },
   // M12 G3 trigger furniture: 1 row deep, wall-standing; tall only when `againstNorthWall` (<= MAX_OVERDRAW_PX).
   'notice-board': (g, f, T, rect) => {
     // A plank quest board on two posts with parchment bounties nailed on.

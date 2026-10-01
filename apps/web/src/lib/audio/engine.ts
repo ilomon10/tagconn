@@ -1,18 +1,166 @@
-// STUB (W0b): W1-6 owns the engine. The inert engine never makes a sound.
-import type { AudioEngine } from './types';
+// Web Audio engine (docs/design/office-life.md 3.7.2). Pure of Phaser; the AudioContext is injected for tests.
+import type { SfxId } from '../../game/sfxBus';
+import { SFX_CATEGORY } from '../../game/sfxBus';
+import { createAmbient } from './ambient';
+import { SFX_PRESETS } from './presets';
+import { renderSfx } from './sfxr';
+import type { AmbientKind, AudioEngine, AudioMix } from './types';
 
-const inert = (): AudioEngine => ({
-  unlocked: false,
-  setMix() {},
-  play() {},
-  setAmbient() {},
-  destroy() {},
-});
+export const MAX_VOICES = 8;
+const DEFAULT_MIN_INTERVAL_MS = 60;
+const MIN_INTERVAL_MS: Partial<Record<SfxId, number>> = { footstep: 250, typing: 150 };
+/** Ambient level relative to master. */
+const AMBIENT_GAIN = 0.25;
 
-export function getAudioEngine(): AudioEngine {
-  return inert();
+const OFF: AudioMix = { master: 0, sfx: false, ambient: false, alerts: false, footsteps: false };
+
+export function createAudioEngine(deps: { createContext: () => AudioContext | null; target: EventTarget }): AudioEngine {
+  let ctx: AudioContext | null = null;
+  try {
+    ctx = deps.createContext();
+  } catch {
+    ctx = null;
+  }
+  if (!ctx) return { unlocked: false, setMix() {}, play() {}, setAmbient() {}, destroy() {} };
+  const c = ctx;
+
+  const masterGain = c.createGain();
+  masterGain.connect(c.destination);
+  const sfxBus = c.createGain();
+  sfxBus.connect(masterGain);
+  const ambientBus = c.createGain();
+  ambientBus.gain.value = AMBIENT_GAIN;
+  ambientBus.connect(masterGain);
+
+  let mix: AudioMix = OFF;
+  let unlocked = false;
+  let destroyed = false;
+  let voices = 0;
+  let wantedAmbient: AmbientKind | null = null;
+  let ambient: { kind: AmbientKind; stop(): void } | null = null;
+  const buffers = new Map<SfxId, AudioBuffer | null>();
+  const lastAt = new Map<SfxId, number>();
+
+  const bufferFor = (id: SfxId): AudioBuffer | null => {
+    if (buffers.has(id)) return buffers.get(id) ?? null;
+    let buf: AudioBuffer | null = null;
+    const data = renderSfx(SFX_PRESETS[id], c.sampleRate);
+    if (data.length > 0) {
+      buf = c.createBuffer(1, data.length, c.sampleRate);
+      buf.getChannelData(0).set(data);
+    }
+    buffers.set(id, buf);
+    return buf;
+  };
+
+  const syncAmbient = (): void => {
+    const kind = mix.ambient && mix.master > 0 && unlocked ? wantedAmbient : null;
+    if (ambient && ambient.kind === kind) return;
+    ambient?.stop();
+    ambient = null;
+    if (kind) ambient = { kind, ...createAmbient(c, kind, ambientBus) };
+  };
+
+  const syncContext = (): void => {
+    if (destroyed) return;
+    masterGain.gain.value = mix.master;
+    if (!unlocked) return;
+    if (mix.master === 0) void c.suspend?.().catch?.(() => {});
+    else void c.resume?.().catch?.(() => {});
+    syncAmbient();
+  };
+
+  const unlock = (): void => {
+    if (unlocked || destroyed) return;
+    unlocked = true;
+    off();
+    syncContext();
+  };
+  const off = (): void => {
+    deps.target.removeEventListener('pointerdown', unlock);
+    deps.target.removeEventListener('keydown', unlock);
+  };
+  deps.target.addEventListener('pointerdown', unlock);
+  deps.target.addEventListener('keydown', unlock);
+
+  return {
+    get unlocked() {
+      return unlocked;
+    },
+    setMix(m) {
+      mix = m;
+      syncContext();
+    },
+    play(id, opts) {
+      if (destroyed || !unlocked || mix.master <= 0) return;
+      const cat = SFX_CATEGORY[id];
+      if (!mix[cat === 'ui' ? 'sfx' : cat]) return;
+      if (voices >= MAX_VOICES) return;
+      const now = c.currentTime * 1000;
+      const last = lastAt.get(id);
+      if (last !== undefined && now - last < (MIN_INTERVAL_MS[id] ?? DEFAULT_MIN_INTERVAL_MS)) return;
+      const buf = bufferFor(id);
+      if (!buf) return;
+      lastAt.set(id, now);
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      const gain = c.createGain();
+      gain.gain.value = Math.min(1, Math.max(0, opts?.gain ?? 1));
+      src.connect(gain);
+      let tail: AudioNode = gain;
+      if (opts?.pan !== undefined && typeof c.createStereoPanner === 'function') {
+        const p = c.createStereoPanner();
+        p.pan.value = Math.min(1, Math.max(-1, opts.pan));
+        gain.connect(p);
+        tail = p;
+      }
+      tail.connect(sfxBus);
+      voices++;
+      src.onended = () => {
+        voices = Math.max(0, voices - 1);
+        try {
+          src.disconnect();
+          tail.disconnect();
+        } catch {
+          /* already disconnected */
+        }
+      };
+      src.start();
+    },
+    setAmbient(kind) {
+      wantedAmbient = kind;
+      syncAmbient();
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      off();
+      ambient?.stop();
+      ambient = null;
+      try {
+        masterGain.disconnect();
+        void c.close?.().catch?.(() => {});
+      } catch {
+        /* ignore */
+      }
+    },
+  };
 }
 
-export function createAudioEngine(_deps: { createContext: () => AudioContext | null; target: EventTarget }): AudioEngine {
-  return inert();
+let shared: AudioEngine | null = null;
+
+/** Lazy browser singleton; inert without `window` or `AudioContext`. */
+export function getAudioEngine(): AudioEngine {
+  if (!shared) {
+    shared = createAudioEngine({
+      createContext: () => {
+        if (typeof window === 'undefined') return null;
+        const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+        const Ctor = w.AudioContext ?? w.webkitAudioContext;
+        return Ctor ? new Ctor() : null;
+      },
+      target: typeof window === 'undefined' ? new EventTarget() : window,
+    });
+  }
+  return shared;
 }

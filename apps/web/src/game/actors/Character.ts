@@ -7,9 +7,16 @@ import type { Point } from '../procgen/types';
 import type { Size } from '../labels';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '../textures';
 import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, prefersReducedMotion, staffTextureKey, type ActivityFxKind, type Costume, type DramaEmote, type StrainKind } from '../themes';
+import type { CreatureId, LifePose } from '../themes/types';
+import { SHADES_TEXTURE, creatureTextureKey } from '../npc/types';
+import { PIXEL_FONT_KEYS, ensurePixelFonts, hasGlyphs } from '../text/pixelFont';
+import { PIXEL_METRICS, layoutPlate, pixelMeasure, plateGlyphScale, taskVisible, type MeasureFn, type PlateLayout, type PlateOptions, type PlateStyle } from './namePlate';
+import { POSE_ANIM, POSE_PROP } from './poses';
 
 export interface CharacterLook {
   color: number;
+  /** M13: plate line 1 (a hero's name). Without it line 1 is `title` and there is no line 2. */
+  name?: string;
   title: string;
   description?: string;
   sprite: number;
@@ -31,6 +38,13 @@ export interface SessionsChip {
 }
 
 const TEXT_RES = 4;
+/** M13 name plate: its bottom edge in local y, just above the status/emote icon slot (-19..-26). */
+const PLATE_BOTTOM_Y = -30;
+const PLATE_BACK = 0x15121e;
+const PLATE_TITLE = 0xb8b0c8;
+const PLATE_TASK = 0xe8e2f0;
+const PLATE_FONT = 'ui-monospace, Menlo, monospace';
+const DEFAULT_PLATE_OPTIONS: PlateOptions = { showTask: 'focus', taskLines: 2, maxWidthChars: 24, showTitle: true, pixelFont: true };
 const SIT_ACTIVITIES: ReadonlySet<Activity> = new Set(['typing', 'reading', 'idle', 'thinking', 'running', 'meeting', 'waiting', 'blocked']);
 /** M8 8d selection glow: base Pre/canvas glow strength; selected pulses wider than a plain hover. */
 const GLOW_SELECTED = 6;
@@ -117,7 +131,16 @@ export class Character extends Phaser.GameObjects.Container {
   private beaconEnabled = false;
   private beaconSize = 1;
   private beaconStatic = false;
-  private tag: Phaser.GameObjects.Text;
+  /** M13 name plate (overlay layer): backing + one BitmapText/Text per line, in plate pixels, scaled by `plateScale`. */
+  private plate: Phaser.GameObjects.Container;
+  private plateBack: Phaser.GameObjects.Graphics;
+  private plateLayout: PlateLayout | null = null;
+  private plateKey = '';
+  private plateScale = 1;
+  private plateOptions: PlateOptions = DEFAULT_PLATE_OPTIONS;
+  private plateLook: CharacterLook | null = null;
+  private plateText = '';
+  private plateMeasureText?: Phaser.GameObjects.Text;
   /** M8 8b: the Guild Master's session-count chip, next to the tag. Created lazily (only GMs get one). */
   private chip?: Phaser.GameObjects.Text;
   private chipOnClick?: () => void;
@@ -158,6 +181,11 @@ export class Character extends Phaser.GameObjects.Container {
   private costume: Costume = {};
   private costumeKey = '';
   private costumeProp: string | null = null;
+  private shades: Phaser.GameObjects.Image;
+  private creatureImg: Phaser.GameObjects.Image;
+  private creature: CreatureId | null = null;
+  private pose: LifePose | null = null;
+  private faceX: number | null = null;
   private appearanceKey = '';
   private fxKey = '';
   private phase: number;
@@ -218,6 +246,7 @@ export class Character extends Phaser.GameObjects.Container {
     this.cloak = scene.add.image(0, -2, CLOAK_TEXTURE).setOrigin(0.5, 1).setVisible(false);
     this.hat = scene.add.image(0, -15, hatTextureKey('wizard')).setOrigin(0.5, 1).setVisible(false);
     this.goggles = scene.add.image(0, -12, GOGGLES_TEXTURE).setOrigin(0.5, 0.5).setVisible(false);
+    this.shades = scene.add.image(0, -12, SHADES_TEXTURE).setOrigin(0.5, 0.5).setVisible(false);
     this.upper = scene.add.container(0, 0, [
       this.cloak,
       this.body_,
@@ -228,19 +257,18 @@ export class Character extends Phaser.GameObjects.Container {
       this.hair,
       this.hat,
       this.goggles,
+      this.shades,
       this.prop,
     ]);
     this.icon = scene.add.image(0, -19, 'icon-dots-3').setOrigin(0.5, 1).setVisible(false);
     this.fx = scene.add.container(0, -8);
     this.strainIcon = scene.add.image(6, -17, STRAIN_ICON.dizzy).setOrigin(0.5, 1).setVisible(false);
     this.strainFx = scene.add.container(0, -8);
-    this.add([this.canvasGlow, this.shadow, this.legs, this.upper, this.icon, this.strainIcon, this.fx, this.strainFx]);
+    this.creatureImg = scene.add.image(0, 0, creatureTextureKey('dog', 0)).setOrigin(0.5, 1).setVisible(false);
+    this.add([this.canvasGlow, this.shadow, this.legs, this.upper, this.creatureImg, this.icon, this.strainIcon, this.fx, this.strainFx]);
 
-    this.tag = crisp(
-      scene.add
-        .text(0, 3, '', { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '5px', color: '#ffffff', backgroundColor: '#15121ecc', padding: { x: 1.5, y: 0.5 }, resolution: TEXT_RES })
-        .setOrigin(0.5, 0),
-    );
+    this.plateBack = scene.add.graphics();
+    this.plate = scene.add.container(0, PLATE_BOTTOM_Y, [this.plateBack]).setVisible(false);
     this.beaconRing = scene.add.graphics().setVisible(false);
     this.beaconArrow = scene.add.graphics().setVisible(false);
     this.leaderLine = scene.add.graphics();
@@ -251,7 +279,7 @@ export class Character extends Phaser.GameObjects.Container {
         .setOrigin(0.5, 1),
     );
     this.bubble = scene.add.container(0, -22, [this.bubbleBg, this.bubbleText]).setVisible(false);
-    this.overlay = scene.add.container(x, y, [this.beaconRing, this.beaconArrow, this.tag, this.leaderLine, this.bubble]);
+    this.overlay = scene.add.container(x, y, [this.beaconRing, this.beaconArrow, this.plate, this.leaderLine, this.bubble]);
 
     this.hitRect = new Phaser.Geom.Rectangle(-7, -18, 14, 20);
     this.setInteractive(this.hitRect, Phaser.Geom.Rectangle.Contains);
@@ -269,22 +297,111 @@ export class Character extends Phaser.GameObjects.Container {
       this.tagAllowedByLook = showTag;
       this.applyTagVisible();
     }
+    this.plateLook = look;
+    this.refreshPlate();
     const k = `${look.color}|${look.title}|${look.description ?? ''}|${look.sprite}`;
     if (k === this.lookKey) return;
     this.lookKey = k;
     this.body_.setTint(look.color);
     this.badge.setTint(lighten(look.color, 0.6));
     this.hair.setTexture(`ch-hair-${Math.abs(look.sprite) % HAIR_STYLES}`);
-    const desc = look.description ? ` · ${look.description.length > 22 ? `${look.description.slice(0, 21)}…` : look.description}` : '';
-    this.tag.setText(`${look.title}${desc}`);
-    this.tag.setColor(hex(lighten(look.color, 0.55)));
+  }
+
+  // ---------------------------------------------------------------- M13: name plate
+
+  /** Plate settings (`plateOptions(settings.office.labels)`); idempotent, re-layouts only on change. */
+  setPlateOptions(o: PlateOptions): void {
+    const same = o.showTask === this.plateOptions.showTask && o.taskLines === this.plateOptions.taskLines
+      && o.maxWidthChars === this.plateOptions.maxWidthChars && o.showTitle === this.plateOptions.showTitle
+      && o.pixelFont === this.plateOptions.pixelFont;
+    if (same) return;
+    this.plateOptions = o;
+    this.refreshPlate();
+  }
+
+  /** Camera zoom: the plate scales in whole screen pixels per font pixel (`plateGlyphScale`). */
+  setPlateZoom(zoom: number): void {
+    const s = plateGlyphScale(zoom);
+    if (s === this.plateScale) return;
+    this.plateScale = s;
+    this.plate.setScale(s);
+  }
+
+  /** Text-backed measure (plate pixels) for the canvas / missing-glyph fallback. */
+  private textMeasure(): MeasureFn {
+    const probe = (this.plateMeasureText ??= this.scene.make.text({ style: { fontFamily: PLATE_FONT, resolution: TEXT_RES } }, false));
+    return (text, style) => {
+      probe.setFontSize(style === 'name' ? 5 : 4);
+      probe.setText(text);
+      return probe.width;
+    };
+  }
+
+  /** Re-layouts and redraws the plate. Runs only on look/options/selection/hover change (keyed), never per frame. */
+  private refreshPlate(): void {
+    const look = this.plateLook;
+    if (!look) return;
+    const o = this.plateOptions;
+    const showTask = taskVisible(o.showTask, this.selected, this.hovered);
+    const named = !!look.name;
+    const task = showTask ? look.description : undefined;
+    const webgl = this.scene.game.renderer.type === Phaser.WEBGL;
+    const key = `${look.color}|${look.name ?? ''}|${look.title}|${task ?? ''}|${o.taskLines}|${o.maxWidthChars}|${o.showTitle}|${o.pixelFont}|${webgl}`;
+    if (key === this.plateKey) return;
+    this.plateKey = key;
+    const line1 = named ? look.name! : look.title;
+    const title = named && o.showTitle ? look.title : undefined;
+    const maxW = o.maxWidthChars * 6;
+    const maxLines = showTask ? o.taskLines : 0;
+    this.plateText = named ? `${look.name} · ${look.title}` : look.title;
+
+    let layout = layoutPlate(line1, title, task, maxW, maxLines, pixelMeasure());
+    const bitmap = o.pixelFont && webgl && ensurePixelFonts(this.scene)
+      && layout.lines.every((l) => hasGlyphs(l.text, l.style === 'name' ? 'big' : 'small'));
+    if (!bitmap) layout = layoutPlate(line1, title, task, maxW, maxLines, this.textMeasure());
+    this.plateLayout = layout;
+
+    for (const c of this.plate.list.slice(1)) c.destroy();
+    this.plate.removeBetween(1);
+    const back = this.plateBack;
+    back.clear();
+    back.fillStyle(PLATE_BACK, 0.8);
+    back.fillRoundedRect(-layout.w / 2, -layout.h, layout.w, layout.h, 1);
+    let top = -layout.h + PIXEL_METRICS.pad;
+    for (const l of layout.lines) {
+      const color = l.style === 'name' ? lighten(look.color, 0.55) : l.style === 'title' ? PLATE_TITLE : PLATE_TASK;
+      const x = -l.w / 2;
+      let obj: Phaser.GameObjects.BitmapText | Phaser.GameObjects.Text;
+      if (bitmap) {
+        const big = l.style === 'name';
+        obj = this.scene.make.bitmapText({ x, y: top, font: big ? PIXEL_FONT_KEYS.big : PIXEL_FONT_KEYS.small, text: big ? l.text : l.text.toUpperCase() }, false);
+        obj.setOrigin(0, 0).setTint(color);
+      } else {
+        obj = crisp(
+          this.scene.make.text({ x, y: top, text: l.text, style: { fontFamily: PLATE_FONT, fontSize: l.style === 'name' ? '5px' : '4px', color: hex(color), resolution: TEXT_RES } }, false),
+        ).setOrigin(0, 0);
+      }
+      if (l.style === 'task') obj.setAlpha(0.9);
+      this.plate.add(obj);
+      top += PIXEL_METRICS.lineH[l.style as PlateStyle] + PIXEL_METRICS.gap;
+    }
+    this.applyTagVisible();
+  }
+
+  /** World height of the shown plate above `PLATE_BOTTOM_Y` (0 while hidden). */
+  private get plateWorldH(): number {
+    return (this.plateLayout?.h ?? 0) * this.plateScale;
+  }
+
+  private get plateShown(): boolean {
+    return !!this.plateLayout && this.tagAllowedByLook && this.tagAllowedByLod;
   }
 
   /** Guild costume for this role (hat/cloak/staff/goggles); a no-op `{}` under the modern theme.
    *  When a hero is bound, the scene passes `resolveHeroCostume`'s merged result instead of the
    *  theme's plain role costume, so hero overrides (explicit hat/prop/accessory/colours) win. */
   setCostume(costume: Costume, roleColor: number) {
-    const key = `${costume.robe ?? ''}|${costume.cloak ?? ''}|${costume.hat ?? ''}|${costume.hatColor ?? ''}|${costume.staff ?? ''}|${costume.goggles ?? ''}|${roleColor}`;
+    const key = `${costume.robe ?? ''}|${costume.cloak ?? ''}|${costume.hat ?? ''}|${costume.hatColor ?? ''}|${costume.staff ?? ''}|${costume.goggles ?? ''}|${costume.shades ?? ''}|${roleColor}`;
     if (key === this.costumeKey) return;
     this.costumeKey = key;
     this.costume = costume;
@@ -294,6 +411,7 @@ export class Character extends Phaser.GameObjects.Container {
     if (costume.hat && costume.hat !== 'none') this.hat.setTexture(hatTextureKey(costume.hat)).setTint(costume.hatColor ?? roleColor).setVisible(true);
     else this.hat.setVisible(false);
     this.goggles.setVisible(!!costume.goggles);
+    this.shades.setVisible(!!costume.shades);
     this.costumeProp = costume.staff && costume.staff !== 'none' ? staffTextureKey(costume.staff) : null;
   }
 
@@ -372,6 +490,7 @@ export class Character extends Phaser.GameObjects.Container {
   setSelected(selected: boolean) {
     if (this.selected === selected) return;
     this.selected = selected;
+    this.refreshPlate();
     this.refreshSelectionFx();
     this.refreshBeacon();
   }
@@ -381,6 +500,7 @@ export class Character extends Phaser.GameObjects.Container {
   setHovered(hovered: boolean) {
     if (this.hovered === hovered) return;
     this.hovered = hovered;
+    this.refreshPlate();
     this.refreshSelectionFx();
     this.applyCollapse();
   }
@@ -446,7 +566,7 @@ export class Character extends Phaser.GameObjects.Container {
   private updateBeacon(now: number, iconUp: boolean, bubbleX: number, bubbleY: number) {
     if (!this.beaconVisible) return;
     const s = this.beaconSize;
-    let tip = iconUp ? -35 : -27;
+    let tip = this.plateShown ? PLATE_BOTTOM_Y - this.plateWorldH - 2 : iconUp ? -35 : -27;
     if (this.bubbleWantsShow && this.bubbleAllowedByLod) {
       const ls = this.labelScale;
       if (Math.abs(bubbleX) < (this.bubbleW * ls) / 2 + BEACON_PX * BEACON_ROWS * s) tip = Math.min(tip, bubbleY - this.bubbleH * ls - 2);
@@ -463,7 +583,37 @@ export class Character extends Phaser.GameObjects.Container {
 
   /** The name-tag text ("Name · Title"); the scene's off-screen arrow labels the selection with it. */
   get tagText(): string {
-    return this.tag.text;
+    return this.plateText;
+  }
+
+  get currentActivity(): Activity {
+    return this.activity;
+  }
+
+  get currentStatus(): AgentStatus {
+    return this.status;
+  }
+
+  // ---------------------------------------------------------------- M13: cosmetic hooks
+
+  /** Overrides the activity animation while standing still and not waiting/blocked; null restores. Prop from POSE_PROP. */
+  setPose(pose: LifePose | null): void {
+    this.pose = pose;
+  }
+
+  /** Non-human body: hides legs/upper/cloak/hat/props, shows `creature-<id>-<0|1>` (frame 1 alternates while walking). */
+  setCreature(id: CreatureId | null): void {
+    if (id === this.creature) return;
+    this.creature = id;
+    this.upper.setVisible(!id);
+    this.legs.setVisible(!id);
+    this.creatureImg.setVisible(!!id);
+    if (id) this.creatureImg.setTexture(creatureTextureKey(id, 0));
+  }
+
+  /** Face toward a world x while standing (null = default); survives animate()'s scaleX reset. */
+  face(worldX: number | null): void {
+    this.faceX = worldX;
   }
 
   /** Shows/hides the body AND its overlay (tag/bubble/beacon) together. */
@@ -567,7 +717,6 @@ export class Character extends Phaser.GameObjects.Container {
   setLabelScale(scale: number) {
     if (scale === this.labelScale) return;
     this.labelScale = scale;
-    this.tag.setScale(scale);
     this.bubble.setScale(scale);
     this.chip?.setScale(scale);
   }
@@ -590,7 +739,7 @@ export class Character extends Phaser.GameObjects.Container {
 
   private applyTagVisible() {
     const visible = this.tagAllowedByLook && this.tagAllowedByLod;
-    this.tag.setVisible(visible);
+    this.plate.setVisible(visible && !!this.plateLayout);
     this.chipTagVisible = visible;
     this.chip?.setVisible(visible || this.chipAttention);
   }
@@ -619,17 +768,20 @@ export class Character extends Phaser.GameObjects.Container {
     return { w: this.bubbleW, h: this.bubbleH };
   }
 
-  /** World-space point `layoutLabels` treats as this character's anchor — roughly head height. */
+  /** World-space point `layoutLabels` treats as this character's anchor: the top of the plate while it
+   *  is shown, else roughly head height. */
   get labelAnchor(): Point {
+    if (this.plateShown) return { x: this.x, y: this.y + PLATE_BOTTOM_Y - this.plateWorldH };
     return { x: this.x, y: this.y - 18 };
   }
 
-  /** World-space box of the name tag while it is drawn (unscaled size, like the bubble box), else null.
-   *  The label layout treats it as an obstacle so no bubble covers a tag. */
+  /** World-space box of the name plate while it is drawn (scaled), else null.
+   *  The label layout treats it as an obstacle so no bubble covers a plate. */
   get tagRect(): { left: number; right: number; top: number; bottom: number } | null {
-    if (!this.tagAllowedByLook || !this.tagAllowedByLod || this.gone || this.leaving) return null;
-    const top = this.y + this.tag.y;
-    return { left: this.x - this.tag.width / 2, right: this.x + this.tag.width / 2, top, bottom: top + this.tag.height };
+    if (!this.plateShown || this.gone || this.leaving) return null;
+    const w = (this.plateLayout?.w ?? 0) * this.plateScale;
+    const bottom = this.y + PLATE_BOTTOM_Y;
+    return { left: this.x - w / 2, right: this.x + w / 2, top: bottom - this.plateWorldH, bottom };
   }
 
   get isWaiting(): boolean {
@@ -857,7 +1009,9 @@ export class Character extends Phaser.GameObjects.Container {
   private animate(now: number) {
     const t = now / 1000 + this.phase * 10;
     const walking = this.path.length > 0;
-    const sitting = !walking && this.seated && SIT_ACTIVITIES.has(this.activity);
+    const pose = !walking && !this.isWaiting ? this.pose : null;
+    const poseAnim = pose ? POSE_ANIM[pose] : null;
+    const sitting = !walking && (pose === 'sit' || (this.seated && SIT_ACTIVITIES.has(this.activity)));
     let bob = 0;
     let icon: string | null = null;
     let prop: string | null = null;
@@ -880,8 +1034,32 @@ export class Character extends Phaser.GameObjects.Container {
     } else {
       this.legs.setTexture(sitting ? 'ch-legs-sit' : 'ch-legs-0');
       bob = sitting ? 1 : Math.sin(t * 2) > 0.95 ? -1 : 0;
-      this.upper.scaleX = 1;
-      switch (this.activity) {
+      if (this.faceX === null) this.upper.scaleX = 1;
+      else {
+        const fx = this.faceX - this.x;
+        if (Math.abs(fx) > 0.5) this.upper.scaleX = fx < 0 ? -1 : 1;
+      }
+      if (poseAnim && pose) {
+        const flick = Math.floor(t * 5) % 2;
+        if (poseAnim.bob > 0) bob -= flick * poseAnim.bob;
+        [handLX, handLY] = poseAnim.handL;
+        [handRX, handRY] = poseAnim.handR;
+        if (poseAnim.bob > 0) {
+          handLY -= flick;
+          handRY -= 1 - flick;
+        }
+        if (poseAnim.sway) shakeX = Math.round(Math.sin(t * 3) * poseAnim.sway);
+        const pp = POSE_PROP[pose];
+        if (pp && this.scene.textures.exists(pp)) {
+          prop = pp;
+          propX = 5;
+          propY = -3;
+        }
+        if (pose === 'nap') {
+          icon = 'icon-zz';
+          iconAlpha = 0.8;
+        }
+      } else switch (this.activity) {
         case 'typing': {
           prop = 'prop-laptop';
           propY = -1;
@@ -970,7 +1148,7 @@ export class Character extends Phaser.GameObjects.Container {
       // activity didn't already pick a themed one, e.g. thinking, waiting, blocked or half of idle
       // (docs/design/guild-hall.md: "hand props ... replacing the laptop when not typing" — typing
       // already claimed `prop` above, so this only ever fills the gap).
-      if (!prop && this.costumeProp) prop = this.costumeProp;
+      if (!prop && !poseAnim && this.costumeProp) prop = this.costumeProp;
       if (this.status === 'waiting' && !icon) icon = 'icon-question';
       if (this.status === 'blocked' && !icon) icon = 'icon-bang';
       // M12 antic emote: only where no activity/status icon was picked (or the idle zz); `?` / `!` always win.
@@ -1003,7 +1181,14 @@ export class Character extends Phaser.GameObjects.Container {
       this.strainIcon.setAlpha(strain === 'tired' && anim ? 0.65 + 0.35 * Math.abs(Math.sin(t * 1.5)) : 1);
     }
 
-    this.upper.setPosition(shakeX, bob);
+    const lie = !!poseAnim?.lie;
+    this.upper.setPosition(shakeX + (lie ? -8 : 0), bob + (lie ? -1 : 0));
+    this.upper.setRotation(lie ? Math.PI / 2 : 0);
+    this.legs.setRotation(lie ? -Math.PI / 2 : 0).setPosition(lie ? -8 : 0, lie ? -1 : 0);
+    if (this.creature) {
+      const alt = walking && Math.floor(t * 8) % 2 === 1;
+      this.creatureImg.setTexture(creatureTextureKey(this.creature, alt ? 1 : 0)).setPosition(shakeX, bob).setScale(this.upper.scaleX, 1);
+    }
     this.handL.setPosition(handLX, handLY);
     this.handR.setPosition(handRX, handRY);
     if (prop) {
@@ -1014,12 +1199,17 @@ export class Character extends Phaser.GameObjects.Container {
       if (this.icon.texture.key !== icon) this.icon.setTexture(icon);
       this.icon.setVisible(true).setPosition(0, iconY + bob).setAlpha(iconAlpha);
     } else this.icon.setVisible(false);
-    this.tag.setY(sitting ? 2 : 3);
-    if (this.chip) this.chip.setPosition(this.tag.displayWidth / 2 + 2, this.tag.y);
+    // The GM chip sits just past the right end of the name line.
+    if (this.chip) {
+      const s = this.plateScale;
+      const h = this.plateLayout?.h ?? 0;
+      const nameMid = PIXEL_METRICS.pad + PIXEL_METRICS.lineH.name / 2;
+      this.chip.setPosition(((this.plateLayout?.w ?? 0) * s) / 2 + 2, PLATE_BOTTOM_Y - (h - nameMid) * s);
+    }
     // Base "above the head" position (a bit higher when an icon badge is up there too), plus this
     // frame's `layoutLabels` offset (0,0 until the first label refresh has run) — see `labelAnchor`.
     const hasIcon = !!icon || strain !== null;
-    const baseY = (hasIcon ? -26 : -18) + bob;
+    const baseY = (this.plateShown ? PLATE_BOTTOM_Y - this.plateWorldH : hasIcon ? -26 : -18) + bob;
     const bx = this.labelDx;
     const by = baseY + this.labelDy;
     this.bubble.setPosition(bx, by);
@@ -1041,6 +1231,7 @@ export class Character extends Phaser.GameObjects.Container {
     this.strainFx.removeAll(true);
     this.dramaEmote = null;
     this.dramaBubble = false;
+    this.plateMeasureText?.destroy();
     this.overlay.destroy();
     this.destroy();
   }

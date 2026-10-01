@@ -60,6 +60,12 @@ export const CHARACTER_BITMAPS: Record<string, Bitmap> = {
   'prop-clipboard': { rows: [' bb ', 'wwww', 'wkkw', 'wwww', 'wkkw'], palette: { b: 0x8a5a2b, w: 0xf5f5f5, k: 0x666666 } },
   'prop-globe': { rows: [' bbb ', 'bggbb', 'bbggb', 'bgbbb', ' bbb '], palette: { b: 0x4a90e2, g: 0x7ed321 } },
   'prop-cup': { rows: ['www ', 'wwwk', 'www '], palette: { w: 0xf5f5f5, k: 0xdddddd } },
+  'prop-controller': { rows: ['kkkkkk', 'kdkbrk', 'kkkkkk', 'kk  kk'], palette: { k: 0x55596b, d: 0xdddddd, b: 0x4fa8ff, r: 0xff4a4a } },
+  'prop-phone': { rows: ['kkk', 'kbk', 'kbk', 'kbk', 'kkk'], palette: { k: 0x3b3f4e, b: 0x8fd3ff } },
+  'prop-can': { rows: ['  g  ', 'bbbbb', 'bwbbb', 'bbbbb', 'bbbbb'], palette: { g: 0xd9d9d9, b: 0x4a90e2, w: 0xcfe9ff } },
+  'prop-marker': { rows: ['rr ', 'rrk', ' kk', ' kk', ' k '], palette: { r: 0xe0556a, k: 0x3b3f4e } },
+  'prop-mop': { rows: ['  w', '  w', '  w', '  w', ' yy', 'yyy'], palette: { w: 0x8a5a2b, y: 0xe8d9a0 } },
+  'prop-parcel': { rows: ['bbbbbb', 'bwbbwb', 'bbbbbb', 'bwbbwb', 'bbbbbb'], palette: { b: 0xc8934f, w: 0xf2e3b8 } },
 
   'icon-question': { rows: [' yyy ', 'y   y', '    y', '   y ', '  y  ', '     ', '  y  '], palette: { y: 0xffd84a }, outline: 0x241c10 },
   'icon-bang': { rows: ['rr', 'rr', 'rr', 'rr', '  ', 'rr'], palette: { r: 0xff4a4a }, outline: 0x2a0808 },
@@ -84,6 +90,16 @@ export const CHARACTER_BITMAPS: Record<string, Bitmap> = {
   'icon-ball': { rows: ['    ww', 'pp  ww', 'ppp   ', ' pp   ', ' b    '], palette: { w: 0xffffff, p: 0xd9534f, b: 0x8a5a2b }, outline: 0x1c1826 },
   'icon-phone': { rows: [' kkk ', 'kbbbk', 'kbbbk', 'kbbbk', ' kkk '], palette: { k: 0x55596b, b: 0x8fd3ff }, outline: 0x10121a },
   'icon-laugh': { rows: ['h h   ', 'h h   ', 'hhh a ', 'h h a ', 'h h aa'], palette: { h: 0xffd84a, a: 0xffa94a }, outline: 0x2a2410 },
+  'icon-megaphone': { rows: ['    o  ', ' kkoo o', 'kkkoooo', ' kkoo o', ' k  o  '], palette: { k: 0xd9d9d9, o: 0xffa94a }, outline: 0x241c10 },
+  'icon-alarm': { rows: ['r     r', ' wwwww ', 'wwwkwww', 'wwwkkww', 'wwwwwww', ' wwwww ', ' r   r '], palette: { w: 0xf5f5f5, k: 0x333333, r: 0xff4a4a }, outline: 0x2a0808 },
+  'icon-heart': { rows: [' rr rr ', 'rrrrrrr', 'rrrrrrr', ' rrrrr ', '  rrr  ', '   r   '], palette: { r: 0xff5a7a }, outline: 0x2a0812 },
+  'icon-gamepad': { rows: ['kkkkkkk', 'kwkkkrk', 'wwwkrkr', 'kwkkkrk', 'kkkkkkk'], palette: { k: 0x6b7088, w: 0xf5f5f5, r: 0xff4a4a }, outline: 0x10121a },
+  'icon-paddle': { rows: [' rrrr  ', 'rrrrrr ', 'rrrrrr ', ' rrrr  ', '  bb  w', '  bb   '], palette: { r: 0xd9534f, b: 0x8a5a2b, w: 0xffffff }, outline: 0x1c1826 },
+  'icon-chess': { rows: ['  ww  ', ' wwww ', '  ww  ', '  ww  ', ' wwww ', 'wwwwww'], palette: { w: 0xf5f5f5 }, outline: 0x1c1826 },
+  'icon-can': { rows: ['  g  ', 'bbbbb', 'bwbbb', 'bbbbb', 'bbbbb', ' bbb '], palette: { g: 0xd9d9d9, b: 0x4a90e2, w: 0xcfe9ff }, outline: 0x0a1a2e },
+  'icon-pencil': { rows: ['    pp', '   ypp', '  yyp ', ' yyy  ', 'kyy   ', 'kk    '], palette: { p: 0xff8aa0, y: 0xffd84a, k: 0x555555 }, outline: 0x2a2410 },
+  'icon-broom': { rows: ['     w', '    w ', '   w  ', '  yyy ', ' yyyyy', 'yyyyyy'], palette: { w: 0x8a5a2b, y: 0xe8c860 }, outline: 0x2a2410 },
+  'icon-parcel': { rows: ['bbbbbb', 'bbwwbb', 'bbwwbb', 'wwwwww', 'bbwwbb', 'bbwwbb'], palette: { b: 0xc8934f, w: 0xf2e3b8 }, outline: 0x2a1808 },
 };
 
 function withOutline(b: Bitmap): string[] {

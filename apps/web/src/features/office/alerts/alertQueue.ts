@@ -1,21 +1,86 @@
-// STUB (W0b): W1-3 owns the body (docs/design/office-life.md 3.3.2). The queue never shows anything yet.
-import type { AlertInput, AlertItem, AlertQueueState, AlertSettings } from './types';
+import { ALERT_LIMITS, ALERT_PRIORITY } from './types';
+import type { AlertInput, AlertItem, AlertKind, AlertQueueState, AlertSettings } from './types';
+
+const KIND_FLAG: Record<AlertKind, 'onAsk' | 'onFailure' | 'onDone'> = { ask: 'onAsk', failure: 'onFailure', done: 'onDone' };
 
 /** tokens = burst */
 export function initialAlertQueue(cfg: AlertSettings, nowMs: number): AlertQueueState {
   return { tokens: cfg.burst, refilledAt: nowMs, lastShown: {}, lastKey: {}, pending: [], visible: [], seq: 0 };
 }
 
-export function offerAlert(s: AlertQueueState, _input: AlertInput, _cfg: AlertSettings, _nowMs: number): AlertQueueState {
-  return s;
+/** Lowest priority first, then oldest first: the eviction order when pending is full. */
+function evictionOrder(a: AlertItem, b: AlertItem): number {
+  return ALERT_PRIORITY[a.kind] - ALERT_PRIORITY[b.kind] || a.createdAt - b.createdAt;
+}
+
+export function offerAlert(s: AlertQueueState, input: AlertInput, cfg: AlertSettings, nowMs: number): AlertQueueState {
+  const repeat = s.lastKey[input.agentId] === input.key;
+  const withKey: AlertQueueState = repeat ? s : { ...s, lastKey: { ...s.lastKey, [input.agentId]: input.key } };
+  if (!cfg.enabled || !cfg[KIND_FLAG[input.kind]] || repeat) return withKey;
+
+  const priority = ALERT_PRIORITY[input.kind];
+  const last = s.lastShown[input.agentId];
+  if (last && nowMs - last.at < cfg.agentCooldownSec * 1000 && last.priority >= priority) return withKey;
+
+  const target = s.pending.find((p) => p.kind === input.kind && nowMs - p.createdAt <= ALERT_LIMITS.coalesceMs);
+  if (target) {
+    if (target.agentIds.includes(input.agentId)) return withKey;
+    const merged = { ...target, agentIds: [...target.agentIds, input.agentId] };
+    return { ...withKey, pending: s.pending.map((p) => (p === target ? merged : p)) };
+  }
+
+  const item: AlertItem = {
+    id: `alert-${s.seq + 1}`,
+    kind: input.kind,
+    agentIds: [input.agentId],
+    ...(input.toolName !== undefined ? { toolName: input.toolName } : {}),
+    createdAt: nowMs,
+    shownAt: null,
+  };
+  let pending = [...s.pending, item];
+  while (pending.length > ALERT_LIMITS.pendingMax) {
+    const drop = [...pending].sort(evictionOrder)[0]!;
+    pending = pending.filter((p) => p !== drop);
+  }
+  return { ...withKey, pending, seq: s.seq + 1 };
 }
 
 export function tickAlerts(
-  s: AlertQueueState, _cfg: AlertSettings, _nowMs: number, _hidden: boolean,
+  s: AlertQueueState, cfg: AlertSettings, nowMs: number, hidden: boolean,
 ): { state: AlertQueueState; shown: readonly AlertItem[] } {
-  return { state: s, shown: [] };
+  const elapsed = Math.max(0, nowMs - s.refilledAt);
+  let tokens = Math.min(cfg.burst, s.tokens + (elapsed * cfg.perMinute) / 60_000);
+  let visible = s.visible;
+  if (cfg.autoDismissSec > 0) {
+    const ttl = cfg.autoDismissSec * 1000;
+    visible = visible.filter((v) => v.shownAt === null || nowMs - v.shownAt < ttl);
+  }
+  if (hidden) {
+    return { state: { ...s, tokens, refilledAt: nowMs, visible, pending: [] }, shown: [] };
+  }
+
+  let pending = s.pending.filter((p) => nowMs - p.createdAt <= ALERT_LIMITS.pendingTtlMs);
+  const shown: AlertItem[] = [];
+  const lastShown = { ...s.lastShown };
+  const ready = pending
+    .filter((p) => nowMs - p.createdAt >= ALERT_LIMITS.coalesceMs)
+    .sort((a, b) => ALERT_PRIORITY[b.kind] - ALERT_PRIORITY[a.kind] || a.createdAt - b.createdAt);
+  for (const item of ready) {
+    if (tokens < 1 || visible.length + shown.length >= cfg.maxVisible) break;
+    tokens -= 1;
+    const out = { ...item, shownAt: nowMs };
+    shown.push(out);
+    for (const id of item.agentIds) lastShown[id] = { at: nowMs, priority: ALERT_PRIORITY[item.kind] };
+  }
+  if (shown.length) {
+    const ids = new Set(shown.map((x) => x.id));
+    pending = pending.filter((p) => !ids.has(p.id));
+    visible = [...visible, ...shown];
+  }
+  return { state: { ...s, tokens, refilledAt: nowMs, lastShown, pending, visible }, shown };
 }
 
-export function dismissAlert(s: AlertQueueState, _id: string): AlertQueueState {
-  return s;
+export function dismissAlert(s: AlertQueueState, id: string): AlertQueueState {
+  if (!s.visible.some((v) => v.id === id)) return s;
+  return { ...s, visible: s.visible.filter((v) => v.id !== id) };
 }

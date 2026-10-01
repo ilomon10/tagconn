@@ -1,7 +1,9 @@
-// STUB (W0b): W1-6 owns the mix resolution. Master 0 keeps the app silent until then.
 import type { Settings } from '@tagconn/shared';
 import type { AudioMix, AudioPrefs } from './types';
 
-export function resolveMix(_office: Pick<Settings['office'], 'sound' | 'audio'>, _prefs: AudioPrefs, _hidden: boolean): AudioMix {
-  return { master: 0, sfx: false, ambient: false, alerts: false, footsteps: false };
+/** Server defaults (`office.sound`, `office.audio`) overridden by the per-browser prefs; hidden tab = silent. */
+export function resolveMix(office: Pick<Settings['office'], 'sound' | 'audio'>, prefs: AudioPrefs, hidden: boolean): AudioMix {
+  const muted = prefs.muted ?? !office.sound;
+  const { sfx, ambient, alerts, footsteps } = office.audio;
+  return { master: hidden || muted ? 0 : (prefs.volume ?? office.audio.volume), sfx, ambient, alerts, footsteps };
 }

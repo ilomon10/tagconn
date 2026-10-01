@@ -3,6 +3,9 @@
 // SeatAllocator (drama walks are cosmetic; a cancelled antic simply walks home) and never imports OfficeScene.
 import type { Agent, Settings } from '@tagconn/shared';
 import type { ActorKey } from '../cast';
+import { CosmeticClaims } from '../cosmetic/claims';
+import { isIdleEligible } from '../cosmetic/eligible';
+import type { CosmeticClaimsApi } from '../cosmetic/types';
 import type { Character } from '../actors/Character';
 import {
   isAgentOnARoll,
@@ -36,6 +39,8 @@ export interface DramaHost {
   office(): Settings['office'] | undefined;
   floorKey(): string;
   reducedMotion(): boolean;
+  /** The scene's shared claims registry (M13); a private one is used when absent. */
+  claims?(): CosmeticClaimsApi;
 }
 
 const STEP_MS = 500;
@@ -63,8 +68,8 @@ interface DramaScene {
   playMs: number;
   replied: boolean;
   arrived: Set<ActorKey>;
-  /** Tiles reserved for this scene's gather spots (keyed "x,y"). */
-  spots: string[];
+  /** Tiles reserved for this scene's gather spots. */
+  spots: Point[];
 }
 
 const tileKey = (p: Point) => `${p.x},${p.y}`;
@@ -75,6 +80,7 @@ export class DramaDirector {
   private scenes: DramaScene[] = [];
   private reserved = new Set<string>();
   private busy = new Set<ActorKey>();
+  private ownClaims = new CosmeticClaims();
   private prevStrain = new Map<ActorKey, StrainKind | null>();
   private nextAt: number | null = null;
   private stepAcc = 0;
@@ -84,6 +90,10 @@ export class DramaDirector {
 
   constructor(private host: DramaHost) {}
 
+  private claims(): CosmeticClaimsApi {
+    return this.host.claims?.() ?? this.ownClaims;
+  }
+
   /** buildWorld / floor change: drop every scene and every timer. Characters only lose their drama emote and bubble
    *  (they are about to be teleported, reseated or destroyed; the scene sends resting actors to their new spots). */
   reset(): void {
@@ -92,6 +102,11 @@ export class DramaDirector {
   }
 
   private dropState(): void {
+    const claims = this.claims();
+    for (const s of this.scenes) {
+      for (const k of s.keys) claims.release(k, 'drama');
+      this.releaseSpots(s);
+    }
     this.attempt = 0;
     this.scenes = [];
     this.reserved.clear();
@@ -181,11 +196,7 @@ export class DramaDirector {
 
   /** Whether `c` may still be part of a running scene (walking is allowed: the scene walks it itself). */
   private stillOk(c: Character | undefined): c is Character {
-    if (!c || c.gone || c.leaving) return false;
-    if (c.lifecycleFrame.state === 'resting') return true;
-    if (c.lifecycleFrame.state !== 'quest' || !c.boundAgentId) return false;
-    const a = this.agentsById.get(c.boundAgentId);
-    return !!a && a.status === 'active' && a.activity === 'idle';
+    return !!c && isIdleEligible(c, c.boundAgentId ? this.agentsById.get(c.boundAgentId) : undefined);
   }
 
   private roomOf(c: Character): string | null {
@@ -196,7 +207,7 @@ export class DramaDirector {
   private candidates(): DramaCandidate[] {
     const out: DramaCandidate[] = [];
     for (const [key, c] of this.host.actors()) {
-      if (this.busy.has(key) || c.walking || !this.stillOk(c)) continue;
+      if (this.busy.has(key) || !this.claims().isFree(key) || c.walking || !this.stillOk(c)) continue;
       const roomId = this.roomOf(c);
       if (roomId === null) continue;
       const t = c.tile;
@@ -258,7 +269,10 @@ export class DramaDirector {
   }
 
   private releaseSpots(s: DramaScene): void {
-    for (const k of s.spots) this.reserved.delete(k);
+    for (const p of s.spots) {
+      this.reserved.delete(tileKey(p));
+      this.claims().releaseTile(p, 'drama');
+    }
     s.spots = [];
   }
 
@@ -266,7 +280,24 @@ export class DramaDirector {
     this.releaseSpots(s);
     this.scenes = this.scenes.filter((x) => x !== s);
     // A key released by `cancel` may already belong to a newer scene: only free the keys no other scene owns.
-    for (const k of s.keys) if (!this.scenes.some((x) => x.keys.includes(k))) this.busy.delete(k);
+    for (const k of s.keys) {
+      if (this.scenes.some((x) => x.keys.includes(k))) continue;
+      this.busy.delete(k);
+      this.claims().release(k, 'drama');
+    }
+  }
+
+  /** A higher priority script took `key` (its claim is already gone): drop it from its scene without moving it, and
+   *  send the rest of a pair scene home. */
+  private revoke(key: ActorKey): void {
+    const s = this.scenes.find((x) => x.keys.includes(key));
+    if (!s) return;
+    s.keys = s.keys.filter((k) => k !== key);
+    s.arrived.delete(key);
+    this.busy.delete(key);
+    this.char(key)?.clearDrama();
+    if (s.keys.length === 0) this.finish(s);
+    else if (s.phase !== 'returning') this.cancel(s, new Set(), Date.now());
   }
 
   private stepScenes(now: number): void {
@@ -378,6 +409,15 @@ export class DramaDirector {
       arrived: new Set(),
       spots: [],
     };
+    const claims = this.claims();
+    const claimed: ActorKey[] = [];
+    for (const k of keys) {
+      if (!claims.tryClaim(k, 'drama', (rk) => this.revoke(rk))) {
+        for (const ck of claimed) claims.release(ck, 'drama');
+        return;
+      }
+      claimed.push(k);
+    }
     this.scenes.push(scene);
     for (const k of keys) this.busy.add(k);
     this.gather(scene, antic.props, first);
@@ -397,7 +437,7 @@ export class DramaDirector {
     const seats = this.host.seats();
     const standing = new Set<string>();
     for (const c of this.host.actors().values()) standing.add(tileKey(c.tile));
-    const isFree = (p: Point) => seats.occupant(p) === undefined && !this.reserved.has(tileKey(p)) && !standing.has(tileKey(p));
+    const isFree = (p: Point) => seats.occupant(p) === undefined && !this.reserved.has(tileKey(p)) && !this.claims().isTileReserved(p) && !standing.has(tileKey(p));
     const spots = gatherSpots(map, prop, s.keys.length as 1 | 2, isFree);
     const finder = this.host.finder();
     s.keys.forEach((k, i) => {
@@ -408,9 +448,9 @@ export class DramaDirector {
         s.arrived.add(k);
         return;
       }
-      const sk = tileKey(spot);
-      this.reserved.add(sk);
-      s.spots.push(sk);
+      this.reserved.add(tileKey(spot));
+      this.claims().reserveTile(spot, 'drama');
+      s.spots.push(spot);
       c.walk(path, false, () => {
         if (this.scenes.includes(s) && s.phase === 'gathering') s.arrived.add(k);
       });

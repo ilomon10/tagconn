@@ -205,6 +205,28 @@ describe('rift theme painters (implements every FurnitureKind/RoomType exhaustiv
     }
   });
 
+  it('paints the life furniture (M13) inside its footprint with real art, for every variant', () => {
+    const T = 16;
+    const shapes: [FurnitureKind, number][] = [
+      ['arcade', 1],
+      ['ping-pong', 2],
+      ['foosball', 2],
+      ['board-game-table', 2],
+    ];
+    for (const [kind, w] of shapes) {
+      for (let variant = 0; variant < 4; variant++) {
+        const f: PlacedFurniture = { x: 2, y: 5, w, h: 1, kind, blocking: true, roomId: 'r1', roomType: 'lounge', variant };
+        const { g, rects } = makeBoundsGraphics();
+        riftTheme.paintFurniture(g, f, T);
+        expect(rects.length).toBeGreaterThan(6);
+        expect(Math.min(...rects.map((r) => r.x))).toBeGreaterThanOrEqual(f.x * T - 1);
+        expect(Math.max(...rects.map((r) => r.x + r.w))).toBeLessThanOrEqual((f.x + w) * T + 1);
+        expect(Math.min(...rects.map((r) => r.y))).toBeGreaterThanOrEqual(f.y * T - MAX_OVERDRAW_PX);
+        expect(Math.max(...rects.map((r) => r.y + r.h))).toBeLessThanOrEqual((f.y + 1) * T + 1);
+      }
+    }
+  });
+
   it('paints the back-wall face (cap, face, band-with-baseboard, and door gap) without throwing (M8 8p)', () => {
     for (const band of [true, false]) {
       for (const openLeft of [false, true]) {

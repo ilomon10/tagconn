@@ -6,11 +6,13 @@ const picks = vi.hoisted(() => ({
   antic: null as unknown,
   strain: null as string | null,
   seeds: [] as string[],
+  cands: [] as { key: string }[],
   line: 'phew' as string | null,
 }));
 vi.mock('../drama', async (orig) => ({
   ...(await orig<typeof import('../drama')>()),
-  pickCast: (_c: unknown, _b: unknown, seed: string) => {
+  pickCast: (c: { key: string }[], _b: unknown, seed: string) => {
+    picks.cands = c;
     picks.seeds.push(seed);
     return picks.cast;
   },
@@ -23,6 +25,7 @@ vi.mock('../drama', async (orig) => ({
 
 import { resetStreaks } from '../drama';
 import { DramaDirector, type DramaHost } from './dramaDirector';
+import { CosmeticClaims } from '../cosmetic/claims';
 
 type Pt = { x: number; y: number };
 class FakeChar {
@@ -37,7 +40,7 @@ class FakeChar {
   strain: [string | null, boolean] | null = null;
   walks: { to: Pt; seated: boolean }[] = [];
   private cb?: () => void;
-  constructor(public key: string, x: number, y: number) {
+  constructor(public key: `hero:${string}`, x: number, y: number) {
     this.tile = { x, y };
   }
   walk(path: Pt[], seated: boolean, onArrive?: () => void) {
@@ -99,7 +102,7 @@ function setup(over: { office?: Record<string, unknown>; reduced?: boolean } = {
   const host = {
     map: () => m,
     finder: () => ({ find: (from: Pt, to: Pt) => (from.x === to.x && from.y === to.y ? [from] : [from, to]) }),
-    seats: () => ({ get: (k: string) => homes.get(k), occupant: () => undefined }),
+    seats: () => ({ get: (k: string) => homes.get(k as `hero:${string}`), occupant: () => undefined }),
     actors: () => actors,
     agents: () => agents,
     themeFor: () => ({}),
@@ -297,5 +300,74 @@ describe('DramaDirector strain', () => {
     picks.strain = 'tired';
     d.afterCast(now);
     expect(b.strain).toEqual([null, false]);
+  });
+});
+
+describe('DramaDirector claims', () => {
+  function withClaims() {
+    const s = setup();
+    const claims = new CosmeticClaims();
+    // setup() builds its own host; rebuild the director with a shared registry.
+    const host = (s.d as unknown as { host: Record<string, unknown> }).host;
+    host.claims = () => claims;
+    return { ...s, claims };
+  }
+
+  it('claims every cast key as drama and releases them when the scene ends', () => {
+    const { a, b, d, claims } = withClaims();
+    start(d);
+    expect(claims.holder(a.key)).toBe('drama');
+    expect(claims.holder(b.key)).toBe('drama');
+    a.arrive();
+    b.arrive();
+    tick(d, 500);
+    tick(d, 10_000);
+    a.arrive();
+    b.arrive();
+    tick(d, 500);
+    expect(claims.count()).toBe(0);
+  });
+
+  it('skips claimed keys when listing candidates', () => {
+    const { a, b, d, claims } = withClaims();
+    claims.tryClaim(a.key, 'meeting', () => {});
+    picks.cast = null;
+    tick(d, 500);
+    tick(d, 1500);
+    expect(picks.cands.map((c) => c.key)).toEqual([b.key]);
+  });
+
+  it('a meeting claim revokes an antic without moving the character; the partner goes home', () => {
+    const { a, b, d, claims } = withClaims();
+    start(d);
+    a.arrive();
+    b.arrive();
+    tick(d, 500);
+    expect(a.emote).toBe('mug');
+    const aWalks = a.walks.length;
+    expect(claims.tryClaim(a.key, 'meeting', () => {})).toBe(true);
+    expect(a.emote).toBeNull();
+    expect(a.walks).toHaveLength(aWalks);
+    expect(b.emote).toBeNull();
+    expect(b.walks[b.walks.length - 1]!.to).toEqual({ x: 2, y: 4 });
+    expect(claims.holder(a.key)).toBe('meeting');
+    tick(d, 500);
+    expect(a.walks).toHaveLength(aWalks);
+  });
+
+  it('reset releases drama claims', () => {
+    const { d, claims } = withClaims();
+    start(d);
+    expect(claims.count('drama')).toBe(2);
+    d.reset();
+    expect(claims.count()).toBe(0);
+  });
+
+  it('aborts the whole start when a key cannot be claimed', () => {
+    const { a, b, d, claims } = withClaims();
+    claims.tryClaim(b.key, 'reaction', () => {});
+    start(d);
+    expect(claims.isFree(a.key)).toBe(true);
+    expect(a.walks).toHaveLength(0);
   });
 });

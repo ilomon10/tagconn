@@ -103,6 +103,105 @@ function paintCrystalGlyph(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T
   }
 }
 
+/** Office life (M13): holo-arcade pillar. A 1x1 void pillar with a glowing holo screen and a button row. */
+function paintHoloArcade(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn): void {
+  const x = f.x * T;
+  const y = f.y * T;
+  const accent = pick(RIFT_ACCENTS, f.variant);
+  rect(0x000000, x + 2, y + 14, 12, 2, 0.25);
+  rect(VOID_DARK, x + 3, y + 1, 10, 14);
+  rect(CRYSTAL, x + 2, y + 12, 12, 3);
+  rect(CRYSTAL_EDGE, x + 3, y + 1, 1, 11, 0.4);
+  rect(CRYSTAL_EDGE, x + 12, y + 1, 1, 11, 0.4);
+  // holo screen: a bright core with a faint glow halo and scanlines
+  rect(accent, x + 4, y + 2, 8, 6, 0.3);
+  rect(accent, x + 5, y + 3, 6, 4, 0.75);
+  rect(lighten(accent, 0.5), x + 6, y + 4, 2, 2, 0.9);
+  rect(0x000000, x + 5, y + 5, 6, 1, 0.25);
+  // control deck: a stick and two button gems
+  rect(CRYSTAL, x + 3, y + 9, 10, 2);
+  rect(lighten(accent, 0.3), x + 5, y + 9, 1, 1);
+  rect(0xd94ff0, x + 9, y + 9, 1, 1);
+  rect(0x6ff5ff, x + 11, y + 9, 1, 1);
+}
+
+/** Office life (M13): zero-g paddle field. A 2x1 hovering energy plane with a net beam, floating paddles and a ball. */
+function paintPaddleField(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn): void {
+  const x = f.x * T;
+  const y = f.y * T;
+  const w = f.w * T;
+  const mx = x + w / 2;
+  const accent = pick(RIFT_ACCENTS, f.variant);
+  rect(0x000000, x + 3, y + 14, w - 6, 2, 0.2); // shadow under the hover
+  rect(VOID_DARK, x + 1, y + 11, w - 2, 2); // emitter slab
+  rect(CRYSTAL_EDGE, x + 1, y + 11, w - 2, 1, 0.5);
+  rect(accent, x + 2, y + 4, w - 4, 7, 0.25); // field
+  rect(CRYSTAL_EDGE, x + 2, y + 4, w - 4, 1, 0.5);
+  rect(CRYSTAL_EDGE, x + 2, y + 10, w - 4, 1, 0.3);
+  // net: a vertical beam
+  rect(lighten(accent, 0.5), mx - 1, y + 2, 1, 9, 0.8);
+  rect(accent, mx - 2, y + 2, 3, 1, 0.5);
+  // paddles hover at each end
+  rect(0x6ff5ff, x + 4, y + 5, 1, 4, 0.9);
+  rect(0xd94ff0, x + w - 5, y + 6, 1, 4, 0.9);
+  // ball with a faint trail
+  rect(0xffffff, mx + 4, y + 7, 2, 2, 0.95);
+  rect(accent, mx + 6, y + 7, 3, 1, 0.4);
+}
+
+/** Office life (M13): hover-puck table. A 2x1 void table with a glowing puck over a lit rink and goal gems. */
+function paintHoverPuckTable(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn): void {
+  const x = f.x * T;
+  const y = f.y * T;
+  const w = f.w * T;
+  const mx = x + w / 2;
+  const accent = pick(RIFT_ACCENTS, f.variant);
+  rect(0x000000, x + 1, y + 14, w - 2, 2, 0.2);
+  rect(VOID_DARK, x + 1, y + 3, w - 2, 11); // body
+  rect(CRYSTAL, x + 1, y + 12, w - 2, 2); // base
+  rect(CRYSTAL_EDGE, x + 1, y + 3, w - 2, 1, 0.5);
+  rect(accent, x + 3, y + 5, w - 6, 6, 0.3); // rink
+  rect(CRYSTAL_EDGE, mx, y + 5, 1, 6, 0.45); // centre line
+  // goals
+  rect(0xd94ff0, x + 2, y + 6, 1, 4, 0.85);
+  rect(0x6ff5ff, x + w - 3, y + 6, 1, 4, 0.85);
+  // levitating puck: glow above its shadow
+  rect(0x000000, mx - 3, y + 9, 3, 1, 0.3);
+  rect(lighten(accent, 0.5), mx - 3, y + 6, 3, 2);
+  rect(0xffffff, mx - 2, y + 6, 1, 1, 0.9);
+  // side rails
+  rect(CRYSTAL_EDGE, x + 1, y + 3, 1, 9, 0.3);
+  rect(CRYSTAL_EDGE, x + w - 2, y + 3, 1, 9, 0.3);
+}
+
+/** Office life (M13): holo-chess table. A 2x1 void table with a lit checker board and two floating holo pieces. */
+function paintHoloChess(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn): void {
+  const x = f.x * T;
+  const y = f.y * T;
+  const w = f.w * T;
+  const accent = pick(RIFT_ACCENTS, f.variant);
+  rect(0x000000, x + 1, y + 14, w - 2, 2, 0.2);
+  rect(VOID_DARK, x + 1, y + 5, w - 2, 9);
+  rect(CRYSTAL, x + 1, y + 12, w - 2, 2);
+  rect(CRYSTAL_EDGE, x + 1, y + 5, w - 2, 1, 0.5);
+  // checker board: 8x2 cells of 3x3 px, alternating lit and dark
+  const cols = Math.floor((w - 4) / 3);
+  const bx = x + 2 + Math.floor((w - 4 - cols * 3) / 2);
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < 2; r++) {
+      if ((c + r) % 2 === 0) rect(accent, bx + c * 3, y + 6 + r * 3, 3, 3, 0.55);
+      else rect(CRYSTAL, bx + c * 3, y + 6 + r * 3, 3, 3);
+    }
+  }
+  // floating holo pieces: a tall king (cyan) and a pawn (magenta) with glow
+  const kx = bx + 3;
+  rect(0x6ff5ff, kx, y + 1, 2, 5, 0.85);
+  rect(lighten(0x6ff5ff, 0.5), kx - 1, y + 2, 4, 1, 0.9);
+  const px = bx + cols * 3 - 6;
+  rect(0xd94ff0, px, y + 3, 2, 3, 0.85);
+  rect(lighten(0xd94ff0, 0.4), px, y + 2, 2, 1, 0.9);
+}
+
 function paintRiftStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn, up: boolean): void {
   const x = f.x * T;
   const y = f.y * T;
@@ -115,11 +214,11 @@ function paintRiftStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: 
 }
 
 const RIFT: Record<FurnitureKind, Painter> = {
-  // Office life (W0c) placeholders: replaced by real art in W1-9.
-  arcade: paintCrystalAppliance,
-  'ping-pong': paintCrystalAppliance,
-  foosball: paintCrystalAppliance,
-  'board-game-table': paintCrystalAppliance,
+  // Office life (M13): holo-arcade pillar, zero-g paddle field, hover-puck table, holo-chess table.
+  arcade: paintHoloArcade,
+  'ping-pong': paintPaddleField,
+  foosball: paintHoverPuckTable,
+  'board-game-table': paintHoloChess,
   // M12 G3 trigger furniture (see `paintCrystalGlyph`).
   'notice-board': paintCrystalGlyph,
   'roster-board': paintCrystalGlyph,

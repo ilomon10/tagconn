@@ -8,6 +8,8 @@ import { paintRiftFloor } from './paint/riftFloors';
 import { paintRiftFurniture } from './paint/riftFurniture';
 import { paintRiftBackWall, paintRiftDoor, paintRiftIslandEdge, paintRiftVoid, paintRiftWall, paintRiftWallDecor } from './paint/riftWalls';
 import type { Costume, ThemeDefinition } from './types';
+import { RIFT_LIFE } from './content/riftLife';
+import { RIFT_NPCS } from './content/riftNpcs';
 import { ambientMotes, ensureFxTextures, portalShimmer, prefersReducedMotion } from './fx';
 
 // `Phaser.BlendModes.ADD` (only a type import of `phaser` is safe under vitest's node environment
@@ -221,6 +223,8 @@ export const riftTheme: ThemeDefinition = {
   activityVerbs: guildTheme.activityVerbs,
   activityFx: guildTheme.activityFx,
   drama: guildTheme.drama,
+  life: RIFT_LIFE,
+  npcs: RIFT_NPCS,
   lighting: { dayTint: 0xd6d0ff, nightTint: 0x0b0820, nightAlpha: 0.55, glowAtNight: true },
   floorLabel: () => 'The Multiverse',
 };

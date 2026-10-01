@@ -1,6 +1,8 @@
 import type * as Phaser from 'phaser';
 import type { Bitmap } from '../textures';
 import { paintBitmap } from '../textures';
+import { paintCreatureTextures } from '../npc/creatures';
+import { SHADES_TEXTURE } from '../npc/types';
 import type { Costume } from './types';
 
 /**
@@ -41,6 +43,23 @@ export const HAT_BITMAPS: Partial<Record<Hat, Bitmap>> = {
     rows: ['h h h h', ' hshsh '],
     palette: { h: 0xffffff, s: 0xc9c9c9 },
   },
+  // NPC hats (M13): cap (courier/janitor), police-cap (badge-front peaked cap), fedora, hardhat.
+  cap: {
+    rows: [' hhhh  ', 'hhhhhh ', 'hhhhhhss'],
+    palette: { h: 0xffffff, s: 0xc9c9c9 },
+  },
+  'police-cap': {
+    rows: [' hhhhh ', 'hhhhhhh', 'hhhsshh', 'sssssss'],
+    palette: { h: 0xffffff, s: 0xc9c9c9 },
+  },
+  fedora: {
+    rows: ['  hhh  ', ' hhhhh ', ' hsssh ', 'sssssss'],
+    palette: { h: 0xffffff, s: 0xc9c9c9 },
+  },
+  hardhat: {
+    rows: ['  hhh  ', ' hhhhh ', 'hhhhhhh', 'sssssss'],
+    palette: { h: 0xffffff, s: 0xc9c9c9 },
+  },
 };
 
 export const STAFF_BITMAPS: Partial<Record<Staff, Bitmap>> = {
@@ -68,6 +87,23 @@ export const STAFF_BITMAPS: Partial<Record<Staff, Bitmap>> = {
     rows: [' sss ', 'sswss', 'sswss', ' sss ', '  s  '],
     palette: { s: 0x8a94a6, w: 0xe6ecf5 },
   },
+  // NPC props (M13): baked colours like the rest.
+  mop: {
+    rows: ['  b ', '  b ', '  b ', '  b ', '  b ', 'wwww', 'wwww'],
+    palette: { b: 0x8a5a2b, w: 0xdfe6ee },
+  },
+  parcel: {
+    rows: ['bbbbb', 'bwwwb', 'bbwbb', 'bwwwb', 'bbbbb'],
+    palette: { b: 0xc8934f, w: 0xf2e3b8 },
+  },
+  'watering-can': {
+    rows: ['  ss  ', ' ssss ', 'sbbbbs', 'sbbbbs', ' ssss '],
+    palette: { s: 0x4f9bd0, b: 0x7cc4f0 },
+  },
+  clipboard: {
+    rows: ['  dd ', 'wwwww', 'wlwlw', 'wwwww', 'wlwlw', 'wwwww'],
+    palette: { d: 0x8a94a6, w: 0xf2ecff, l: 0x555a6a },
+  },
 };
 
 export const CLOAK_BITMAP: Bitmap = {
@@ -78,6 +114,12 @@ export const CLOAK_BITMAP: Bitmap = {
 export const GOGGLES_BITMAP: Bitmap = {
   rows: ['oo oo', 'ogogo'],
   palette: { o: 0x3a3f4e, g: 0x8fd3ff },
+};
+
+/** Dark shades for the CIA agent (drawn over the head's eye row). */
+export const SHADES_BITMAP: Bitmap = {
+  rows: ['kkkkkk', 'kgkkgk'],
+  palette: { k: 0x15151c, g: 0x3a4a66 },
 };
 
 export const CLOAK_TEXTURE = 'guild-cloak';
@@ -92,4 +134,6 @@ export function paintCostumeTextures(scene: Phaser.Scene): void {
   for (const [staff, bitmap] of Object.entries(STAFF_BITMAPS)) paintBitmap(scene, staffTextureKey(staff as Staff), bitmap!);
   paintBitmap(scene, CLOAK_TEXTURE, CLOAK_BITMAP);
   paintBitmap(scene, GOGGLES_TEXTURE, GOGGLES_BITMAP);
+  paintBitmap(scene, SHADES_TEXTURE, SHADES_BITMAP);
+  paintCreatureTextures(scene);
 }

@@ -184,3 +184,27 @@ describe('generateMap: furnish.seed re-rolls one room without touching the layou
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
 });
+
+describe('furnishRoom: lounge recipe slots (M13 W1-10)', () => {
+  const rect: Rect = { x: 0, y: 0, w: 20, h: 14 };
+  const opts = { density: 'normal' as FurnishDensity, decor: 0, aisle: 1 };
+
+  it('places the amenities by slot index and keeps later slots as tables', () => {
+    const { furniture } = furnishRoom('lounge', rect, mulberry32(3), opts);
+    const kinds = furniture.filter((f) => f.blocking && f.y >= 4).map((f) => f.kind);
+    expect(kinds.slice(0, 4)).toEqual(['ping-pong', 'board-game-table', 'foosball', 'arcade']);
+    expect(kinds.slice(4).every((k) => k === 'table')).toBe(true);
+    const arcade = furniture.find((f) => f.kind === 'arcade')!;
+    expect([arcade.w, arcade.h]).toEqual([1, 1]);
+  });
+
+  it('leaves the seats and the rand() stream identical to the all-tables lounge', () => {
+    const a = mulberry32(5);
+    const r = furnishRoom('lounge', rect, a, opts);
+    expect(r.seats.length).toBeGreaterThan(0);
+    // one rand() per block: same count of variant draws as items
+    const b = mulberry32(5);
+    for (let i = 0; i < r.furniture.length; i++) b();
+    expect(a()).toBe(b());
+  });
+});

@@ -112,6 +112,9 @@ function mergeStacks(positions: readonly RowSlot[]): { x: number; y: number; h: 
   return groups;
 }
 
+/** Lounge extra-row slot kinds by placed-slot index; later slots stay plain tables. */
+const LOUNGE_SLOT_KINDS: readonly FurnitureKind[] = ['ping-pong', 'board-game-table', 'foosball', 'arcade'];
+
 /**
  * Furniture + seat recipes per room type, scaled by `FurnishOptions` (M8 8n: the user report that
  * rooms - especially the server room - were mostly empty despite free floor). `rand` is the room's
@@ -306,9 +309,14 @@ export function furnishRoom(type: RoomType, r: Rect, rand: () => number, opts: F
       // dense/packed) so a `sparse` lounge still reads as furnished rather than nearly bare.
       if (r.h > 5) {
         const extra = fillRows({ x: r.x, y: r.y + 4, w: r.w, h: r.h - 4 }, 2, 1, aisle, density);
+        // The first slots host the life amenities (M13 W1-10), by placed-slot index: same one block()
+        // (one rand()) per slot and the same seats as a table, so other rooms and the seat set are unchanged.
+        let slot = 0;
         for (const p of extra) {
           if (p.x + 1 > x2 - 1) continue;
-          block('table', p.x, p.y, 2, 1);
+          const kind = LOUNGE_SLOT_KINDS[slot++];
+          if (kind === 'arcade') block('arcade', p.x, p.y);
+          else block(kind ?? 'table', p.x, p.y, 2, 1);
           const sy = seatOutward(p, 1);
           if (sy !== null) {
             stand(p.x, sy);
