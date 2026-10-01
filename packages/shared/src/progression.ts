@@ -158,10 +158,13 @@ export interface XpWeights { output: number; input: number; cacheCreation: numbe
 export interface LevelCurve { levelBase: number; levelExponent: number; maxLevel: number }
 export type UsageCounters = Pick<TokenUsage, 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheCreationTokens'>;
 
-/** floor(output*w.output + input*w.input + cacheCreation*w.cacheCreation + cacheRead*w.cacheRead); non-finite or negative counters count as 0. */
+/** Non-finite or negative → 0; clamped to PROGRESSION_LIMITS.maxCounter. */
+const clampCounter = (n: number): number => (Number.isFinite(n) && n > 0 ? Math.min(n, PROGRESSION_LIMITS.maxCounter) : 0);
+/** floor(output*w.output + input*w.input + cacheCreation*w.cacheCreation + cacheRead*w.cacheRead); counters are clamped to
+ *  maxCounter (non-finite/negative count as 0) and the result to maxXp. */
 export function xpFromUsage(u: UsageCounters, w: XpWeights): number {
-  const c = (n: number): number => (Number.isFinite(n) && n > 0 ? n : 0);
-  return Math.floor(c(u.outputTokens) * c(w.output) + c(u.inputTokens) * c(w.input) + c(u.cacheCreationTokens) * c(w.cacheCreation) + c(u.cacheReadTokens) * c(w.cacheRead));
+  const c = clampCounter;
+  return Math.min(PROGRESSION_LIMITS.maxXp, Math.floor(c(u.outputTokens) * c(w.output) + c(u.inputTokens) * c(w.input) + c(u.cacheCreationTokens) * c(w.cacheCreation) + c(u.cacheReadTokens) * c(w.cacheRead)));
 }
 /** XP needed to reach `level`: 0 for level <= 1, else ceil(levelBase * (level - 1) ^ levelExponent). */
 export function xpForLevel(level: number, c: LevelCurve): number {
@@ -186,16 +189,16 @@ export function levelSpan(xp: number, c: LevelCurve): { level: number; levelXp: 
 }
 /**
  * The no-double-count rule (section 2.3): mark' = component-wise max(prev ?? 0, usage); xpDelta = max(0,
- * xpFromUsage(mark') - xpFromUsage(prev ?? 0)); changed = mark' !== prev on any counter.
+ * xpFromUsage(mark') - xpFromUsage(prev ?? 0)) capped at maxXpPerUpdate; stored counters are clamped; changed = mark' !== prev on any counter.
  */
 export function advanceUsageMark(prev: UsageCounters | null, usage: UsageCounters, w: XpWeights): { mark: UsageCounters; changed: boolean; xpDelta: number } {
-  const c = (n: number): number => (Number.isFinite(n) && n > 0 ? n : 0);
+  const c = clampCounter;
   const p = prev ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   const mark: UsageCounters = {
-    inputTokens: Math.max(p.inputTokens, c(usage.inputTokens)),
-    outputTokens: Math.max(p.outputTokens, c(usage.outputTokens)),
-    cacheReadTokens: Math.max(p.cacheReadTokens, c(usage.cacheReadTokens)),
-    cacheCreationTokens: Math.max(p.cacheCreationTokens, c(usage.cacheCreationTokens)),
+    inputTokens: Math.max(c(p.inputTokens), c(usage.inputTokens)),
+    outputTokens: Math.max(c(p.outputTokens), c(usage.outputTokens)),
+    cacheReadTokens: Math.max(c(p.cacheReadTokens), c(usage.cacheReadTokens)),
+    cacheCreationTokens: Math.max(c(p.cacheCreationTokens), c(usage.cacheCreationTokens)),
   };
   // No stored mark yet: the first one always counts as a change so the caller persists it.
   const changed =
@@ -204,7 +207,7 @@ export function advanceUsageMark(prev: UsageCounters | null, usage: UsageCounter
     mark.outputTokens !== p.outputTokens ||
     mark.cacheReadTokens !== p.cacheReadTokens ||
     mark.cacheCreationTokens !== p.cacheCreationTokens;
-  return { mark, changed, xpDelta: Math.max(0, xpFromUsage(mark, w) - xpFromUsage(p, w)) };
+  return { mark, changed, xpDelta: Math.min(PROGRESSION_LIMITS.maxXpPerUpdate, Math.max(0, xpFromUsage(mark, w) - xpFromUsage(p, w))) };
 }
 
 // ------------------------------------------------------------------ loot
@@ -283,7 +286,15 @@ export const isKnockedOut = (p: Pick<HeroProgress, 'koUntil'> | undefined, now: 
 export const BATTLE_ID_RE = /^b-[a-f0-9]{12}$/;
 /** M13 `NpcActor.id` (`<kind>-<seq>`). */
 export const ENCOUNTER_ID_RE = /^[a-z0-9-]{1,64}$/;
-export const PROGRESSION_LIMITS = { maxParty: 4, maxMoves: 8, maxItems: 4, maxLog: 600, maxSkillKeys: 48 } as const;
+export const PROGRESSION_LIMITS = {
+  maxParty: 4, maxMoves: 8, maxItems: 4, maxLog: 220, maxSkillKeys: 48,
+  /** maxLog = 200 (max battle.maxTurns) + 4 (maxParty swaps) + 16 slack. */
+  maxStoredBattles: 2000,
+  /** Clamps for stored/derived counters and XP (keep every sum an exact safe integer). */
+  maxCounter: 1e13,
+  maxXp: 1e12,
+  maxXpPerUpdate: 5_000_000,
+} as const;
 
 /** GET /api/progress */
 export const ProgressListQuerySchema = z.strictObject({ projectId: z.string().min(1).max(200).optional() });
@@ -291,7 +302,8 @@ export const ProgressListQuerySchema = z.strictObject({ projectId: z.string().mi
 export const SkillAllocationSchema = z.strictObject({
   skills: z
     .record(z.string().regex(SKILL_ID_RE), z.number().int().min(1).max(10))
-    .refine((o) => Object.keys(o).length <= PROGRESSION_LIMITS.maxSkillKeys, 'too many skills'),
+    .refine((o) => Object.keys(o).length <= PROGRESSION_LIMITS.maxSkillKeys, 'too many skills')
+    .transform((o): Record<string, number> => Object.assign(Object.create(null) as Record<string, number>, o)),
   /** Optimistic concurrency: 409 when the stored progress `updatedAt` differs. */
   baseUpdatedAt: z.number().optional(),
 });

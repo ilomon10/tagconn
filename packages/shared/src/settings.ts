@@ -178,11 +178,11 @@ export const SettingsSchema = z.object({
       /** Turns before the enemy loses interest (result 'timeout', no stakes). */
       maxTurns: z.number().int().min(10).max(200).default(60),
       /** Battles that may be started per hour (server rate limit). */
-      maxPerHour: z.number().int().min(1).max(600).default(30),
+      maxPerHour: z.number().int().min(1).max(120).default(30),
       /** Minutes an unresolved battle stays open before it expires. */
       openTtlMin: z.number().int().min(1).max(240).default(30),
       /** Days resolved/abandoned battles are kept. */
-      retentionDays: z.number().int().min(1).max(3650).default(30),
+      retentionDays: z.number().int().min(1).max(365).default(30),
       /** Consumables each hero party brings to every battle. */
       items: z
         .object({

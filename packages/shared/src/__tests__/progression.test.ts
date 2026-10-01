@@ -26,6 +26,8 @@ import {
   validateSkillAllocation,
   xpForLevel,
   xpFromUsage,
+  PROGRESSION_LIMITS,
+  SettingsSchema,
   type LevelCurve,
   type SkillId,
   type SkillTree,
@@ -209,14 +211,14 @@ describe('schemas', () => {
     expect(BattleCreateSchema.safeParse({ ...create, npcKind: 'janitor' }).success).toBe(false);
     expect(BattleCreateSchema.safeParse({ ...create, party: [] }).success).toBe(false);
     expect(BattleResolveSchema.safeParse({ log: [{ t: 'run' }], y: 1 }).success).toBe(false);
-    expect(BattleResolveSchema.safeParse({ log: Array.from({ length: 601 }, () => ({ t: 'run' })) }).success).toBe(false);
+    expect(BattleResolveSchema.safeParse({ log: Array.from({ length: 221 }, () => ({ t: 'run' })) }).success).toBe(false);
     expect(BattleResolveSchema.safeParse({ log: [{ t: 'run' }], expect: { result: 'fled', turns: 1 } }).success).toBe(true);
   });
   it('reject __proto__ and malformed skill keys', () => {
     // zod drops a literal `__proto__` own key instead of failing: it never reaches the parsed value or the prototype.
     const p = SkillAllocationSchema.safeParse(JSON.parse('{"skills":{"__proto__":{"x":1},"developer.0.1":1}}'));
     expect(p.success && Object.keys(p.data.skills)).toEqual(['developer.0.1']);
-    expect(p.success && Object.getPrototypeOf(p.data.skills)).toBe(Object.prototype);
+    expect(p.success && Object.getPrototypeOf(p.data.skills)).toBeNull();
     expect(({} as Record<string, unknown>).x).toBeUndefined();
     expect(SkillAllocationSchema.safeParse(JSON.parse('{"skills":{"constructor":1}}')).success).toBe(false);
     expect(SkillAllocationSchema.safeParse({ skills: { 'developer.0.1': 1 } }).success).toBe(true);
@@ -242,5 +244,41 @@ describe('schemas', () => {
     expect(r.success).toBe(true);
     expect(HeroAppearanceSchema.safeParse({ ...a, lootHat: 'fedora', lootProp: null }).success).toBe(true);
     expect(HeroAppearanceSchema.safeParse({ ...a, lootHat: 'beanie' }).success).toBe(false);
+  });
+});
+
+describe('M14 hardening', () => {
+  const W = { output: 1, input: 1, cacheCreation: 1, cacheRead: 1 };
+  const big = Number.MAX_SAFE_INTEGER;
+  const U = (n: number) => ({ inputTokens: n, outputTokens: n, cacheReadTokens: n, cacheCreationTokens: n });
+  it('limits', () => {
+    expect(PROGRESSION_LIMITS).toMatchObject({ maxLog: 220, maxStoredBattles: 2000, maxCounter: 1e13, maxXp: 1e12, maxXpPerUpdate: 5_000_000 });
+    expect(BattleResolveSchema.safeParse({ log: Array.from({ length: 220 }, () => ({ t: 'run' })) }).success).toBe(true);
+  });
+  it('xpFromUsage clamps counters and result', () => {
+    expect(xpFromUsage(U(big), W)).toBeLessThanOrEqual(PROGRESSION_LIMITS.maxXp);
+    expect(xpFromUsage(U(big * 4), { output: 1e9, input: 1e9, cacheCreation: 1e9, cacheRead: 1e9 })).toBe(PROGRESSION_LIMITS.maxXp);
+    expect(xpFromUsage({ ...U(0), outputTokens: Infinity }, W)).toBe(0);
+    expect(Number.isSafeInteger(xpFromUsage(U(big), W))).toBe(true);
+  });
+  it('advanceUsageMark stores clamped counters and caps the delta', () => {
+    const r = advanceUsageMark(null, U(big), W);
+    expect(r.mark).toEqual(U(PROGRESSION_LIMITS.maxCounter));
+    expect(r.xpDelta).toBe(PROGRESSION_LIMITS.maxXpPerUpdate);
+    const again = advanceUsageMark(r.mark, U(big), W);
+    expect(again.changed).toBe(false);
+    expect(again.xpDelta).toBe(0);
+    expect(advanceUsageMark(U(big), U(1), W).mark).toEqual(U(PROGRESSION_LIMITS.maxCounter));
+  });
+  it('battle settings bounds', () => {
+    expect(SettingsSchema.shape.battle.safeParse({ maxPerHour: 121 }).success).toBe(false);
+    expect(SettingsSchema.shape.battle.safeParse({ retentionDays: 366 }).success).toBe(false);
+    expect(SettingsSchema.shape.battle.parse({})).toMatchObject({ maxPerHour: 30, retentionDays: 30 });
+  });
+  it('skill allocation uses own keys only (null-prototype records)', () => {
+    const p = SkillAllocationSchema.parse({ skills: { 'developer.0.1': 1 } });
+    expect(Object.getPrototypeOf(p.skills)).toBeNull();
+    expect(validateSkillAllocation(TREE, p.skills, Object.create(null), { level: 10, totalPoints: 5, allowRespec: true })).toEqual({ ok: true });
+    expect(skillPointsSpent(p.skills)).toBe(1);
   });
 });

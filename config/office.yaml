@@ -126,9 +126,9 @@ battle: {}
   # skillPointEveryWins: 3    # 0..100. Bonus skill point every N wins; 0 = never
   # lootChance: 0.35          # 0..1
   # maxTurns: 60              # 10..200. Turns before the enemy loses interest (timeout)
-  # maxPerHour: 30            # 1..600. Battles that may be started per hour
+  # maxPerHour: 30            # 1..120. Battles that may be started per hour
   # openTtlMin: 30            # 1..240. Minutes an unresolved battle stays open
-  # retentionDays: 30         # 1..3650. Days finished battles are kept
+  # retentionDays: 30         # 1..365. Days finished battles are kept
   # items:                    # consumables each party brings, 0..9 each
   #   coffee: 2
   #   energyDrink: 1
