@@ -66,7 +66,12 @@ export type FurnitureKind =
   | 'cage'
   // M12 G3: trigger furniture placed by procgen/triggers.ts (2D: same kind in every style).
   | 'notice-board'
-  | 'roster-board';
+  | 'roster-board'
+  // Office life (W0c): lounge play furniture; placeholder painters until the real art lands.
+  | 'arcade'
+  | 'ping-pong'
+  | 'foosball'
+  | 'board-game-table';
 
 /** M12 G3: the panel a furniture item opens. A subset of `app/menuHotkeys.ts` MenuActionId (asserted by a test in G3). */
 export type FurnitureAction = 'board' | 'log' | 'quests' | 'settings' | 'heroes' | 'receptionist';

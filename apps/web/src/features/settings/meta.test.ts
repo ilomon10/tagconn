@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSettings, GUI_IMMUTABLE_SETTINGS, type Settings } from '@tagconn/shared';
-import { HIDDEN_SETTINGS, KEY_HINTS, SECTION_LABELS, envVarName, numberBounds } from './meta';
+import { ENUM_OPTIONS, HIDDEN_SETTINGS, KEY_HINTS, NUMBER_STEP, SECTION_LABELS, envVarName, numberBounds } from './meta';
 
 const settings = defaultSettings();
 const sections = Object.keys(settings) as (keyof Settings)[];
@@ -26,10 +26,13 @@ const leafPaths: string[] = sections
  * schema shape), `shaders`'s keys are fixed by the schema, so — unlike a record — every one of them can
  * and should have its own hint.
  */
+const M13_SECTIONS = ['labels', 'life', 'npcs', 'alerts', 'audio'] as const;
 const nestedLeafPaths: string[] = Object.keys(settings.office.shaders)
   .map((k) => `office.shaders.${k}`)
   // M12: `office.drama` is a fixed-shape object whose keys carry their own hints.
-  .concat(Object.keys(settings.office.drama).map((k) => `office.drama.${k}`));
+  .concat(Object.keys(settings.office.drama).map((k) => `office.drama.${k}`))
+  // M13: fixed-shape sections with their own hints.
+  .concat(M13_SECTIONS.flatMap((s) => Object.keys(settings.office[s]).map((k) => `office.${s}.${k}`)));
 
 describe('SECTION_LABELS', () => {
   it('has a title and hint for every settings section', () => {
@@ -90,6 +93,12 @@ describe('GUI-immutable coverage', () => {
 });
 
 describe('numberBounds', () => {
+  it('has bounds for every numeric M13 field and a step for the volume', () => {
+    for (const sec of M13_SECTIONS)
+      for (const [k, v] of Object.entries(settings.office[sec])) if (typeof v === 'number') expect(numberBounds(`office.${sec}.${k}`).min, `${sec}.${k}`).toBeDefined();
+    expect(NUMBER_STEP['office.audio.volume']).toBe(0.05);
+    expect(ENUM_OPTIONS['office.labels.showTask']).toEqual(['focus', 'always', 'never']);
+  });
   it('reads min/max/int from the schema at nested depth', () => {
     expect(numberBounds('office.drama.idleChatSec')).toEqual({ min: 5, max: 3600, int: false });
     expect(numberBounds('office.drama.streakTools')).toEqual({ min: 2, max: 100, int: true });

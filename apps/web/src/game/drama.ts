@@ -11,6 +11,9 @@ export const STRAIN_ICON: Record<StrainKind, string> = { dizzy: 'icon-dizzy-1', 
 export const DIZZY_FRAMES = ['icon-dizzy-1', 'icon-dizzy-2', 'icon-dizzy-3'] as const;
 export const EMOTE_ICON: Record<DramaEmote, string> = {
   mug: 'icon-mug', note: 'icon-note', dice: 'icon-dice', ball: 'icon-ball', phone: 'icon-phone', laugh: 'icon-laugh', spark: 'icon-sparkle', zz: 'icon-zz',
+  // M13 placeholders on existing icons; W1-12 switches them to `icon-<emote>`.
+  megaphone: 'icon-arrow', alarm: 'icon-bang', heart: 'icon-sparkle', gamepad: 'icon-dice', paddle: 'icon-ball',
+  chess: 'icon-dice', can: 'icon-mug', pencil: 'icon-note', broom: 'icon-sparkle', parcel: 'icon-check',
 };
 export const EMPTY_DRAMA: DramaContent = { antics: [], strain: { dizzy: [], sweating: [], tired: [], 'on-a-roll': [] } };
 

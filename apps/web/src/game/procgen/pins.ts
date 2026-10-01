@@ -57,6 +57,10 @@ export const KIND_BLOCKING: Record<FurnitureKind, boolean> = {
   cage: true,
   'notice-board': true,
   'roster-board': true,
+  arcade: true,
+  'ping-pong': true,
+  foosball: true,
+  'board-game-table': true,
 };
 
 /** Every kind except the stairs (their landing is owned by `generate.ts`). */

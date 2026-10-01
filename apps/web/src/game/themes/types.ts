@@ -3,8 +3,9 @@
 // The theme contract: geometry (procgen) never depends on style, so switching skins never moves
 // characters or seats (D2). A theme only paints. Two implementations exist: `modern.ts` (a straight
 // port of the pre-M7 office art) and `guild.ts` (the magic guild hall).
-import type { Activity, MULTIVERSE_THEME_ID, OfficeStyle, RoomType, Zone } from '@tagconn/shared';
+import type { Activity, MULTIVERSE_THEME_ID, NpcKind, OfficeStyle, RoomType, Zone } from '@tagconn/shared';
 import type * as Phaser from 'phaser';
+import type { SfxId } from '../sfxBus';
 import type { DecorSlot, FurnitureKind, GeneratedMap, PlacedFurniture, WallDecorSlot } from '../procgen/types';
 
 /** Particle effects on a character. M12 adds `streak` (on a roll). Used by ThemeDefinition, fx.ts and Character.ts. */
@@ -14,8 +15,10 @@ export type ActivityFxKind = 'sparkles' | 'bubbles' | 'rune' | 'channel' | 'stre
 export type StrainKind = 'dizzy' | 'sweating' | 'tired' | 'on-a-roll';
 export const STRAIN_PRIORITY: readonly StrainKind[] = ['dizzy', 'sweating', 'tired', 'on-a-roll'];
 
-/** M12 G1 icon shown over a character during an idle antic. */
-export type DramaEmote = 'mug' | 'note' | 'dice' | 'ball' | 'phone' | 'laugh' | 'spark' | 'zz';
+/** M12 G1 icon shown over a character during an idle antic. M13 adds life/NPC emotes. */
+export type DramaEmote =
+  | 'mug' | 'note' | 'dice' | 'ball' | 'phone' | 'laugh' | 'spark' | 'zz'
+  | 'megaphone' | 'alarm' | 'heart' | 'gamepad' | 'paddle' | 'chess' | 'can' | 'pencil' | 'broom' | 'parcel';
 
 export interface DramaAntic {
   /** kebab-case, unique within one theme's list. */
@@ -35,6 +38,67 @@ export interface DramaContent {
   strain: Record<StrainKind, readonly string[]>;
 }
 
+/** M13: a cosmetic body pose (Character.setPose). Overrides the activity animation while standing still. */
+export type LifePose = 'chat' | 'sip' | 'play' | 'cheer' | 'stretch' | 'phone' | 'water' | 'nap' | 'doodle' | 'sweep' | 'carry' | 'sit';
+
+export interface LifeActivity {
+  /** kebab-case, unique within one theme's list. */
+  id: string;
+  /** Any-of furniture kinds to gather at (nearest item on the floor/realm). `[]` = in place (allowed under reduced motion). */
+  requires: readonly FurnitureKind[];
+  /** [min, max] cast size. */
+  cast: readonly [1 | 2 | 3 | 4, 1 | 2 | 3 | 4];
+  /** Relative pick weight (> 0). */
+  weight: number;
+  /** Seeded within [min, max] seconds. */
+  durationSec: readonly [number, number];
+  pose: LifePose;
+  emote?: DramaEmote;
+  /** Said by seeded cast members, one every LIFE_TIMING.lineEvery. Each line <= 48 chars. */
+  lines: readonly string[];
+}
+
+/** Line pools for one meeting type. Each line <= 48 chars. */
+export interface MeetingLines {
+  invite: readonly string[]; // host, at the start ("Kickoff in the war room!")
+  fetch: readonly string[]; // host, to the straggler
+  dawdle: readonly string[]; // straggler's reply
+  talk: readonly string[]; // during the meeting, any participant
+  close: readonly string[]; // host, at the end
+}
+
+export interface LifeContent {
+  activities: readonly LifeActivity[];
+  kickoff: MeetingLines;
+  standup: MeetingLines;
+}
+
+/** Non-human NPC bodies (Character.setCreature). Texture keys: `creature-<id>-0|1` (npc/types.ts). */
+export type CreatureId = 'dog' | 'cat' | 'monster' | 'wolf' | 'familiar' | 'slime' | 'hover-hound' | 'astro-cat' | 'void-blob';
+
+export interface NpcSkin {
+  /** Plate line 1, e.g. "Sales Dog" / "Town Guard". */
+  name: string;
+  /** Plate line 2, e.g. "Visitor". */
+  title?: string;
+  /** Plate name colour and body tint. */
+  color: number;
+  /** Human NPCs: costume overlays (hat, staff prop, shades, robe tint). */
+  costume?: Costume;
+  /** Non-human NPCs: replaces the whole body. */
+  creature?: CreatureId;
+  /** Said during the NPC's bit. Each line <= 48 chars. */
+  lines: readonly string[];
+  /** Bit sound (bark, meow, whistle...). */
+  sound?: SfxId;
+  /** Which `npc-jingle-N` plays on entry. */
+  jingle: 0 | 1 | 2 | 3;
+}
+
+export interface NpcContent {
+  skins: Record<NpcKind, NpcSkin>;
+}
+
 export interface Palette {
   bg: number;
   floorBase: Record<RoomType | 'corridor', number>;
@@ -51,12 +115,14 @@ export interface Palette {
 export interface Costume {
   robe?: number;
   cloak?: number;
-  hat?: 'none' | 'wizard' | 'hood' | 'crown' | 'helm' | 'bard-cap' | 'circlet';
+  hat?: 'none' | 'wizard' | 'hood' | 'crown' | 'helm' | 'bard-cap' | 'circlet' | 'cap' | 'police-cap' | 'fedora' | 'hardhat';
   hatColor?: number;
-  staff?: 'none' | 'staff' | 'wand' | 'hammer' | 'quill' | 'lute' | 'shield';
+  staff?: 'none' | 'staff' | 'wand' | 'hammer' | 'quill' | 'lute' | 'shield' | 'mop' | 'parcel' | 'watering-can' | 'clipboard';
   trim?: number;
   /** Additive detail not in the original sketch: a pair of goggles pushed up on the forehead. */
   goggles?: boolean;
+  /** M13: dark glasses (CIA agent, inquisitor); drawn by Character from SHADES_TEXTURE. */
+  shades?: boolean;
 }
 
 /** M8 8p: per-theme back-wall face numbers (docs/design/back-wall.md section 1). */
@@ -123,6 +189,10 @@ export interface ThemeDefinition {
   activityFx?: Partial<Record<Activity, ActivityFxKind>>;
   /** M12 G1: idle antics + strain lines. Optional: a theme without it has no drama (rift reuses guild's). */
   drama?: DramaContent;
+  /** M13: idle activities + meeting lines. */
+  life?: LifeContent;
+  /** M13: NPC skins per semantic kind. */
+  npcs?: NpcContent;
   lighting: { dayTint: number; nightTint: number; nightAlpha: number; glowAtNight: boolean };
   floorLabel(index: number, projectName: string): string;
 }

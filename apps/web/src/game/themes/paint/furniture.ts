@@ -18,6 +18,11 @@ function pick<T>(arr: readonly T[], seed: number): T {
 // ==================================================================== modern (port of renderMap.ts)
 
 const MODERN: Record<FurnitureKind, Painter> = {
+  // Office life (W0c) placeholders: replaced by real art in W1-8.
+  arcade: (g, f, T, rect) => MODERN.equipment(g, f, T, rect),
+  'ping-pong': (g, f, T, rect) => MODERN.equipment(g, f, T, rect),
+  foosball: (g, f, T, rect) => MODERN.equipment(g, f, T, rect),
+  'board-game-table': (g, f, T, rect) => MODERN.equipment(g, f, T, rect),
   // M12 G3 trigger furniture: 1 row deep, wall-standing; tall only when `againstNorthWall` (<= MAX_OVERDRAW_PX).
   'notice-board': (g, f, T, rect) => {
     // A cork board in a wood frame with pinned notes and a pen ledge.
@@ -597,6 +602,11 @@ function candleAndScroll(rect: RectFn, x: number, y: number): void {
 }
 
 const GUILD: Record<FurnitureKind, Painter> = {
+  // Office life (W0c) placeholders: replaced by real art in W1-8.
+  arcade: (g, f, T, rect) => GUILD.table(g, f, T, rect),
+  'ping-pong': (g, f, T, rect) => GUILD.table(g, f, T, rect),
+  foosball: (g, f, T, rect) => GUILD.table(g, f, T, rect),
+  'board-game-table': (g, f, T, rect) => GUILD.table(g, f, T, rect),
   // M12 G3 trigger furniture: 1 row deep, wall-standing; tall only when `againstNorthWall` (<= MAX_OVERDRAW_PX).
   'notice-board': (g, f, T, rect) => {
     // A plank quest board on two posts with parchment bounties nailed on.

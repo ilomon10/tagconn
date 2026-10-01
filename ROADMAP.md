@@ -223,6 +223,51 @@ role can't change while bound, fixes ship first.
   - [x] Gate 2: QA (6/6 pass; drama settings not editable, stale "left" card) + review (5 Med: stuck drama after rebuild, streak off-by-one, HUD without on-a-roll, door edits skip pin prune, orphan recipe seat) + security (3 Low) + docs → fixes [x]: drama reset/reseat, shared streak API, nested Settings groups, card auto-clear, pin prune on door edits, auto-door aprons, issue dedupe/cap, trigger split-check cap, pin x/y max, prune/cap hints, preview textures, bubbles avoid name tags, 1-tile reception desk art → v0.6.0
 - [x] v0.5.3 (from `release/0.5.x`): `office:runner` through `tsx` (ERR_MODULE_NOT_FOUND) + `tsx` as a root devDependency, connect/probe logs
 
+## M13: The office comes alive → v0.7.0 [in progress]
+
+Plan: `~/.claude-sessions/profiles/edgar/plans/pasted-content-id-1097-tagconn-features-lucky-milner.md`. User decisions (2026-10-01):
+four milestones (M13 life sim, M14 battles, M15 light + furniture, M16 2.5D), sound synthesized in code (ADR #22), NPC
+encounters may cause brief cosmetic chaos (never cover a waiting bubble, never touch real seats). Design: `docs/design/office-life.md`.
+
+- [x] W0 design `docs/design/office-life.md` + contract (`office.labels/life/npcs/alerts/audio` settings, new furniture kinds, event fields) [Architect]
+- Wave 1
+  - [ ] 13.1 RPG name plates: above the head, multi-line (name / title / wrapped task), code-generated pixel font [Developer: game]
+  - [ ] 13.4 Game-style alerts: JRPG text box, token-bucket rate limit + coalescing [Developer: web]
+  - [ ] 13.5 Sound: WebAudio synth SFX + ambient bed, per-browser mute/volume [Developer: audio]
+  - [ ] Life furniture: arcade, ping-pong, foosball, board-game table, water cooler, sofa (procgen + 3 styles) [Developer: procgen/art]
+- Wave 2
+  - [ ] 13.2 Life director: kickoff meetings with invites and a straggler, stand-ups, idle activities (games, coffee, naps) [Developer: game]
+  - [ ] 13.3 NPC director: janitor, courier, plant waterer + random encounters (guest, police, CIA, sales dog, monster, cat) with cosmetic chaos [Developer: game]
+  - [ ] PM wiring into OfficeScene / OfficeView
+- [ ] Gate: QA + review + security + guide pages → v0.7.0
+
+## M14: Encounters, battles and hero progression → v0.8.0 [todo]
+
+Pokémon-style turn-based battles from M13 encounters (Battle / Ignore), party of 1–4 heroes, level from tokens spent
+(`Agent.usage` deltas credited to the bound hero), stats + per-class skill trees, XP + cosmetic loot, soft KO.
+Design: `docs/design/battles.md`.
+
+- [ ] W0 design + threat model + shared contract (`progression.ts`, seeded battle engine replayed by the server) [Architect + Security]
+- [ ] Server `progression` module (hero_progress table, usage-delta XP, skills, battles create/resolve) [Developer: server]
+- [ ] BattleScene (swirl transition, command menu, HP bars, log, results) + enemy art [Developer: game]
+- [ ] Hero sheet "Stats & Skills" tab + HUD level badge [Developer: heroes]
+- [ ] Encounter prompt + party picker + KO presence + loot cosmetics [Developer: web]
+- [ ] Gate → v0.8.0
+
+## M15: Light, time and harmonious rooms → v0.9.0 [todo]
+
+- [ ] Host-clock sun cycle (server time + tz, dawn/dusk ramps, fixed/accelerated modes, HUD slider)
+- [ ] Lightmap with wall occlusion (visibility polygons), room-filling lights, window sun shafts, furniture + character shadows
+- [ ] Furniture harmony: functional groups, wall/corner/centre affinity, facing, clearance, candidate scoring
+- [ ] Furniture editor: no duplicate on drag (slot consumption), stable decor, displaced items move, labels/icons, rotate/delete/palette
+- [ ] Gate → v0.9.0
+
+## M16: Deep 3/4 RPG renderer (2.5D) → v1.0.0 [todo]
+
+- [ ] ADR + spike: y-sorted furniture sprites (walk behind), height map → shadows, see-through walls
+- [ ] 4-direction characters, follow camera, optional perspective shader, editor preview on the sprite path
+- [ ] Gate → v1.0.0
+
 ## Backlog
 
 - [ ] Flaky under the full turbo run only: one `apps/web/src/lib/socket.test.ts` case timed out once at 11.7 s (passes alone and in 2 full web reruns); find the real-timer case and make it deterministic

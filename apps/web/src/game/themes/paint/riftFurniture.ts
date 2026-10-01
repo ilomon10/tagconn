@@ -115,6 +115,11 @@ function paintRiftStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: 
 }
 
 const RIFT: Record<FurnitureKind, Painter> = {
+  // Office life (W0c) placeholders: replaced by real art in W1-9.
+  arcade: paintCrystalAppliance,
+  'ping-pong': paintCrystalAppliance,
+  foosball: paintCrystalAppliance,
+  'board-game-table': paintCrystalAppliance,
   // M12 G3 trigger furniture (see `paintCrystalGlyph`).
   'notice-board': paintCrystalGlyph,
   'roster-board': paintCrystalGlyph,

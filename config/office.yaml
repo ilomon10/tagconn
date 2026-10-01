@@ -152,6 +152,47 @@ office: {}
   #   screenStrength: 0.6            # 0..1. Screen effect intensity.
   #   scanlines: false               # Legacy: CRT look on the modern style, used only while
   #                                    `screen` is "off". Prefer `screen: "crt"`.
+  # labels: {}                       # M13 RPG name plates above the head.
+  #   showTask: "focus"              # focus | always | never. Third line with the task.
+  #   taskLines: 2                   # 1..4. Lines the task wraps to.
+  #   maxWidthChars: 24              # 8..60. Plate width in name characters.
+  #   showTitle: true                # Second line with the themed title.
+  #   pixelFont: true                # Code-drawn pixel font (WebGL only).
+  # life: {}                         # M13 meetings and idle activities (presentation only).
+  #   enabled: true
+  #   kickoffWindowSec: 30           # 5..300. 2+ subagents spawning within it start a kickoff.
+  #   meetingSec: 20                 # 5..600. How long everyone sits at the table.
+  #   standupEverySec: 1800          # 60..86400. Minimum gap between stand-ups.
+  #   standupMinCast: 3              # 2..12. Idle characters needed for a stand-up.
+  #   idleActivityEverySec: 60       # 10..3600. Average gap between idle activities.
+  #   maxConcurrent: 2               # 1..8. Meetings plus activities at once.
+  #   maxMeetingSize: 6              # 2..12. Host plus invitees.
+  # npcs: {}                         # M13 routine NPCs and random encounters.
+  #   enabled: true
+  #   janitor: true
+  #   encounters: true               # Random visitors; courier and plant waterer stay.
+  #   encounterEverySec: 240         # 30..86400. Average gap between NPC visits.
+  #   maxConcurrent: 2               # 1..6. NPCs at once (1 on low graphics quality).
+  #   allowChaos: true               # Idle characters may flee, gather or chase.
+  #   maxReactors: 4                 # 1..8. Idle characters reacting to one NPC.
+  #   disabledKinds: []              # janitor | courier | plant-waterer | guest | police |
+  #                                  # cia-agent | sales-dog | monster | office-cat
+  # alerts: {}                       # M13 JRPG-style alert boxes.
+  #   enabled: true
+  #   onAsk: true
+  #   onDone: true
+  #   onFailure: true
+  #   perMinute: 4                   # 1..60. Token-bucket refill rate.
+  #   burst: 3                       # 1..10. Token-bucket size.
+  #   agentCooldownSec: 60           # 0..3600. Per-character cooldown.
+  #   autoDismissSec: 8              # 0..120. 0 = until dismissed.
+  #   maxVisible: 2                  # 1..5. Boxes on screen at once.
+  # audio: {}                        # M13 sound mix; `sound` above stays the master switch.
+  #   volume: 0.6                    # 0..1
+  #   sfx: true
+  #   ambient: true
+  #   alerts: true
+  #   footsteps: true
 
 notifications: {}
   # onWaiting: true

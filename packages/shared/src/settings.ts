@@ -12,6 +12,13 @@ import { DOMAIN_RE, isValidWebFetchAllowRule, RUN_MODELS, RUN_PERMISSION_MODES, 
 export const SCREEN_EFFECTS = ['off', 'crt', 'lcd', 'vhs'] as const;
 export type ScreenEffect = (typeof SCREEN_EFFECTS)[number];
 
+/** M13: semantic NPC kinds. Style-agnostic; each style skins them (docs/design/office-life.md 3.5). */
+export const NPC_KINDS = ['janitor', 'courier', 'plant-waterer', 'guest', 'police', 'cia-agent', 'sales-dog', 'monster', 'office-cat'] as const;
+export type NpcKind = (typeof NPC_KINDS)[number];
+/** M13: when the name plate shows its task line. `focus` = selected or hovered. */
+export const LABEL_TASK_MODES = ['focus', 'always', 'never'] as const;
+export type LabelTaskMode = (typeof LABEL_TASK_MODES)[number];
+
 export const ActivityRuleSchema = z.object({
   /** Regex matched against tool_name (anchored). */
   tool: z.string(),
@@ -262,6 +269,90 @@ export const SettingsSchema = z.object({
       selectionBeacon: z.boolean().default(true),
       /** 8h. Character cap on the Multiverse floor (split fairly across realms; Guild Masters first). */
       multiverseMaxCharacters: z.number().int().min(1).max(MULTIVERSE_LIMITS.maxCharacters).default(60),
+      /** M13: RPG name plates above the head. */
+      labels: z
+        .object({
+          /** Third plate line with the task: on hover/selection, always, or never. */
+          showTask: z.enum(LABEL_TASK_MODES).default('focus'),
+          /** Lines the task wraps to before it is cut with "…". */
+          taskLines: z.number().int().min(1).max(4).default(2),
+          /** Plate width in name characters; longer names are cut, the task wraps at this width. */
+          maxWidthChars: z.number().int().min(8).max(60).default(24),
+          /** Second line with the themed title. */
+          showTitle: z.boolean().default(true),
+          /** Code-drawn pixel font (WebGL only; canvas and missing glyphs fall back to system text). */
+          pixelFont: z.boolean().default(true),
+        })
+        .prefault({}),
+      /** M13: meetings and idle activities. Presentation only. */
+      life: z
+        .object({
+          enabled: z.boolean().default(true),
+          /** A kickoff starts when 2+ subagents of a delegating session spawn within this window. */
+          kickoffWindowSec: z.number().min(5).max(300).default(30),
+          /** How long everyone sits at the table. */
+          meetingSec: z.number().min(5).max(600).default(20),
+          /** Minimum seconds between stand-ups on a floor. */
+          standupEverySec: z.number().min(60).max(86_400).default(1800),
+          /** Idle characters on the floor needed for a stand-up. */
+          standupMinCast: z.number().int().min(2).max(12).default(3),
+          /** Average seconds between idle activities on a floor. */
+          idleActivityEverySec: z.number().min(10).max(3600).default(60),
+          /** Meetings plus activities running at once on a floor. */
+          maxConcurrent: z.number().int().min(1).max(8).default(2),
+          /** Host plus invitees in one meeting. */
+          maxMeetingSize: z.number().int().min(2).max(12).default(6),
+        })
+        .prefault({}),
+      /** M13: routine NPCs and random encounters. Presentation only. */
+      npcs: z
+        .object({
+          enabled: z.boolean().default(true),
+          /** Janitor mops in the evening and empties bins after bursts of activity. */
+          janitor: z.boolean().default(true),
+          /** Random visitors (guest, police, CIA agent, sales dog, monster, office cat). Courier/plant waterer stay. */
+          encounters: z.boolean().default(true),
+          /** Average seconds between NPC visits on a floor. */
+          encounterEverySec: z.number().min(30).max(86_400).default(240),
+          /** NPCs on a floor at once (1 on low graphics quality). */
+          maxConcurrent: z.number().int().min(1).max(6).default(2),
+          /** Idle characters may briefly flee, gather or chase. Never waiting ones. */
+          allowChaos: z.boolean().default(true),
+          /** Idle characters that react to one NPC. */
+          maxReactors: z.number().int().min(1).max(8).default(4),
+          /** NPC kinds that never appear. */
+          disabledKinds: z.array(z.enum(NPC_KINDS)).max(NPC_KINDS.length).default([]),
+        })
+        .prefault({}),
+      /** M13: JRPG-style alert boxes (the tab-hidden case stays with browser notifications). */
+      alerts: z
+        .object({
+          enabled: z.boolean().default(true),
+          onAsk: z.boolean().default(true),
+          onDone: z.boolean().default(true),
+          onFailure: z.boolean().default(true),
+          /** Token-bucket refill rate. */
+          perMinute: z.number().int().min(1).max(60).default(4),
+          /** Token-bucket size (alerts that may show back to back). */
+          burst: z.number().int().min(1).max(10).default(3),
+          /** Seconds before the same character can raise another alert of the same or lower priority. */
+          agentCooldownSec: z.number().min(0).max(3600).default(60),
+          /** Seconds an alert stays; 0 = until dismissed. */
+          autoDismissSec: z.number().min(0).max(120).default(8),
+          /** Alert boxes on screen at once. */
+          maxVisible: z.number().int().min(1).max(5).default(2),
+        })
+        .prefault({}),
+      /** M13: sound mix. `office.sound` stays the master switch (each browser may override it from the menu). */
+      audio: z
+        .object({
+          volume: z.number().min(0).max(1).default(0.6),
+          sfx: z.boolean().default(true),
+          ambient: z.boolean().default(true),
+          alerts: z.boolean().default(true),
+          footsteps: z.boolean().default(true),
+        })
+        .prefault({}),
     })
     .prefault({}),
   notifications: z
