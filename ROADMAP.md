@@ -273,6 +273,7 @@ Design: `docs/design/battles.md`.
 
 - [ ] Flaky under the full turbo run only: one `apps/web/src/lib/socket.test.ts` case timed out once at 11.7 s (passes alone and in 2 full web reruns); find the real-timer case and make it deterministic
 - [ ] Flaky under load (full turbo run): server `runs.lifecycle.test.ts` "L7: when run:start is rejected…"; supervisor `service.test.ts` timing cases ("SIGTERM first… tree kill"); server `heroes.test.ts` "takes over a long-idle live subagent's hero…" failed once in the full turbo run (passes alone); procgen bsp 128x96 300-seed cases time out at 60 s when headless Chrome is left running
+- [ ] Desktop CI: a tag push starts two `desktop` runs; one Windows run failed only in `smoke-desktop` temp-dir cleanup (EPERM on the Temp dir after all checks passed, v0.7.0). Make cleanup retry/ignore EPERM and dedupe the trigger
 - [ ] Name plates of characters standing on the same tile (e.g. at a realm gate) overlap; plates are obstacles for bubbles but not for each other
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 
