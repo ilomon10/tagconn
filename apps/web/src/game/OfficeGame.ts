@@ -2,6 +2,7 @@ import * as Phaser from 'phaser';
 import { OfficeScene, type OfficeFloorInfo, type OfficeFloorNeighbor, type OfficeState } from './scenes/OfficeScene';
 import type { SafeInsets } from './camera/insets';
 import type { FurnitureAction } from './procgen/types';
+import type { EncounterEvent } from './npc/types';
 
 export type { OfficeFloorInfo, OfficeFloorNeighbor, OfficeState };
 
@@ -26,6 +27,8 @@ export const officeNavBus = {
 };
 
 type Events = {
+  /** M13: an NPC encounter changed phase (the alert feed turns these into messages). */
+  encounter: (e: EncounterEvent) => void;
   agentClick: (agentId: string) => void;
   /** A click (not a drag) that hit no character — the host closes the agent panel on this. */
   emptyClick: () => void;
@@ -61,6 +64,7 @@ export class OfficeGame {
    *  (hotkeys, stairs clicks, top bar buttons) check this and no-op rather than stacking transitions. */
   private transitioning = false;
   private listeners: { [K in keyof Events]: Set<Events[K]> } = {
+    encounter: new Set(),
     agentClick: new Set(),
     emptyClick: new Set(),
     followChanged: new Set(),
@@ -76,6 +80,7 @@ export class OfficeGame {
     const scene = new OfficeScene((ready) => {
       if (this.destroyed) return;
       this.scene = ready;
+      ready.events.on('encounter', (e: EncounterEvent) => this.listeners.encounter.forEach((cb) => cb(e)));
       ready.events.on('agentClick', (id: string) => this.listeners.agentClick.forEach((cb) => cb(id)));
       ready.events.on('emptyClick', () => this.listeners.emptyClick.forEach((cb) => cb()));
       ready.events.on('followChanged', (id: string | null) => this.listeners.followChanged.forEach((cb) => cb(id)));
@@ -185,6 +190,7 @@ export class OfficeGame {
 
   destroy() {
     this.destroyed = true;
+    this.listeners.encounter.clear();
     this.listeners.agentClick.clear();
     this.listeners.emptyClick.clear();
     this.listeners.followChanged.clear();

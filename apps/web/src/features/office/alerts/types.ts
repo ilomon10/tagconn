@@ -1,4 +1,4 @@
-import type { Settings } from '@tagconn/shared';
+import type { Agent, Settings } from '@tagconn/shared';
 
 export type AlertKind = 'ask' | 'failure' | 'done';
 export const ALERT_PRIORITY: Record<AlertKind, number> = { ask: 3, failure: 2, done: 1 };
@@ -10,6 +10,8 @@ export interface AlertInput {
   /** Dedupe discriminator: the status for ask/done, the tool name for failure. */
   key: string;
   toolName?: string;
+  /** Snapshot of the agent at offer time, so the box can still show who it was after the store drops it. */
+  agent?: Agent;
 }
 export interface AlertItem {
   id: string;
@@ -17,6 +19,8 @@ export interface AlertItem {
   /** > 1 = coalesced ("3 heroes need you"). */
   agentIds: readonly string[];
   toolName?: string;
+  /** agentId -> snapshot taken at offer time (fallback when the live store no longer has the agent). */
+  agents?: Readonly<Record<string, Agent>>;
   createdAt: number;
   shownAt: number | null;
 }

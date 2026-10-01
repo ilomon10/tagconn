@@ -283,9 +283,21 @@ describe("kickoff", () => {
     expect(s.startMeeting).not.toHaveBeenCalled();
   });
 
-  it("drops an invitee that has a current tool", () => {
+  // Regression: subagents spawn mid-tool (the demo's all do), so requiring idle/thinking meant no kickoff ever ran.
+  it("pulls invitees that are already typing or running a tool into the kickoff", () => {
     const s = kickoffSetup();
+    s.a.activity = "typing";
+    s.b.activity = "reading";
     s.b.currentTool = "Bash";
+    now += 1000;
+    s.d.afterCast(now);
+    expect(s.startMeeting).toHaveBeenCalledTimes(1);
+    expect((s.startMeeting.mock.calls[0]![1] as MeetingPlan).inviteeKeys).toEqual(["agent:a", "agent:b"]);
+  });
+
+  it("drops an invitee whose agent is no longer active", () => {
+    const s = kickoffSetup();
+    s.b.status = "done";
     now += 1000;
     s.d.afterCast(now);
     expect(s.startMeeting).not.toHaveBeenCalled();
@@ -620,7 +632,12 @@ describe("gates, reset and lifetime", () => {
     expect(ctx.eligible("agent:main:s1", "host")).toBe(true);
     s.a.activity = "typing";
     s.d.afterCast(now);
+    expect(ctx.eligible("agent:a", "invitee")).toBe(true);
+    expect(ctx.eligible("agent:a", "idle")).toBe(false);
+    s.a.status = "done";
+    s.d.afterCast(now);
     expect(ctx.eligible("agent:a", "invitee")).toBe(false);
+    s.a.status = "active";
     s.ca.isWaiting = true;
     expect(ctx.eligible("agent:b", "idle")).toBe(true);
     s.cb.leaving = true;

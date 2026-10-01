@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SettingsSchema } from '@tagconn/shared';
+import { SettingsSchema, type Agent } from '@tagconn/shared';
 import { dismissAlert, initialAlertQueue, offerAlert, tickAlerts } from '../alertQueue';
 import { ALERT_LIMITS } from '../types';
 import type { AlertInput, AlertKind, AlertSettings } from '../types';
@@ -10,6 +10,16 @@ const inp = (agentId: string, kind: AlertKind = 'ask', key: string = kind, at = 
 const W = ALERT_LIMITS.coalesceMs;
 
 describe('alertQueue', () => {
+  it('keeps the offer-time agent snapshot on the item, merged when coalesced', () => {
+    const c = cfg({ agentCooldownSec: 0 });
+    const a = { id: 'a', role: 'developer' } as Agent;
+    const b = { id: 'b', role: 'qa-engineer' } as Agent;
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, { ...inp('a', 'done'), agent: a }, c, 0);
+    s = offerAlert(s, { ...inp('b', 'done'), agent: b }, c, 10);
+    expect(s.pending[0]?.agents).toEqual({ a, b });
+  });
+
   it('burst then refill at perMinute', () => {
     const c = cfg({ burst: 2, perMinute: 6, maxVisible: 5, agentCooldownSec: 0, autoDismissSec: 0 });
     let s = initialAlertQueue(c, 0);

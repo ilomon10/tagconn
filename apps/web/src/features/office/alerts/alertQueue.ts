@@ -25,7 +25,11 @@ export function offerAlert(s: AlertQueueState, input: AlertInput, cfg: AlertSett
   const target = s.pending.find((p) => p.kind === input.kind && nowMs - p.createdAt <= ALERT_LIMITS.coalesceMs);
   if (target) {
     if (target.agentIds.includes(input.agentId)) return withKey;
-    const merged = { ...target, agentIds: [...target.agentIds, input.agentId] };
+    const merged: AlertItem = {
+      ...target,
+      agentIds: [...target.agentIds, input.agentId],
+      ...(input.agent || target.agents ? { agents: { ...target.agents, ...(input.agent ? { [input.agentId]: input.agent } : {}) } } : {}),
+    };
     return { ...withKey, pending: s.pending.map((p) => (p === target ? merged : p)) };
   }
 
@@ -33,6 +37,7 @@ export function offerAlert(s: AlertQueueState, input: AlertInput, cfg: AlertSett
     id: `alert-${s.seq + 1}`,
     kind: input.kind,
     agentIds: [input.agentId],
+    ...(input.agent ? { agents: { [input.agentId]: input.agent } } : {}),
     ...(input.toolName !== undefined ? { toolName: input.toolName } : {}),
     createdAt: nowMs,
     shownAt: null,

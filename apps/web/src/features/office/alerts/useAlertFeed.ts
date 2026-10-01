@@ -3,7 +3,7 @@ import { sfxBus, type SfxId } from '../../../game/sfxBus';
 import { onFloor, useOfficeStore } from '../../../stores/officeStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { dismissAlert, initialAlertQueue, offerAlert, tickAlerts } from './alertQueue';
-import { alertsFromAgents, alertsFromEvents } from './alertSources';
+import { alertsFromAgents, alertsFromEvents, withAgentSnapshots } from './alertSources';
 import type { AlertItem, AlertKind, AlertQueueState } from './types';
 
 const TICK_MS = 500;
@@ -25,7 +25,7 @@ export function useAlertFeed(): { visible: readonly AlertItem[]; dismiss: (id: s
     let afterId = useOfficeStore.getState().events.reduce((m, e) => Math.max(m, e.id), 0);
 
     const offer = (state: AlertQueueState, inputs: ReturnType<typeof alertsFromAgents>, now: number) =>
-      inputs.reduce((s, i) => offerAlert(s, i, cfg(), now), state);
+      withAgentSnapshots(inputs, useOfficeStore.getState().agents, prevAgents).reduce((s, i) => offerAlert(s, i, cfg(), now), state);
 
     const unsub = useOfficeStore.subscribe((s) => {
       const q = queue.current;

@@ -15,12 +15,13 @@ function AlertEntry({ item, onShowMe, onDismiss }: { item: AlertItem; onShowMe: 
   const layouts = useLayoutStore((s) => s.layouts);
   const settings = useSettingsStore((s) => s.settings);
   const themed = useThemedRoleLookup();
-  const first = agents[item.agentIds[0] ?? ''];
+  const lookup = (id: string) => agents[id] ?? item.agents?.[id];
+  const first = lookup(item.agentIds[0] ?? '');
   const hero = useBoundHero(first?.id);
   const style = atMultiverse ? 'rift' : floorStyleFor(first ? projects[first.projectId] : undefined, layouts, settings);
   const names = useMemo(
-    () => item.agentIds.map((id) => (id === first?.id && hero ? hero.name : themed(agents[id]?.role, { projectId: agents[id]?.projectId }).themedTitle)),
-    [item.agentIds, agents, themed, hero, first?.id],
+    () => item.agentIds.map((id) => (id === first?.id && hero ? hero.name : themed(lookup(id)?.role, { projectId: lookup(id)?.projectId }).themedTitle)),
+    [item.agentIds, item.agents, agents, themed, hero, first?.id],
   );
   const copy = alertCopy(item, style, names, first?.description);
   return (

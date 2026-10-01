@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Agent, OfficeEvent } from '@tagconn/shared';
-import { alertsFromAgents, alertsFromEvents } from '../alertSources';
+import { alertsFromAgents, alertsFromEvents, withAgentSnapshots } from '../alertSources';
 import { ALERT_LIMITS } from '../types';
 
 const agent = (id: string, status: Agent['status'], projectId = 'p1'): Agent => ({ id, status, projectId }) as Agent;
@@ -48,5 +48,19 @@ describe('alertsFromEvents', () => {
   });
   it('filters by floor', () => {
     expect(alertsFromEvents([failure(1, now)], 0, () => false, now).inputs).toEqual([]);
+  });
+});
+
+describe('withAgentSnapshots', () => {
+  it('stamps the agent from the live store, falls back to the previous one, and drops unresolvable inputs', () => {
+    const live = agent('a', 'done');
+    const gone = agent('b', 'done');
+    const inputs = [
+      { kind: 'done' as const, agentId: 'a', at: 1, key: 'done' },
+      { kind: 'done' as const, agentId: 'b', at: 1, key: 'done' },
+      { kind: 'done' as const, agentId: 'c', at: 1, key: 'done' },
+    ];
+    const out = withAgentSnapshots(inputs, rec(live), rec(gone));
+    expect(out.map((i) => [i.agentId, i.agent])).toEqual([['a', live], ['b', gone]]);
   });
 });

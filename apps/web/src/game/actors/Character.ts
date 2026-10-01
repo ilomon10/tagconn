@@ -38,8 +38,10 @@ export interface SessionsChip {
 }
 
 const TEXT_RES = 4;
-/** M13 name plate: its bottom edge in local y, just above the status/emote icon slot (-19..-26). */
-const PLATE_BOTTOM_Y = -30;
+/** M13 name plate: its bottom edge in local y, 2 px above the tallest hat (wizard, top at -21). */
+const PLATE_BOTTOM_Y = -23;
+/** While a status/emote/strain icon shows (slot -19..-26) the plate rides this much higher, clear of it. */
+const PLATE_ICON_LIFT = 7;
 const PLATE_BACK = 0x15121e;
 const PLATE_TITLE = 0xb8b0c8;
 const PLATE_TASK = 0xe8e2f0;
@@ -118,6 +120,8 @@ export class Character extends Phaser.GameObjects.Container {
   private strainFx: Phaser.GameObjects.Container;
   private cloak: Phaser.GameObjects.Image;
   private hat: Phaser.GameObjects.Image;
+  /** An icon/strain badge is up this frame, so the plate sits `PLATE_ICON_LIFT` higher. */
+  private plateIconUp = false;
   private goggles: Phaser.GameObjects.Image;
   private fx: Phaser.GameObjects.Container;
   /** Canvas-renderer fallback for the selection/hover glow (Pre FX is WebGL-only) — a soft ring
@@ -393,6 +397,11 @@ export class Character extends Phaser.GameObjects.Container {
     return (this.plateLayout?.h ?? 0) * this.plateScale;
   }
 
+  /** Plate bottom edge in local y: hugs the head, lifted above the icon while one shows (set by `animate`). */
+  private get plateBottomY(): number {
+    return PLATE_BOTTOM_Y - (this.plateIconUp ? PLATE_ICON_LIFT : 0);
+  }
+
   private get plateShown(): boolean {
     return !!this.plateLayout && this.tagAllowedByLook && this.tagAllowedByLod;
   }
@@ -566,7 +575,7 @@ export class Character extends Phaser.GameObjects.Container {
   private updateBeacon(now: number, iconUp: boolean, bubbleX: number, bubbleY: number) {
     if (!this.beaconVisible) return;
     const s = this.beaconSize;
-    let tip = this.plateShown ? PLATE_BOTTOM_Y - this.plateWorldH - 2 : iconUp ? -35 : -27;
+    let tip = this.plateShown ? this.plateBottomY - this.plateWorldH - 2 : iconUp ? -35 : -27;
     if (this.bubbleWantsShow && this.bubbleAllowedByLod) {
       const ls = this.labelScale;
       if (Math.abs(bubbleX) < (this.bubbleW * ls) / 2 + BEACON_PX * BEACON_ROWS * s) tip = Math.min(tip, bubbleY - this.bubbleH * ls - 2);
@@ -771,7 +780,7 @@ export class Character extends Phaser.GameObjects.Container {
   /** World-space point `layoutLabels` treats as this character's anchor: the top of the plate while it
    *  is shown, else roughly head height. */
   get labelAnchor(): Point {
-    if (this.plateShown) return { x: this.x, y: this.y + PLATE_BOTTOM_Y - this.plateWorldH };
+    if (this.plateShown) return { x: this.x, y: this.y + this.plateBottomY - this.plateWorldH };
     return { x: this.x, y: this.y - 18 };
   }
 
@@ -780,7 +789,7 @@ export class Character extends Phaser.GameObjects.Container {
   get tagRect(): { left: number; right: number; top: number; bottom: number } | null {
     if (!this.plateShown || this.gone || this.leaving) return null;
     const w = (this.plateLayout?.w ?? 0) * this.plateScale;
-    const bottom = this.y + PLATE_BOTTOM_Y;
+    const bottom = this.y + this.plateBottomY;
     return { left: this.x - w / 2, right: this.x + w / 2, top: bottom - this.plateWorldH, bottom };
   }
 
@@ -1199,17 +1208,19 @@ export class Character extends Phaser.GameObjects.Container {
       if (this.icon.texture.key !== icon) this.icon.setTexture(icon);
       this.icon.setVisible(true).setPosition(0, iconY + bob).setAlpha(iconAlpha);
     } else this.icon.setVisible(false);
+    const hasIcon = !!icon || strain !== null;
+    this.plateIconUp = hasIcon;
+    this.plate.setY(this.plateBottomY);
     // The GM chip sits just past the right end of the name line.
     if (this.chip) {
       const s = this.plateScale;
       const h = this.plateLayout?.h ?? 0;
       const nameMid = PIXEL_METRICS.pad + PIXEL_METRICS.lineH.name / 2;
-      this.chip.setPosition(((this.plateLayout?.w ?? 0) * s) / 2 + 2, PLATE_BOTTOM_Y - (h - nameMid) * s);
+      this.chip.setPosition(((this.plateLayout?.w ?? 0) * s) / 2 + 2, this.plateBottomY - (h - nameMid) * s);
     }
     // Base "above the head" position (a bit higher when an icon badge is up there too), plus this
     // frame's `layoutLabels` offset (0,0 until the first label refresh has run) — see `labelAnchor`.
-    const hasIcon = !!icon || strain !== null;
-    const baseY = (this.plateShown ? PLATE_BOTTOM_Y - this.plateWorldH : hasIcon ? -26 : -18) + bob;
+    const baseY = (this.plateShown ? this.plateBottomY - this.plateWorldH : hasIcon ? -26 : -18) + bob;
     const bx = this.labelDx;
     const by = baseY + this.labelDy;
     this.bubble.setPosition(bx, by);

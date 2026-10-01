@@ -37,3 +37,17 @@ export function alertsFromEvents(
   }
   return { inputs, lastId };
 }
+
+/** Stamps each input with the agent's snapshot (live store first, then the previous one) and drops inputs whose
+ *  agent cannot be resolved, so a box never shows "unknown" with an empty portrait. */
+export function withAgentSnapshots(
+  inputs: readonly AlertInput[],
+  ...lookups: ReadonlyArray<Readonly<Record<string, Agent>>>
+): AlertInput[] {
+  const out: AlertInput[] = [];
+  for (const input of inputs) {
+    const agent = lookups.map((l) => l[input.agentId]).find((a) => a !== undefined);
+    if (agent) out.push({ ...input, agent });
+  }
+  return out;
+}

@@ -105,6 +105,11 @@ export class PostFxController {
     this.autoQuality = sampleAutoQuality(this.autoQuality, deltaMs);
   }
 
+  /** The tier `resolveQuality` last computed; 'high' before the first apply. */
+  get resolvedQuality(): ShaderQuality {
+    return this.lastQuality;
+  }
+
   private resolveQuality(configured: ShaderSettings['quality']): ShaderQuality {
     if (configured !== this.configuredQuality) {
       this.configuredQuality = configured;

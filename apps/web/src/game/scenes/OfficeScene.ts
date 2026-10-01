@@ -47,6 +47,13 @@ import { receptionistLookKey } from '../receptionistLook';
 import { counterScale, labelVisible, layoutLabels, type LabelSubject, type Rect as LabelRect } from '../labels';
 import { PostFxController } from '../postfx/PostFxController';
 import { DramaDirector } from './dramaDirector';
+import { CosmeticClaims } from '../cosmetic/claims';
+import { LifeDirector } from '../life/lifeDirector';
+import { startMeeting } from '../life/meeting';
+import { startActivity } from '../life/activity';
+import { NpcDirector } from '../npc/npcDirector';
+import { createScriptRunner } from '../npc/script';
+import { createReactions } from '../npc/reactions';
 import { FurnitureTriggerLayer } from './furnitureTriggerLayer';
 import { plateOptions } from '../actors/namePlate';
 import { ProximitySfx, listenerFromCamera } from '../sfxProximity';
@@ -266,6 +273,10 @@ export class OfficeScene extends Phaser.Scene {
   private postFx!: PostFxController;
   /** M12 G1: idle antics and work-strain emotes (docs/design/game-office.md section 2). */
   private drama!: DramaDirector;
+  /** M13: shared cosmetic claims, the life director (meetings, activities) and the NPC director. */
+  private claims = new CosmeticClaims();
+  private life!: LifeDirector;
+  private npcs!: NpcDirector;
   /** M12 G3: furniture that opens panels (section 4). */
   private triggers!: FurnitureTriggerLayer;
   /** M13: footstep/typing ticks near the camera centre. */
@@ -379,7 +390,51 @@ export class OfficeScene extends Phaser.Scene {
       office: () => this.state?.settings.office,
       floorKey: () => this.floorKey ?? '',
       reducedMotion: () => this.reducedMotion.value,
+      claims: () => this.claims,
     });
+    const themeFor = (c: Character) =>
+      c.realmIndex !== null && this.multiversePlan
+        ? getTheme(this.multiversePlan.realms.find((r) => r.index === c.realmIndex)?.style ?? MULTIVERSE_THEME_ID)
+        : this.theme;
+    const lowQuality = () => this.postFx.resolvedQuality === 'low';
+    this.life = new LifeDirector(
+      {
+        map: () => this.map,
+        finder: () => this.finder,
+        seats: () => this.seats,
+        actors: () => this.characters,
+        agents: () => this.state?.agents ?? [],
+        themeFor,
+        office: () => this.state?.settings.office,
+        floorKey: () => this.floorKey ?? '',
+        reducedMotion: () => this.reducedMotion.value,
+        lowQuality,
+        claims: () => this.claims,
+        keyForAgent: (id) => this.agentIndex.get(id),
+        realmRooms: (c) => (c.realmIndex !== null ? (this.realmScopes.get(c.realmIndex)?.roomIds ?? null) : null),
+      },
+      { startMeeting, startActivity },
+    );
+    this.npcs = new NpcDirector(
+      {
+        map: () => this.map,
+        finder: () => this.finder,
+        seats: () => this.seats,
+        actors: () => this.characters,
+        agents: () => this.state?.agents ?? [],
+        theme: () => this.theme,
+        office: () => this.state?.settings.office,
+        floorKey: () => this.floorKey ?? '',
+        reducedMotion: () => this.reducedMotion.value,
+        lowQuality,
+        isMultiverse: () => this.multiversePlan !== null,
+        hour: () => new Date().getHours(),
+        claims: () => this.claims,
+        spawnNpc: (key, at) => this.spawnNpc(key, at),
+        emit: (e) => this.events.emit('encounter', e),
+      },
+      { createScriptRunner, createReactions },
+    );
     this.triggers = new FurnitureTriggerLayer(this, {
       showTooltip: (text) => this.showTooltip(text),
       hideTooltip: () => this.hideTooltip(),
@@ -405,6 +460,8 @@ export class OfficeScene extends Phaser.Scene {
       this.receptionist?.destroyAll();
       this.receptionistDeskFront?.destroy();
       this.drama.destroy();
+      this.life.destroy();
+      this.npcs.destroy();
       sfxBus.setListener(null);
       this.triggers.destroy();
     });
@@ -432,6 +489,9 @@ export class OfficeScene extends Phaser.Scene {
     this.finder = new PathFinder(this.map.walkable);
     this.seats = new SeatAllocator(this.map);
     this.drama.reset();
+    this.life.reset();
+    this.npcs.reset();
+    this.claims.clear();
     this.renderVisuals();
     this.buildStairsInteractive();
     this.triggers.build(this.map, style, this.state?.settings.office.furnitureTriggers ?? true);
@@ -464,6 +524,7 @@ export class OfficeScene extends Phaser.Scene {
   private applySkin(style: OfficeStyle | typeof MULTIVERSE_THEME_ID) {
     this.theme = getTheme(style);
     this.appliedStyle = style;
+    this.npcs.reset({ sendHome: true });
     this.renderVisuals();
     this.refreshStairsAvailability();
     this.rebuildReceptionist();
@@ -533,7 +594,17 @@ export class OfficeScene extends Phaser.Scene {
 
   /** Any actor the scene draws by key: a cast member, or the Receptionist. */
   private actorFor(key: ActorKey): Character | undefined {
-    return key === RECEPTIONIST_KEY ? (this.receptionist ?? undefined) : this.characters.get(key);
+    return key === RECEPTIONIST_KEY ? (this.receptionist ?? undefined) : (this.characters.get(key) ?? this.npcs.npcs().get(key));
+  }
+
+  /** M13: an NPC is a plain Character with hover handlers (no click: it is not an agent). */
+  private spawnNpc(key: ActorKey, at: { x: number; y: number }): Character {
+    const c = new Character(this, key, 0, 0);
+    c.teleport(at);
+    c.setHitScale(this.currentHitScale);
+    c.on('pointerover', () => this.setHovered(key));
+    c.on('pointerout', () => this.setHovered(null));
+    return c;
   }
 
   private renderVisuals() {
@@ -1102,6 +1173,9 @@ export class OfficeScene extends Phaser.Scene {
     const instant = this.floorKey !== state.floorKey;
     if (instant) {
       this.drama.reset();
+      this.life.reset();
+      this.npcs.reset();
+      this.claims.clear();
       for (const c of this.characters.values()) c.destroyAll();
       this.characters.clear();
       this.seats.clear();
@@ -1110,6 +1184,8 @@ export class OfficeScene extends Phaser.Scene {
 
     this.updateCast(state, rebuild || instant);
     this.drama.afterCast(Date.now());
+    this.life.afterCast(Date.now());
+    this.npcs.afterCast(Date.now());
     const beacon = office.selectionBeacon ?? true;
     for (const c of this.characters.values()) c.setBeaconEnabled(beacon);
     this.applyFocusDim();
@@ -1422,6 +1498,7 @@ export class OfficeScene extends Phaser.Scene {
     const alpha = this.selectedKey ? 1 - dim : 1;
     for (const [key, c] of this.characters) c.setDim(key === this.selectedKey ? 1 : alpha);
     this.receptionist?.setDim(alpha);
+    this.npcs.setDim(alpha);
   }
 
   /**
@@ -1437,6 +1514,9 @@ export class OfficeScene extends Phaser.Scene {
     for (const c of this.characters.values()) {
       yield { x: c.x, y: c.y, walking: c.walking, typing: c.currentActivity === 'typing' };
     }
+    for (const c of this.npcs.npcs().values()) {
+      yield { x: c.x, y: c.y, walking: c.walking, typing: c.currentActivity === 'typing' };
+    }
   }
 
   private refreshLabels() {
@@ -1448,6 +1528,7 @@ export class OfficeScene extends Phaser.Scene {
     const obstacles: LabelRect[] = [];
     const actors: Array<[ActorKey, Character]> = [...this.characters];
     if (this.receptionist) actors.push([RECEPTIONIST_KEY, this.receptionist]);
+    actors.push(...this.npcs.npcs());
     const plate = plateOptions(office.labels);
     for (const [key, c] of actors) {
       if (c.leaving) continue;
@@ -1600,6 +1681,7 @@ export class OfficeScene extends Phaser.Scene {
       this.lastHitZoom = zoom;
       this.currentHitScale = hitScaleFor(CHARACTER_HIT_WORLD_PX, zoom);
       this.updateZoneHitSizes(zoom);
+      for (const n of this.npcs.npcs().values()) n.setHitScale(this.currentHitScale);
     }
     const speed = this.state?.settings.office.walkSpeed ?? 120;
     for (const [key, c] of this.characters) {
@@ -1615,6 +1697,8 @@ export class OfficeScene extends Phaser.Scene {
       this.receptionist.update(time, delta, speed);
     }
     this.drama.update(time, delta);
+    this.life.update(time, delta);
+    this.npcs.update(time, delta, speed);
     this.triggers.update(time, this.cameras.main);
     this.proximity.tick(time, this.proximityActors(), listenerFromCamera(this.cameras.main));
     this.updateBeacon(zoom);

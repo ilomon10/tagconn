@@ -390,7 +390,7 @@ export interface LifeHost {
 }
 
 export type LifeScriptKind = 'kickoff' | 'standup' | 'activity';
-/** host = meeting host (may be `delegating`); invitee = kickoff subagent (idle|thinking, no tool); idle = everyone else. */
+/** host = meeting host (may be `delegating`); invitee = kickoff subagent (active, any activity); idle = everyone else. */
 export type LifeRole = 'host' | 'invitee' | 'idle';
 
 export interface LifeScript {
@@ -786,7 +786,7 @@ get currentStatus(): AgentStatus;
 #### 3.2.2 Eligibility (`ctx.eligible`, director)
 Common: character live, not `leaving`/`gone`, claim free or held by this script, no `walking` when a script picks it.
 - `idle`: lifecycle `resting`, or `quest` with agent `status === 'active' && activity === 'idle'` (drama's `stillOk`).
-- `invitee` (kickoff only): `quest`, `status === 'active'`, `activity in {idle, thinking}`, no `currentTool`.
+- `invitee` (kickoff only): `quest`, `status === 'active'` (any activity or tool: freshly spawned subagents are already mid-tool).
 - `host`: `quest`, `status === 'active'`, `activity in {idle, thinking, delegating}` (the delegating PM hosts).
 - Never: `status in {waiting, blocked}`, `done` agents still on quest, NPCs, the Receptionist.
 - Multiverse: all participants share `realmIndex`; venues/props are taken from `host.realmRooms(hostChar)`.

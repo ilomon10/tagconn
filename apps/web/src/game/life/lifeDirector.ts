@@ -223,11 +223,8 @@ export class LifeDirector {
       agent.status !== "active"
     )
       return false;
-    if (role === "invitee")
-      return (
-        (agent.activity === "idle" || agent.activity === "thinking") &&
-        !agent.currentTool
-      );
+    // A kickoff pulls freshly spawned subagents, which are almost always mid-tool already: any active one may join.
+    if (role === "invitee") return true;
     return (
       agent.activity === "idle" ||
       agent.activity === "thinking" ||

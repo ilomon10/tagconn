@@ -231,14 +231,14 @@ encounters may cause brief cosmetic chaos (never cover a waiting bubble, never t
 
 - [x] W0 design `docs/design/office-life.md` + contract (`office.labels/life/npcs/alerts/audio` settings, new furniture kinds, event fields) [Architect]
 - Wave 1
-  - [ ] 13.1 RPG name plates: above the head, multi-line (name / title / wrapped task), code-generated pixel font [Developer: game]
-  - [ ] 13.4 Game-style alerts: JRPG text box, token-bucket rate limit + coalescing [Developer: web]
-  - [ ] 13.5 Sound: WebAudio synth SFX + ambient bed, per-browser mute/volume [Developer: audio]
-  - [ ] Life furniture: arcade, ping-pong, foosball, board-game table, water cooler, sofa (procgen + 3 styles) [Developer: procgen/art]
+  - [x] 13.1 RPG name plates: above the head, multi-line (name / title / wrapped task), code-generated pixel font [Developer: game]
+  - [x] 13.4 Game-style alerts: JRPG text box, token-bucket rate limit + coalescing [Developer: web]
+  - [x] 13.5 Sound: WebAudio synth SFX + ambient bed, per-browser mute/volume [Developer: audio]
+  - [x] Life furniture: arcade, ping-pong, foosball, board-game table, water cooler, sofa (procgen + 3 styles) [Developer: procgen/art]
 - Wave 2
-  - [ ] 13.2 Life director: kickoff meetings with invites and a straggler, stand-ups, idle activities (games, coffee, naps) [Developer: game]
-  - [ ] 13.3 NPC director: janitor, courier, plant waterer + random encounters (guest, police, CIA, sales dog, monster, cat) with cosmetic chaos [Developer: game]
-  - [ ] PM wiring into OfficeScene / OfficeView
+  - [x] 13.2 Life director: kickoff meetings with invites and a straggler, stand-ups, idle activities (games, coffee, naps) [Developer: game]
+  - [x] 13.3 NPC director: janitor, courier, plant waterer + random encounters (guest, police, CIA, sales dog, monster, cat) with cosmetic chaos [Developer: game]
+  - [~] PM wiring into OfficeScene / OfficeView (W1-W plates/alerts/audio [x]; W2-W life + NPCs in progress; fixes: plate gap, "unknown" alert)
 - [ ] Gate: QA + review + security + guide pages → v0.7.0
 
 ## M14: Encounters, battles and hero progression → v0.8.0 [todo]
