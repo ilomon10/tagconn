@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-01
+
 ### Changed
 - A compact top bar with one **☰ Menu** (M): Board (B), Log (L), Quests (Q), Roles (R), Settings (S), Heroes (H), Hall Planner (P), Receptionist (D), Manage floors (F), screen effect, alerts and help. Board, Log, Quests, Roles and Settings now open as panels over the office instead of replacing it; `#board`-style links still work.
 - The web app works on phones and tablets, in portrait and landscape: panels become full-screen or side sheets, the roster becomes a tray, touch targets are larger, and you can pinch to zoom.
@@ -154,7 +156,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/ilomon10/tagconn/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ilomon10/tagconn/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ilomon10/tagconn/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/ilomon10/tagconn/compare/v0.4.0...v0.4.1
