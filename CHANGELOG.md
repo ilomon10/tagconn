@@ -17,6 +17,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 ### Changed
 - The roster now floats at the bottom as the **party bar**, no longer docked on the right; on phones and tablets it becomes a tray. The right-hand drawer is replaced by the **Details** button on the status card, which opens a focus-trapping dialog with the full agent panel.
 
+## [0.5.3] - 2026-10-01
+
 ### Fixed
 - `pnpm office:runner` failed at start with `ERR_MODULE_NOT_FOUND` (`packages/shared/src/hook.js`): it now runs through `tsx`. The runner also logs when it is connected, and says when it is probing a newly updated `claude` CLI (about a minute, once per version).
 
@@ -169,7 +171,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/ilomon10/tagconn/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ilomon10/tagconn/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ilomon10/tagconn/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ilomon10/tagconn/compare/v0.4.1...v0.5.0
