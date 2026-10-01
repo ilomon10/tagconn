@@ -63,7 +63,9 @@ export function dispatch(e: FlowEvent): void {
 
 const toBattleStyle = (s: string): BattleStyle => (s === 'guild' || s === 'rift' ? s : 'modern');
 /** A rejected request is worth sending again unless the server answered with a client error (4xx). */
-const retryable = (e: unknown): boolean => !(e instanceof ApiError && e.status >= 400 && e.status < 500);
+// 4xx answers are final (bad log, gone battle, conflict) except the transient 408 timeout and 429 rate limit.
+const retryable = (e: unknown): boolean =>
+  !(e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429);
 const errorMessage = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
 
 /** The look of a party member (a hero or an anonymous agent) for the battle stage and the picker. Null when it is gone. */

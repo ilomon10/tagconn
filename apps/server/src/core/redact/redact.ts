@@ -1,3 +1,4 @@
+import { removePollutingKeys } from '../json/pollutingKeys.js';
 /**
  * Shared secret-redaction core (M8 S2). Originally `modules/ingest/redact.ts` (hook payloads);
  * `modules/runs` reuses the same patterns/`redactValue` for run event text and prompts, so a secret
@@ -108,7 +109,7 @@ export function redactValue<T>(value: T, userPatterns: readonly string[]): T {
   const redacted = applyPatterns(json, patterns);
   if (redacted === json) return truncated as T;
   try {
-    return JSON.parse(redacted) as T;
+    return JSON.parse(redacted, removePollutingKeys) as T; // defence in depth: patterns rewrite JSON text
   } catch {
     return redactLeaves(truncated, patterns) as T;
   }

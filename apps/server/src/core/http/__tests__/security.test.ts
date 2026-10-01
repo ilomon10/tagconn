@@ -272,6 +272,16 @@ describe('request gating (DNS rebinding / CSRF)', () => {
     expect(Object.hasOwn((second?.constructor ?? {}) as object, 'prototype')).toBe(false);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(({} as Record<string, unknown>).p).toBeUndefined();
+    // Decided by the matched route: a URL variant that still routes to ingest gets the same strip semantics.
+    const variant = await app.inject({ method: 'POST', url: '/api/hooks?via=variant', headers: { 'content-type': 'application/json' }, payload: `{${base},"x":{"__proto__":{"v":1}}}` });
+    expect(variant.statusCode).toBe(202);
+  });
+
+  it('redaction re-parse drops __proto__ keys that text patterns could surface', async () => {
+    const { redactValue } = await import('../../redact/redact.js');
+    const out = redactValue({ a: 'token=abc123secretvalue', b: { c: 1 } }, ['abc123']) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).c).toBeUndefined();
   });
 
   it('still accepts look-alike keys (proto, __proto, constructor without prototype) and real hook fixtures', async () => {

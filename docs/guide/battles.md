@@ -141,7 +141,7 @@ When a hero's HP drops to 0, they **faint** and leave the battlefield — but th
 - **Auto-healing** — when time is up, they recover at full HP
 
 To heal a knocked-out hero early, use one of the **healing stations** on your floor:
-- **Coffee machine** (modern floors; every floor is guaranteed to have one)
+- **Coffee machine** (modern floors; one is added to the lounge or entrance when a floor has none)
 - **Healing fountain** (guild floors)
 - **Med-bay** (rift floors)
 

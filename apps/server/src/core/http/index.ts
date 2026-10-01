@@ -4,6 +4,7 @@ import fp from 'fastify-plugin';
 import { hasZodFastifySchemaValidationErrors, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { registerAdminAccess } from './admin.js';
 import { HttpError } from './errors.js';
+import { removePollutingKeys } from '../json/pollutingKeys.js';
 import { hostnameFromHostHeader } from './host.js';
 
 export * from './admin.js';
@@ -31,15 +32,10 @@ function rejectPollutingKeys(this: unknown, key: string, value: unknown): unknow
   return value;
 }
 
-function removePollutingKeys(this: unknown, key: string, value: unknown): unknown {
-  if (key === '__proto__') return undefined; // a reviver returning undefined deletes the property
-  if (key === 'constructor' && typeof value === 'object' && value !== null && Object.hasOwn(value, 'prototype')) {
-    delete (value as Record<string, unknown>).prototype;
-  }
-  return value;
-}
-
-const isHookIngest = (url: string): boolean => url.split('?', 1)[0] === '/api/hooks';
+// Decided by the MATCHED route (routing happens before body parsing), so absolute-form, %-encoded or
+// fragment URL variants that still reach ingest get the same strip semantics.
+const isHookIngest = (req: { routeOptions?: { url?: string }; url: string }): boolean =>
+  (req.routeOptions?.url ?? req.url.split('?', 1)[0]) === '/api/hooks';
 
 // QA: a rejected Host/Origin previously returned a bare 403 with nothing in the server log, so a
 // misconfigured `server.corsOrigins`/`allowedHosts` looked like a silent, unexplained failure.
@@ -85,7 +81,7 @@ export const httpPlugin = fp(
       const text = (body as string).trim();
       if (!text) return done(null, {});
       try {
-        done(null, JSON.parse(text, isHookIngest(req.url) ? removePollutingKeys : rejectPollutingKeys));
+        done(null, JSON.parse(text, isHookIngest(req) ? removePollutingKeys : rejectPollutingKeys));
       } catch (err) {
         done(err as Error, undefined);
       }

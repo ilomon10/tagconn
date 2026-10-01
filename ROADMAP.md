@@ -241,7 +241,7 @@ encounters may cause brief cosmetic chaos (never cover a waiting bubble, never t
   - [x] PM wiring into OfficeScene / OfficeView (W1-W plates/alerts/audio, W2-W life + NPCs; smoke fixes: plate gap, "unknown" alert, kickoff invitees may be mid-tool)
 - [x] Gate: QA (all suites green; plates/alerts/Show me/Sound row/phone pass; NPC + reduced motion covered by unit tests only) + review (High: repeat alerts dropped forever; Med: stranded walkers on script timeouts, reactions outliving their NPC, ambient attenuated twice + no fade, alert voices starved) + security (Med: unbounded description in plate layout O(L²) and alert typewriter; Low: control/bidi chars, second ask never shown) + docs (5 guide pages, CHANGELOG) → fixes [x]: `lib/displayText` clip+sanitize, binary-search cuts, 5x9 pixel font with real descenders, forced goHome on timeouts, `cancelFor`, janitor cooldown kept, single ambient stage + fades/crossfade, alert voice reserve, allocation-free proximity tick → re-review [x] (code: 1 Med duplicate pending alerts; security: arrow label unsanitized) → final fixes [x] → v0.7.0
 
-## M14: Encounters, battles and hero progression → v0.8.0 [in progress]
+## M14: Encounters, battles and hero progression → v0.8.0 [released 2026-10-02]
 
 Pokémon-style turn-based battles from M13 encounters (Battle / Ignore), party of 1–4 heroes, level from tokens spent
 (`Agent.usage` deltas credited to the bound hero), stats + per-class skill trees, XP + cosmetic loot, soft KO.
@@ -255,7 +255,7 @@ Design: `docs/design/battles.md`.
 - [x] Hero sheet "Stats & Skills" tab (skill tree, spend/respec/confirm) + HUD level badge + data layer and demo battles [Developers]
 - [x] Encounter prompt + battle flow + party picker + overlay + KO presence + loot cosmetics + coffee-break heal [Developers]
 - [x] Wave 3 wiring into OfficeGame/OfficeScene/OfficeView (demo battle end-to-end + Ignore, 0 console errors), results XP bar from real progress, 300 ms music stop fade, UI-sound close/open pairing + modal-aware hover, server-wide JSON `__proto__` guard [Developers]
-- [ ] Gate (QA, review, security, battles guide) → v0.8.0
+- [x] Gate: QA (all suites green; live demo walk passes encounter → picker → swirl → commands → win/loss/run → KO 💫/🩹 → skills/respec → title on plate → Ignore → reduced motion → phone; D1 layering, D2 no encounters under reduced motion, D3 heal unreachable, D4 phone labels) + review (5 Med: stale battle handle, skill-save 409s, no resolve retry/version dead-end, leave mid-entry, XP not backfilled → documented) + security (0 Med; Low: hook events with __proto__ dropped, 48-key test gap, party description) + guide `docs/guide/battles.md` → fixes [x] (skills-only stamp + migration 13, Retry incl. 408/429, version guard, keyed flow events, battle HUD under the top bar, phone grid, static reduced-motion NPC visits, encounter priority, coffee machine placed, hook bodies strip __proto__ by matched route, redaction re-parse hardened) → re-review [x] → v0.8.0
 
 ## M15: Light, time and harmonious rooms → v0.9.0 [todo]
 
@@ -276,6 +276,7 @@ Design: `docs/design/battles.md`.
 - [ ] Flaky under the full turbo run only: one `apps/web/src/lib/socket.test.ts` case timed out once at 11.7 s (passes alone and in 2 full web reruns); find the real-timer case and make it deterministic
 - [ ] Flaky under load (full turbo run): server `runs.lifecycle.test.ts` "L7: when run:start is rejected…"; supervisor `service.test.ts` timing cases ("SIGTERM first… tree kill"); server `heroes.test.ts` "takes over a long-idle live subagent's hero…" failed once in the full turbo run (passes alone); procgen bsp 128x96 300-seed cases time out at 60 s when headless Chrome is left running
 - [ ] Desktop CI: a tag push starts two `desktop` runs; one Windows run failed only in `smoke-desktop` temp-dir cleanup (EPERM on the Temp dir after all checks passed, v0.7.0). Make cleanup retry/ignore EPERM and dedupe the trigger
+- [ ] M14 follow-ups: a free-standing infirmary coffee machine is still painted with the 6 px north-wall overdraw; layouts with no lounge/entrance (or no free slot) get no infirmary; remove the deprecated `baseUpdatedAt` skills field after one release; BattleScene.leave() during entry may flash the half-built stage
 - [ ] Name plates of characters standing on the same tile (e.g. at a realm gate) overlap; plates are obstacles for bubbles but not for each other
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 
