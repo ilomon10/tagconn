@@ -304,7 +304,7 @@ export class Character extends Phaser.GameObjects.Container {
     }
     this.plateLook = look;
     this.refreshPlate();
-    const k = `${look.color}|${look.title}|${look.description ?? ''}|${look.sprite}`;
+    const k = `${look.color}|${clipDisplayText(look.title, 60)}|${clipDisplayText(look.description, 60)}|${look.sprite}`;
     if (k === this.lookKey) return;
     this.lookKey = k;
     this.body_.setTint(look.color);
@@ -349,19 +349,21 @@ export class Character extends Phaser.GameObjects.Container {
     const o = this.plateOptions;
     const showTask = taskVisible(o.showTask, this.selected, this.hovered);
     const named = !!look.name;
-    const task = showTask ? look.description : undefined; // clipped below, before layout
-    const webgl = this.scene.game.renderer.type === Phaser.WEBGL;
-    const key = `${look.color}|${look.name ?? ''}|${look.title}|${task ?? ''}|${o.taskLines}|${o.maxWidthChars}|${o.showTitle}|${o.pixelFont}|${webgl}`;
-    if (key === this.plateKey) return;
-    this.plateKey = key;
-    // Untrusted text: sanitize and clip by code point before any layout/measure work (M13 gate).
-    const cap = o.maxWidthChars + 1;
-    const line1 = clipDisplayText(named ? look.name! : look.title, cap);
-    const title = named && o.showTitle ? clipDisplayText(look.title, cap) : undefined;
-    const taskClip = task ? clipDisplayText(task, o.maxWidthChars * Math.max(1, o.taskLines) + 1) : undefined;
     const maxW = o.maxWidthChars * 6;
     const maxLines = showTask ? o.taskLines : 0;
-    this.plateText = named ? `${look.name} · ${look.title}` : look.title;
+    // Untrusted text: sanitize and clip by code point before any layout/measure work (M13 gate). The caps are generous
+    // upper bounds (smallest font advance), so layoutPlate does the real ellipsizing; still O(maxWidthChars * lines).
+    const small = Math.min(...Object.values(PIXEL_METRICS.advance));
+    const lineCap = Math.ceil(maxW / small) + 1;
+    const task = showTask ? clipDisplayText(look.description, lineCap * Math.max(1, o.taskLines) + 1) : undefined;
+    const webgl = this.scene.game.renderer.type === Phaser.WEBGL;
+    const line1 = clipDisplayText(named ? look.name! : look.title, lineCap);
+    const title = named && o.showTitle ? clipDisplayText(look.title, lineCap) : undefined;
+    const key = `${look.color}|${named ? line1 : ''}|${named ? clipDisplayText(look.title, lineCap) : ''}|${task ?? ''}|${o.taskLines}|${o.maxWidthChars}|${o.showTitle}|${o.pixelFont}|${webgl}`;
+    if (key === this.plateKey) return;
+    this.plateKey = key;
+    const taskClip = task || undefined;
+    this.plateText = named ? `${line1} · ${clipDisplayText(look.title, lineCap)}` : line1;
 
     // The small font is uppercase only: measure and check glyphs on the uppercased text.
     let layout = layoutPlate(line1, title?.toUpperCase(), taskClip?.toUpperCase(), maxW, maxLines, pixelMeasure());

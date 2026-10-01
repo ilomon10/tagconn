@@ -173,4 +173,23 @@ describe('alertQueue', () => {
     r = tickAlerts(s, c, W + 200, false);
     expect(r.shown.map((i) => i.kind)).toEqual(['done']);
   });
+
+  it('a flapping agent does not stack duplicate pending items when slots are exhausted', () => {
+    const c = cfg({ burst: 0, perMinute: 0, agentCooldownSec: 0 });
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, inp('a', 'ask'), c, 0);
+    s = offerAlert(s, inp('a', 'ask'), c, W * 10);
+    s = offerAlert(s, inp('a', 'ask'), c, W * 20);
+    expect(s.pending).toHaveLength(1);
+  });
+
+  it('drops a ready pending item whose agents were just announced at equal or higher priority', () => {
+    const c = cfg({ agentCooldownSec: 60, maxVisible: 5 });
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, inp('a', 'done'), c, 0);
+    s = { ...s, lastShown: { a: { at: W, priority: 3 } } };
+    const r = tickAlerts(s, c, W + 10, false);
+    expect(r.shown).toHaveLength(0);
+    expect(r.state.pending).toHaveLength(0);
+  });
 });

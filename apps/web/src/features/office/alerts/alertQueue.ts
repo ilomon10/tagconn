@@ -23,9 +23,12 @@ export function offerAlert(s: AlertQueueState, input: AlertInput, cfg: AlertSett
   const last = s.lastShown[input.agentId];
   if (last && nowMs - last.at < cfg.agentCooldownSec * 1000 && last.priority >= priority) return s;
 
+  // The same agent already waiting for this kind: it is the same event, whatever the age (a flapping agent
+  // must not stack duplicate boxes while tokens or slots are exhausted).
+  if (s.pending.some((p) => p.kind === input.kind && p.agentIds.includes(input.agentId))) return s;
+
   const target = s.pending.find((p) => p.kind === input.kind && nowMs - p.createdAt <= ALERT_LIMITS.coalesceMs);
   if (target) {
-    if (target.agentIds.includes(input.agentId)) return s;
     // Different tools -> no single toolName for the coalesced item (the plural copy never names one anyway).
     const { toolName: _t, ...rest } = target;
     const sameTool = target.toolName === input.toolName;
@@ -74,6 +77,9 @@ export function tickAlerts(
   // Drop entries past the cooldown: they no longer gate anything, and the map would grow forever.
   const lastShown: Record<string, { at: number; priority: number }> = {};
   for (const [id, v] of Object.entries(s.lastShown)) if (nowMs - v.at < cfg.agentCooldownSec * 1000) lastShown[id] = v;
+  // Already announced within the cooldown at equal or higher priority (e.g. shown after this item was queued):
+  // nothing new to say, so drop it instead of showing a duplicate later.
+  pending = pending.filter((p) => !p.agentIds.every((id) => (lastShown[id]?.priority ?? -1) >= ALERT_PRIORITY[p.kind]));
   const ready = pending
     .filter((p) => nowMs - p.createdAt >= ALERT_LIMITS.coalesceMs)
     .sort((a, b) => ALERT_PRIORITY[b.kind] - ALERT_PRIORITY[a.kind] || a.createdAt - b.createdAt);

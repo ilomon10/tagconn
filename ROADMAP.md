@@ -223,7 +223,7 @@ role can't change while bound, fixes ship first.
   - [x] Gate 2: QA (6/6 pass; drama settings not editable, stale "left" card) + review (5 Med: stuck drama after rebuild, streak off-by-one, HUD without on-a-roll, door edits skip pin prune, orphan recipe seat) + security (3 Low) + docs → fixes [x]: drama reset/reseat, shared streak API, nested Settings groups, card auto-clear, pin prune on door edits, auto-door aprons, issue dedupe/cap, trigger split-check cap, pin x/y max, prune/cap hints, preview textures, bubbles avoid name tags, 1-tile reception desk art → v0.6.0
 - [x] v0.5.3 (from `release/0.5.x`): `office:runner` through `tsx` (ERR_MODULE_NOT_FOUND) + `tsx` as a root devDependency, connect/probe logs
 
-## M13: The office comes alive → v0.7.0 [in progress]
+## M13: The office comes alive → v0.7.0 [released 2026-10-01]
 
 Plan: `~/.claude-sessions/profiles/edgar/plans/pasted-content-id-1097-tagconn-features-lucky-milner.md`. User decisions (2026-10-01):
 four milestones (M13 life sim, M14 battles, M15 light + furniture, M16 2.5D), sound synthesized in code (ADR #22), NPC
@@ -238,8 +238,8 @@ encounters may cause brief cosmetic chaos (never cover a waiting bubble, never t
 - Wave 2
   - [x] 13.2 Life director: kickoff meetings with invites and a straggler, stand-ups, idle activities (games, coffee, naps) [Developer: game]
   - [x] 13.3 NPC director: janitor, courier, plant waterer + random encounters (guest, police, CIA, sales dog, monster, cat) with cosmetic chaos [Developer: game]
-  - [~] PM wiring into OfficeScene / OfficeView (W1-W plates/alerts/audio [x]; W2-W life + NPCs in progress; fixes: plate gap, "unknown" alert)
-- [ ] Gate: QA + review + security + guide pages → v0.7.0
+  - [x] PM wiring into OfficeScene / OfficeView (W1-W plates/alerts/audio, W2-W life + NPCs; smoke fixes: plate gap, "unknown" alert, kickoff invitees may be mid-tool)
+- [x] Gate: QA (all suites green; plates/alerts/Show me/Sound row/phone pass; NPC + reduced motion covered by unit tests only) + review (High: repeat alerts dropped forever; Med: stranded walkers on script timeouts, reactions outliving their NPC, ambient attenuated twice + no fade, alert voices starved) + security (Med: unbounded description in plate layout O(L²) and alert typewriter; Low: control/bidi chars, second ask never shown) + docs (5 guide pages, CHANGELOG) → fixes [x]: `lib/displayText` clip+sanitize, binary-search cuts, 5x9 pixel font with real descenders, forced goHome on timeouts, `cancelFor`, janitor cooldown kept, single ambient stage + fades/crossfade, alert voice reserve, allocation-free proximity tick → re-review [x] (code: 1 Med duplicate pending alerts; security: arrow label unsanitized) → final fixes [x] → v0.7.0
 
 ## M14: Encounters, battles and hero progression → v0.8.0 [todo]
 
@@ -272,6 +272,7 @@ Design: `docs/design/battles.md`.
 
 - [ ] Flaky under the full turbo run only: one `apps/web/src/lib/socket.test.ts` case timed out once at 11.7 s (passes alone and in 2 full web reruns); find the real-timer case and make it deterministic
 - [ ] Flaky under load (full turbo run): server `runs.lifecycle.test.ts` "L7: when run:start is rejected…"; supervisor `service.test.ts` timing cases ("SIGTERM first… tree kill"); server `heroes.test.ts` "takes over a long-idle live subagent's hero…" failed once in the full turbo run (passes alone); procgen bsp 128x96 300-seed cases time out at 60 s when headless Chrome is left running
+- [ ] Name plates of characters standing on the same tile (e.g. at a realm gate) overlap; plates are obstacles for bubbles but not for each other
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 
 ## Releases

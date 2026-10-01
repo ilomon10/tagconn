@@ -112,12 +112,16 @@ export function createAmbient(ctx: BaseAudioContext, kind: AmbientKind, out: Aud
       break;
     }
     case 'rift': {
+      // The LFO modulates its own swell gain (0.85 +- 0.15), not bus.gain, so the stop fade reaches true silence.
+      const swell = track(ctx.createGain());
+      swell.gain.value = 0.85;
+      swell.connect(bus);
       const lfo = ctx.createOscillator();
       lfo.frequency.value = 0.12;
       const lfoDepth = track(ctx.createGain());
       lfoDepth.gain.value = 0.15;
       track(lfo).connect(lfoDepth);
-      lfoDepth.connect(bus.gain);
+      lfoDepth.connect(swell.gain);
       sources.push(lfo);
       for (const f of [55, 55.7, 82.4, 110.9]) {
         const o = ctx.createOscillator();
@@ -126,7 +130,7 @@ export function createAmbient(ctx: BaseAudioContext, kind: AmbientKind, out: Aud
         const g = track(ctx.createGain());
         g.gain.value = 0.35;
         track(o).connect(g);
-        g.connect(bus);
+        g.connect(swell);
         sources.push(o);
       }
       break;

@@ -112,3 +112,19 @@ describe('plateOptions', () => {
     });
   });
 });
+
+describe('wrapWords astral safety', () => {
+  it('never splits a surrogate pair when nothing fits', () => {
+    const lines = wrapWords('😀😀😀', 1, 2, (t) => t.length * 4);
+    for (const l of lines) expect(l).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+    expect(lines.length).toBeGreaterThan(0);
+  });
+});
+
+describe('generous clip bound', () => {
+  it('a 40-char task fits 2 lines at maxWidthChars 16 when the caps leave room', () => {
+    const task = 'abcd efgh ijkl mnop qrst uvwx yz01 2345 6789'.slice(0, 40);
+    const l = layoutPlate('Ada', undefined, task, 16 * 6, 2);
+    expect(l.lines.filter((x) => x.style === 'task').map((x) => x.text).join(' ').length).toBeGreaterThan(32);
+  });
+});

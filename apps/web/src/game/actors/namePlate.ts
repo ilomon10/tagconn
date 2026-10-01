@@ -82,7 +82,9 @@ export function wrapWords(text: string, maxW: number, maxLines: number, measure:
     while (measure(word) > maxW) {
       // Hard-cut a word wider than a whole line.
       if (cur) { lines.push(cur); cur = ''; }
-      const n = Math.max(1, longestFit(word, 1, (k) => measure(word.slice(0, k)) <= maxW));
+      // At least one whole code point (never half of a surrogate pair).
+      const first = (word.codePointAt(0) ?? 0) > 0xffff ? 2 : 1;
+      const n = longestFit(word, first, (k) => measure(word.slice(0, k)) <= maxW);
       lines.push(word.slice(0, n));
       word = word.slice(n);
       if (lines.length > maxLines) break;

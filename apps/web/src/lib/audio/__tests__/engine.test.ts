@@ -131,6 +131,27 @@ describe('audio engine', () => {
     expect(ctx.sources[0]!.stop).toHaveBeenCalled();
   });
 
+  it('a throttled alert does not steal a voice', () => {
+    const { ctx, target, engine } = setup();
+    unlock(target);
+    engine.setMix(ALL);
+    for (let i = 0; i < 12; i++) {
+      ctx.currentTime = i;
+      engine.play(i % 2 ? 'typing' : 'footstep');
+    }
+    ctx.currentTime = 20;
+    engine.play('alert-done');
+    engine.play('alert-ask');
+    ctx.currentTime = 30;
+    engine.play('alert-fail');
+    expect(ctx.sources).toHaveLength(9);
+    ctx.currentTime = 30.01; // inside the 60 ms per-id throttle
+    engine.play('alert-fail');
+    expect(ctx.sources).toHaveLength(9);
+    expect(ctx.sources[1]!.stop).not.toHaveBeenCalled();
+    expect(ctx.sources.filter((n) => n.stop.mock.calls.length > 0)).toHaveLength(1);
+  });
+
   it('getAudioEngine is recreated after destroy', () => {
     class Ctx extends FakeCtx {}
     vi.stubGlobal('window', Object.assign(new EventTarget(), { AudioContext: Ctx }));

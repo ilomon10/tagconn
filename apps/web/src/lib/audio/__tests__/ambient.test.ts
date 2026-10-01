@@ -57,4 +57,15 @@ describe('createAmbient', () => {
     a.stop(); // idempotent
     expect(created.find((n) => n.stop)?.stop).toHaveBeenCalledTimes(1);
   });
+
+  it('rift LFO modulates a separate swell gain, not the faded bus', () => {
+    const { ctx, created } = fakeCtx();
+    const out = { connect: vi.fn(), disconnect: vi.fn() } as unknown as AudioNode;
+    createAmbient(ctx, 'rift', out);
+    const gains = created.filter((n) => 'gain' in n) as unknown as { gain: object; connect: ReturnType<typeof vi.fn> }[];
+    const bus = gains[0]!;
+    const targets = gains.flatMap((g) => g.connect.mock.calls.map((c) => c[0]));
+    expect(targets).not.toContain(bus.gain);
+    expect(targets.some((t) => gains.some((g) => g.gain === t && g !== bus))).toBe(true);
+  });
 });

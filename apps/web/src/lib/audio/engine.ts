@@ -118,8 +118,13 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
       const cat = SFX_CATEGORY[id];
       if (!mix[cat === 'ui' ? 'sfx' : cat]) return;
       const priority = cat === 'alerts' || cat === 'ui';
+      const now = c.currentTime * 1000;
+      const last = lastAt.get(id);
+      if (last !== undefined && now - last < (MIN_INTERVAL_MS[id] ?? DEFAULT_MIN_INTERVAL_MS)) return;
+      const buf = bufferFor(id);
+      if (!buf) return;
       if (voices >= (priority ? MAX_VOICES : MAX_VOICES - PRIORITY_RESERVE)) {
-        // Alerts may steal the oldest footstep/typing voice; everything else is dropped.
+        // Alerts may steal the oldest footsteps-category voice (footstep and typing ticks); everything else is dropped.
         const victim = cat === 'alerts' ? live.find((v) => v.cat === 'footsteps') : undefined;
         if (!victim) return;
         try {
@@ -130,11 +135,6 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
         victim.src.onended?.(new Event('ended'));
         victim.src.onended = null;
       }
-      const now = c.currentTime * 1000;
-      const last = lastAt.get(id);
-      if (last !== undefined && now - last < (MIN_INTERVAL_MS[id] ?? DEFAULT_MIN_INTERVAL_MS)) return;
-      const buf = bufferFor(id);
-      if (!buf) return;
       lastAt.set(id, now);
       const src = c.createBufferSource();
       src.buffer = buf;
@@ -175,6 +175,7 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
       destroyed = true;
       off();
       if (suspendTimer) clearTimeout(suspendTimer);
+      // The abrupt cut is intentional at teardown: nothing is left to hear, so the ambient fade is skipped.
       ambient?.stop();
       ambient = null;
       try {
