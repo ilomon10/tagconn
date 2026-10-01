@@ -1495,6 +1495,9 @@ current text (`controller.skip()`). The office scene's input is disabled while t
 
 ### 3.10 PM integration edits (W3-W)
 
+> W3-W note: do NOT pre-add `BattleScene` with `game.scene.add(BATTLE_SCENE_KEY, BattleScene, false)`; Phaser instantiates
+> it immediately and the constructor needs its launch input. `launchBattle` adds and removes its own scene instance.
+
 `game/OfficeGame.ts`
 1. Imports: `BattleScene, launchBattle` from `./scenes/BattleScene`; `BATTLE_SCENE_KEY, type BattleSceneInput, type
    BattleSceneHandle` from `./battle/types`.

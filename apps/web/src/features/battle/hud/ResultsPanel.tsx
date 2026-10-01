@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { BattleOutcome, BattleResult, BattleSetup, HeroAward } from '@tagconn/shared';
+import type { BattleOutcome, BattleResult, BattleSetup, HeroAward, HeroProgress } from '@tagconn/shared';
+import { useProgressStore } from '../../../stores/progressStore';
 import { Button, cx } from '../../../components/ui';
 import { sfxBus, type SfxId } from '../../../game/sfxBus';
 import type { BattleStyle } from '../../../game/battle/types';
@@ -35,6 +36,77 @@ export function koNote(a: Pick<HeroAward, 'fainted' | 'koUntil'>, resolvedAt: nu
 /** Pure: which optional stages exist for an outcome. */
 export function resultStages(o: Pick<BattleOutcome, 'heroes' | 'loot'>): { xp: boolean; levelUp: boolean; loot: boolean } {
   return { xp: o.heroes.some((h) => h.xpGained > 0), levelUp: o.heroes.some((h) => h.levelAfter > h.levelBefore), loot: o.loot !== null };
+}
+
+export type XpBarPlan = { kind: 'gain' } | { kind: 'progress'; from: number; to: number; wrapped: boolean; maxed: boolean };
+
+const clamp01 = (n: number): number => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
+
+/**
+ * Pure: how a hero's XP bar fills. `progress` is the hero's registry entry; it counts as post-award when it was updated
+ * at or after `resolvedAt`, otherwise (the socket update is still in flight) the award is added to it. Falls back to the
+ * plain gain meter when the progress is unknown or cannot be placed. A level-up fills to 100 %, wraps, then fills the new
+ * level (the previous level's start is not known here, so the first leg starts empty).
+ */
+export function xpBarPlan(a: Pick<HeroAward, 'xpGained' | 'levelBefore' | 'levelAfter'>, p: HeroProgress | undefined, resolvedAt: number): XpBarPlan {
+  if (!p) return { kind: 'gain' };
+  const levelUp = a.levelAfter > a.levelBefore;
+  const post = p.updatedAt >= resolvedAt;
+  let endXp: number;
+  if (post) {
+    if (p.level !== a.levelAfter) return { kind: 'gain' };
+    endXp = p.xp;
+  } else {
+    if (levelUp || p.level !== a.levelBefore) return { kind: 'gain' };
+    endXp = p.xp + a.xpGained;
+    if (p.nextLevelXp !== null && endXp >= p.nextLevelXp) return { kind: 'gain' };
+  }
+  const maxed = p.nextLevelXp === null;
+  const frac = (xp: number): number => (maxed ? 1 : p.nextLevelXp! > p.levelXp ? clamp01((xp - p.levelXp) / (p.nextLevelXp! - p.levelXp)) : 0);
+  const to = frac(endXp);
+  return { kind: 'progress', from: levelUp ? 0 : frac(endXp - a.xpGained), to, wrapped: levelUp, maxed };
+}
+
+/** The XP meter: real level progress when known (with a wrap on level-up), else a 0 to 100 % gain meter. */
+function XpBar({ name, gained, plan, stage, reduced }: { name: string; gained: number; plan: XpBarPlan; stage: number; reduced: boolean }) {
+  const progress = plan.kind === 'progress' ? plan : null;
+  // After the wrap the bar snaps to empty (no transition), then fills the new level.
+  const [wrapStep, setWrapStep] = useState(0);
+  useEffect(() => {
+    if (!progress?.wrapped || stage < 2 || reduced) return;
+    setWrapStep(1);
+    const t = setTimeout(() => setWrapStep(2), 40);
+    return () => clearTimeout(t);
+  }, [stage >= 2]);
+  let scale: number;
+  let ms = XP_FILL_MS;
+  if (!progress) scale = stage >= 1 && gained > 0 ? 1 : 0;
+  else if (reduced) scale = progress.to;
+  else if (progress.wrapped) {
+    if (stage < 1) scale = progress.from;
+    else if (wrapStep === 0) { scale = 1; ms = XP_FILL_MS * 0.6; }
+    else if (wrapStep === 1) { scale = 0; ms = 0; }
+    else scale = progress.to;
+  } else scale = stage >= 1 ? progress.to : progress.from;
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <div
+        role="progressbar"
+        aria-label={`${name} experience${progress ? '' : ' gained'}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress ? Math.round(progress.to * 100) : gained > 0 ? 100 : 0}
+        aria-valuetext={progress ? `${gained} XP gained, ${progress.maxed ? 'max level' : `${Math.round(progress.to * 100)}% to the next level`}` : `${gained} XP`}
+        className="h-2 flex-1 overflow-hidden rounded-sm bg-ink-950 ring-1 ring-ink-600"
+      >
+        <div
+          className="h-full w-full origin-left bg-violet-400 motion-safe:transition-transform motion-safe:ease-linear"
+          style={{ transform: `scaleX(${scale})`, transitionDuration: `${ms}ms` }}
+        />
+      </div>
+      <span className="w-14 shrink-0 text-right font-pixel text-[10px] tabular-nums text-violet-200">+{gained} XP{progress?.maxed ? ' MAX' : ''}</span>
+    </div>
+  );
 }
 
 /** 0 headline, 1 xp, 2 level-ups, 3 loot. */
@@ -86,6 +158,8 @@ export interface ResultsPanelProps {
   reduced: boolean;
   onContinue: () => void;
   onOpenHero?: (heroId: string) => void;
+  /** Hero progress by hero id for real XP bars; defaults to the live progress store. */
+  progressByHero?: Record<string, HeroProgress>;
 }
 
 /** Centered JRPG results card: headline, per-hero XP / level-up / KO, loot, Continue. */
@@ -131,7 +205,9 @@ function ErrorBody({ message, onContinue }: { message: string; onContinue: () =>
   );
 }
 
-function Revealed({ setup, style, result, outcome, reduced, onContinue, onOpenHero, enemyName, tone }: ResultsPanelProps & { outcome: BattleOutcome; enemyName: string; tone: string }) {
+function Revealed({ setup, style, result, outcome, reduced, onContinue, onOpenHero, progressByHero, enemyName, tone }: ResultsPanelProps & { outcome: BattleOutcome; enemyName: string; tone: string }) {
+  const storeProgress = useProgressStore((s) => s.progress);
+  const progressMap = progressByHero ?? storeProgress;
   const stages = resultStages(outcome);
   const stage = useStage(stages, reduced);
   const stingId = resultSting(result);
@@ -156,23 +232,7 @@ function Revealed({ setup, style, result, outcome, reduced, onContinue, onOpenHe
                 <span className="min-w-0 truncate font-semibold text-ink-100">{name(a)}</span>
                 <span className="shrink-0 font-pixel text-[10px] text-ink-300">Lv {up && stage >= 2 ? a.levelAfter : a.levelBefore}</span>
               </div>
-              <div className="mt-1.5 flex items-center gap-2">
-                <div
-                  role="progressbar"
-                  aria-label={`${name(a)} experience gained`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={a.xpGained > 0 ? 100 : 0}
-                  aria-valuetext={`${a.xpGained} XP`}
-                  className="h-2 flex-1 overflow-hidden rounded-sm bg-ink-950 ring-1 ring-ink-600"
-                >
-                  <div
-                    className="h-full w-full origin-left bg-violet-400 motion-safe:transition-transform motion-safe:ease-linear"
-                    style={{ transform: `scaleX(${stage >= 1 && a.xpGained > 0 ? 1 : 0})`, transitionDuration: `${XP_FILL_MS}ms` }}
-                  />
-                </div>
-                <span className="w-14 shrink-0 text-right font-pixel text-[10px] tabular-nums text-violet-200">+{a.xpGained} XP</span>
-              </div>
+              <XpBar name={name(a)} gained={a.xpGained} plan={xpBarPlan(a, Object.hasOwn(progressMap, a.heroId) ? progressMap[a.heroId] : undefined, outcome.resolvedAt)} stage={stage} reduced={reduced} />
               {up && (
                 <p className={cx('mt-1.5 rounded bg-cozy/15 px-2 py-1 text-center text-xs font-semibold text-cozy', reveal(stage >= 2))} aria-hidden={stage < 2}>
                   Level up! {a.levelBefore} → {a.levelAfter}

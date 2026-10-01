@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sfxBus, type SfxId } from '../../../game/sfxBus';
-import { clickSoundFor, installUiSoundDelegate, selectionSound, uiSound } from '../uiSound';
+import { CLOSE_OPEN_WINDOW_MS, clickSoundFor, insideTopModal, installUiSoundDelegate, resetUiSound, selectionSound, uiSound } from '../uiSound';
 
 /** Minimal element: matches a set of selectors, carries attributes, and `closest` walks parents. */
 interface Fake { selectors: string[]; attrs: Record<string, string>; parent?: Fake }
@@ -84,5 +84,62 @@ describe('delegate', () => {
     expect(heard).toEqual(['ui-hover']);
     off();
     expect(Object.keys(handlers)).toEqual([]);
+  });
+});
+
+describe('close/open pairing', () => {
+  afterEach(() => {
+    resetUiSound();
+    vi.useRealTimers();
+    sfxBus.clear();
+  });
+  it('drops a ui-close that is followed by a ui-open within the window', () => {
+    vi.useFakeTimers();
+    const heard: SfxId[] = [];
+    sfxBus.on((e) => heard.push(e.id));
+    uiSound('ui-close');
+    vi.advanceTimersByTime(20);
+    uiSound('ui-open');
+    vi.advanceTimersByTime(500);
+    expect(heard).toEqual(['ui-open']);
+  });
+  it('plays a lone ui-close after the window, and drops a ui-close right after a ui-open', () => {
+    vi.useFakeTimers();
+    const heard: SfxId[] = [];
+    sfxBus.on((e) => heard.push(e.id));
+    uiSound('ui-close');
+    uiSound('ui-close');
+    expect(heard).toEqual([]);
+    vi.advanceTimersByTime(CLOSE_OPEN_WINDOW_MS + 1);
+    expect(heard).toEqual(['ui-close']);
+    uiSound('ui-open');
+    vi.advanceTimersByTime(10);
+    uiSound('ui-close');
+    vi.advanceTimersByTime(500);
+    expect(heard).toEqual(['ui-close', 'ui-open']);
+  });
+});
+
+describe('insideTopModal', () => {
+  const node = (inside: Node[] = []) => ({ contains: (n: Node) => inside.includes(n) });
+  const target = {} as Node;
+  it('allows everything without modals and only the top-most modal otherwise', () => {
+    expect(insideTopModal({}, target)).toBe(true);
+    expect(insideTopModal({ querySelectorAll: (() => []) as never }, target)).toBe(true);
+    const under = node([target]);
+    const top = node();
+    expect(insideTopModal({ querySelectorAll: (() => [under, top]) as never }, target)).toBe(false);
+    expect(insideTopModal({ querySelectorAll: (() => [top, under]) as never }, target)).toBe(true);
+  });
+  it('mutes hover under a modal backdrop', () => {
+    const handlers: Record<string, (e: unknown) => void> = {};
+    const modal = node();
+    const doc = { addEventListener: (n: string, h: (e: unknown) => void) => void (handlers[n] = h), removeEventListener: () => {}, querySelectorAll: () => [modal] };
+    const heard: SfxId[] = [];
+    sfxBus.on((e) => heard.push(e.id));
+    installUiSoundDelegate(doc as never, () => 0);
+    const hov = { ...el({ selectors: ['[data-sfx-hover]'], attrs: {} }), contains: () => false };
+    handlers.pointerover!({ target: hov, pointerType: 'mouse', relatedTarget: null });
+    expect(heard).toEqual([]);
   });
 });

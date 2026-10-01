@@ -41,6 +41,8 @@ export interface AmbientContext { style: 'modern' | 'guild' | 'rift'; night: boo
 /** M14: the looping battle track (docs/design/battles.md 3.2); `null` = stop. */
 export interface MusicRequest { kind: 'battle'; style: 'modern' | 'guild' | 'rift'; fadeMs?: number }
 
+export interface MusicStopOptions { fadeMs?: number }
+
 export interface SfxBus {
   emit(e: SfxEvent): void;
   on(cb: (e: SfxEvent) => void): () => void;
@@ -50,10 +52,10 @@ export interface SfxBus {
   setAmbient(a: AmbientContext): void;
   ambient(): AmbientContext | null;
   onAmbient(cb: (a: AmbientContext) => void): () => void;
-  /** Replays the last music request to late subscribers; `null` stops the track. */
-  setMusic(m: MusicRequest | null): void;
+  /** Replays the last music request to late subscribers; `null` stops the track (`opts.fadeMs` is the fade-out). */
+  setMusic(m: MusicRequest | null, opts?: MusicStopOptions): void;
   music(): MusicRequest | null;
-  onMusic(cb: (m: MusicRequest | null) => void): () => void;
+  onMusic(cb: (m: MusicRequest | null, opts?: MusicStopOptions) => void): () => void;
   /** Tests. */
   clear(): void;
 }
@@ -63,7 +65,7 @@ function createSfxBus(): SfxBus {
   const ambientSubs = new Set<(a: AmbientContext) => void>();
   let listener: SfxListenerPose | null = null;
   let ambient: AmbientContext | null = null;
-  const musicSubs = new Set<(m: MusicRequest | null) => void>();
+  const musicSubs = new Set<(m: MusicRequest | null, opts?: MusicStopOptions) => void>();
   let music: MusicRequest | null = null;
   // A throwing listener never breaks the emitter or the other listeners.
   const safe = <T>(cb: (v: T) => void, v: T): void => {
@@ -95,9 +97,15 @@ function createSfxBus(): SfxBus {
       if (ambient) safe(cb, ambient);
       return () => void ambientSubs.delete(cb);
     },
-    setMusic: (m) => {
+    setMusic: (m, opts) => {
       music = m;
-      for (const cb of [...musicSubs]) safe(cb, m);
+      for (const cb of [...musicSubs]) {
+        try {
+          cb(m, opts);
+        } catch {
+          /* isolated */
+        }
+      }
     },
     music: () => music,
     onMusic: (cb) => {

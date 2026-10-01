@@ -25,6 +25,10 @@ import { Button, cx } from '../../components/ui';
 import { useFurnitureTriggers } from './useFurnitureTriggers';
 import { AlertHost } from './alerts/AlertHost';
 import { useAudioBridge } from './audio/useAudioBridge';
+import { useBattleFlow } from '../battle/useBattleFlow';
+import { PartyPicker } from '../battle/PartyPicker';
+import { BattleOverlay } from '../battle/BattleOverlay';
+import { useProgressStore } from '../../stores/progressStore';
 
 /**
  * Per-project inputs `planMultiverse` needs (docs/design/living-office.md section 6.1), built from
@@ -66,6 +70,7 @@ function useGameBridge(game: OfficeGame | null) {
       const { settings, roles } = useSettingsStore.getState();
       const layouts = useLayoutStore.getState().layouts;
       const heroes = Object.values(useHeroStore.getState().heroes);
+      const progress = useProgressStore.getState().progress;
       const floorAgents = Object.values(agents).filter((a) => onFloor(selectedProjectId, a.projectId));
 
       const atMultiverse = isMultiverseFloor(selectedProjectId);
@@ -108,6 +113,7 @@ function useGameBridge(game: OfficeGame | null) {
         sessions: Object.values(sessions).filter((s) => onFloor(selectedProjectId, s.projectId)),
         multiverse,
         pinnedPrimary,
+        progress,
         // M9: this browser's monitor screen effect (CRT/LCD/VHS), a per-browser display preference
         // layered over `settings.office.shaders.screen` (docs/decisions.md #25) — see
         // `resolveScreenFx`. `OfficeScene` passes this straight through to `postFx.applySettings`.
@@ -135,6 +141,10 @@ function useGameBridge(game: OfficeGame | null) {
     const unsubHeroes = useHeroStore.subscribe((s, p) => {
       if (s.heroes !== p.heroes) push();
     });
+    // M14: KO badges and the equipped-title plate read the progression map.
+    const unsubProgress = useProgressStore.subscribe((s, p) => {
+      if (s.progress !== p.progress) push();
+    });
     // M9: the top bar's Screen toggle/menu writes here — re-push so the scene picks up the new
     // override immediately, without waiting for some unrelated store to change first.
     const unsubDisplayPrefs = useDisplayPrefsStore.subscribe((s, p) => {
@@ -145,6 +155,7 @@ function useGameBridge(game: OfficeGame | null) {
       unsubSettings();
       unsubLayouts();
       unsubHeroes();
+      unsubProgress();
       unsubDisplayPrefs();
     };
   }, [game]);
@@ -266,6 +277,7 @@ export function OfficeView({ active }: { active: boolean }) {
   useGameBridge(game);
   useFurnitureTriggers(game);
   useAudioBridge(active);
+  useBattleFlow(game);
 
   // Stairs (docs/design/guild-hall.md section 6; M8 8h living-office.md section 6.3): take the
   // neighboring floor in `office.floorOrder`, or do nothing at an end. The Multiverse is just
@@ -574,6 +586,8 @@ export function OfficeView({ active }: { active: boolean }) {
           )}
         </div>
         <AlertHost onShowMe={selectAgent} />
+        <PartyPicker />
+        <BattleOverlay game={game} />
         {/* M9 8f follow-up: a bare dark canvas while the socket connects reads as broken. Only while
             there's no data yet — once agents arrive there's already a populated office to look at.
             Demo mode never reaches `connection === 'connecting'` (it's its own `'demo'` state), so

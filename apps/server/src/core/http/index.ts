@@ -14,6 +14,20 @@ export * from './host.js';
 /** Methods Fastify parses a body for; these must arrive as `application/json`. */
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 
+/**
+ * JSON.parse reviver: JSON.parse keeps `__proto__` as an OWN key (which zod record schemas then silently
+ * drop) and `constructor.prototype` is the other classic pollution gadget. Reject both at any depth
+ * (same semantics as secure-json-parse `protoAction/constructorAction: 'error'`, without a new dependency).
+ * The reviver runs bottom-up, so at key `constructor` the value is already parsed.
+ */
+function rejectPollutingKeys(this: unknown, key: string, value: unknown): unknown {
+  if (key === '__proto__') throw new HttpError(400, 'Invalid JSON body: forbidden key "__proto__"');
+  if (key === 'constructor' && typeof value === 'object' && value !== null && Object.hasOwn(value, 'prototype')) {
+    throw new HttpError(400, 'Invalid JSON body: forbidden key "constructor.prototype"');
+  }
+  return value;
+}
+
 // QA: a rejected Host/Origin previously returned a bare 403 with nothing in the server log, so a
 // misconfigured `server.corsOrigins`/`allowedHosts` looked like a silent, unexplained failure.
 // Rate-limited to once per distinct header value per minute so a scanner/retry storm can't flood
@@ -58,7 +72,7 @@ export const httpPlugin = fp(
       const text = (body as string).trim();
       if (!text) return done(null, {});
       try {
-        done(null, JSON.parse(text));
+        done(null, JSON.parse(text, rejectPollutingKeys));
       } catch (err) {
         done(err as Error, undefined);
       }

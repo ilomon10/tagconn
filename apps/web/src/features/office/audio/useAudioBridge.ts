@@ -54,9 +54,9 @@ export function useAudioBridge(active: boolean): void {
     if (ambient) engine.setAmbient(mix.ambient ? ambientFor(ambient.style, ambient.night) : null);
 
     // Battle music (replayed to this subscriber); gated by `battle.music` and master here, by sfx/unlock in the engine.
-    const applyMusic = (m: MusicRequest | null): void => {
+    const applyMusic = (m: MusicRequest | null, opts?: { fadeMs?: number }): void => {
       if (m && battleMusic && mix.master > 0) engine.setMusic(m.style, m.fadeMs);
-      else engine.setMusic(null);
+      else engine.setMusic(null, opts?.fadeMs);
     };
     const offMusic = sfxBus.onMusic(applyMusic);
     if (!sfxBus.music()) engine.setMusic(null);

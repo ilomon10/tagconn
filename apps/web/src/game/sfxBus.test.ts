@@ -78,12 +78,20 @@ describe('sfxBus music channel', () => {
     const off = sfxBus.onMusic(cb);
     expect(cb).toHaveBeenCalledWith({ kind: 'battle', style: 'rift' });
     sfxBus.setMusic(null);
-    expect(cb).toHaveBeenLastCalledWith(null);
+    expect(cb).toHaveBeenLastCalledWith(null, undefined);
     expect(sfxBus.music()).toBeNull();
     off();
     sfxBus.setMusic({ kind: 'battle', style: 'guild' });
     expect(cb).toHaveBeenCalledTimes(2);
     sfxBus.clear();
     expect(sfxBus.music()).toBeNull();
+  });
+  it('passes the stop fade to subscribers', () => {
+    sfxBus.clear();
+    const cb = vi.fn();
+    sfxBus.onMusic(cb);
+    sfxBus.setMusic(null, { fadeMs: 300 });
+    expect(cb).toHaveBeenLastCalledWith(null, { fadeMs: 300 });
+    sfxBus.clear();
   });
 });

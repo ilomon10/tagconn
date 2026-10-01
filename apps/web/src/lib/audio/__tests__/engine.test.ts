@@ -262,8 +262,9 @@ describe('audio engine', () => {
     engine.setMix({ ...ALL, master: 0 });
     expect(stopMusic).toHaveBeenCalledTimes(3);
     engine.setMix(ALL);
-    engine.setMusic(null);
+    engine.setMusic(null, 300);
     expect(stopMusic).toHaveBeenCalledTimes(4);
+    expect(stopMusic).toHaveBeenLastCalledWith(300);
   });
 
   it('destroy removes listeners and closes the context', () => {

@@ -2,13 +2,14 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import type { HeroProgress } from '@tagconn/shared';
 import { applyAction, createBattle, type BattleEvent, type BattleOutcome, type BattleResult, type HeroAward } from '@tagconn/shared';
 import { setup } from '../../../../../../../packages/shared/src/battle/__tests__/fixtures';
 import type { BattleController, BattleView, TimelineItem } from '../../../../game/battle/types';
 import { applyDisplay, BattleHud, displayFromState, initialDisplay, type BattleHudProps } from '../BattleHud';
 import { blipsBetween, visibleLog } from '../BattleLog';
 import { hpTone } from '../Bar';
-import { koNote, resultHeadline, resultSting, resultStages, ResultsPanel } from '../ResultsPanel';
+import { koNote, resultHeadline, resultSting, resultStages, ResultsPanel, xpBarPlan } from '../ResultsPanel';
 
 const su = setup();
 function fake(over: Partial<BattleView> = {}): BattleController {
@@ -155,5 +156,35 @@ describe('ResultsPanel', () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain('Server said no');
     expect(html).toContain('Close');
+  });
+});
+
+describe('xpBarPlan', () => {
+  const prog = (o: Partial<HeroProgress> = {}): HeroProgress => ({ heroId: 'h1', projectId: 'p', classId: 'engineer', xp: 150, level: 3, levelXp: 100, nextLevelXp: 200, skillPoints: 0, bonusPoints: 0, skills: {}, overspent: false, koUntil: null, wins: 0, losses: 0, flees: 0, loot: [], equippedTitle: null, updatedAt: 2_000_000, ...o }) as HeroProgress;
+  const a = { xpGained: 40, levelBefore: 3, levelAfter: 3 };
+  it('falls back to the gain meter without progress', () => {
+    expect(xpBarPlan(a, undefined, 1_000_000)).toEqual({ kind: 'gain' });
+  });
+  it('uses the post-award value', () => {
+    const p = xpBarPlan(a, prog(), 1_000_000);
+    expect(p).toMatchObject({ kind: 'progress', to: 0.5, wrapped: false, maxed: false });
+    expect((p as { from: number }).from).toBeCloseTo(0.1);
+  });
+  it('adds the award to a stale value, and gives up when that would cross a level', () => {
+    const stale = prog({ updatedAt: 1, xp: 110 });
+    expect(xpBarPlan(a, stale, 1_000_000)).toMatchObject({ kind: 'progress', to: 0.5 });
+    expect(xpBarPlan({ ...a, xpGained: 95 }, stale, 1_000_000)).toEqual({ kind: 'gain' });
+    expect(xpBarPlan({ ...a, levelAfter: 4 }, stale, 1_000_000)).toEqual({ kind: 'gain' });
+  });
+  it('wraps on a level-up and ignores a mismatched level', () => {
+    expect(xpBarPlan({ xpGained: 90, levelBefore: 2, levelAfter: 3 }, prog({ xp: 120 }), 1_000_000)).toEqual({ kind: 'progress', from: 0, to: 0.2, wrapped: true, maxed: false });
+    expect(xpBarPlan({ xpGained: 90, levelBefore: 2, levelAfter: 4 }, prog(), 1_000_000)).toEqual({ kind: 'gain' });
+  });
+  it('is full at max level', () => {
+    expect(xpBarPlan(a, prog({ nextLevelXp: null }), 1_000_000)).toMatchObject({ to: 1, from: 1, maxed: true });
+  });
+  it('renders real progress in the panel', () => {
+    const html = panel(outcome(), 'won', { progressByHero: { h1: prog() } });
+    expect(html).toContain('40 XP gained, 50% to the next level');
   });
 });

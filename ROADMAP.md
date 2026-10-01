@@ -254,8 +254,8 @@ Design: `docs/design/battles.md`.
 - [x] BattleScene (swirl + iris, stage, animations) + controller timeline + enemy/FX/KO art + battle HUD (menu, bars, log, results) + battle audio and music + themed copy [Developers]
 - [x] Hero sheet "Stats & Skills" tab (skill tree, spend/respec/confirm) + HUD level badge + data layer and demo battles [Developers]
 - [x] Encounter prompt + battle flow + party picker + overlay + KO presence + loot cosmetics + coffee-break heal [Developers]
-- [ ] Wave 3 wiring into OfficeGame/OfficeScene/OfficeView + results XP bar from progress [Developer]
-- [ ] Gate → v0.8.0
+- [x] Wave 3 wiring into OfficeGame/OfficeScene/OfficeView (demo battle end-to-end + Ignore, 0 console errors), results XP bar from real progress, 300 ms music stop fade, UI-sound close/open pairing + modal-aware hover, server-wide JSON `__proto__` guard [Developers]
+- [ ] Gate (QA, review, security, battles guide) → v0.8.0
 
 ## M15: Light, time and harmonious rooms → v0.9.0 [todo]
 

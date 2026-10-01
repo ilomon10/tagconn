@@ -53,6 +53,8 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
   let wantedAmbient: AmbientKind | null = null;
   let ambient: { kind: AmbientKind; stop(): void } | null = null;
   let wantedMusic: { style: MusicStyle; fadeMs: number } | null = null;
+  /** The fade of the last `setMusic` call; used when it stops the track (null) so the stop honours it. */
+  let stopFadeMs = DEFAULT_MUSIC_FADE_MS;
   let music: { style: MusicStyle; stop(fadeMs: number): void } | null = null;
   const buffers = new Map<SfxId, AudioBuffer | null>();
   const lastAt = new Map<SfxId, number>();
@@ -80,7 +82,7 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
   // Plays only while master, sfx and the unlock allow it (like ambient); the ambient bed ducks underneath.
   const syncMusic = (): void => {
     const want = mix.sfx && mix.master > 0 && unlocked ? wantedMusic : null;
-    const fadeMs = wantedMusic?.fadeMs ?? DEFAULT_MUSIC_FADE_MS;
+    const fadeMs = wantedMusic?.fadeMs ?? stopFadeMs;
     if (!(music && want && music.style === want.style)) {
       music?.stop(fadeMs);
       music = null;
@@ -199,6 +201,7 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
     },
     setMusic(style, fadeMs = DEFAULT_MUSIC_FADE_MS) {
       wantedMusic = style ? { style, fadeMs } : null;
+      stopFadeMs = fadeMs;
       if (!destroyed) syncMusic();
     },
     destroy() {

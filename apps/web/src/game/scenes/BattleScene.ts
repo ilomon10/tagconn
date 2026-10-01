@@ -334,7 +334,7 @@ export class BattleScene extends Phaser.Scene {
       this.tweens.killTweensOf(this.overlay);
       const start = (): void => {
         sfxBus.emit({ id: 'battle-return' });
-        if (this.musicOn) sfxBus.setMusic(null);
+        if (this.musicOn) sfxBus.setMusic(null, { fadeMs: BATTLE_TIMING.returnMs });
         this.musicOn = false;
       };
       if (this.reduced) {

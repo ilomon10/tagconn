@@ -7,6 +7,7 @@ import {
   type Hero,
   heroLookForStyle,
   type MultiversePlan,
+  type HeroProgress,
   type MultiverseRealm,
   type OfficeLayout,
   type OfficeStyle,
@@ -24,6 +25,9 @@ import { pickReceptionistSpot, isReceptionDeskTile } from '../npc/receptionistSp
 import { generateTextures } from '../textures';
 import { resolveCostume, titleFor } from '../lookResolver';
 import { resolveHeroCostume } from '../heroLook';
+import { KoPresence, type KoTarget } from '../battle/koPresence';
+import { plateTitle } from '../../features/battle/lootTitle';
+import { getProgress } from '../../stores/progressStore';
 import { resolveCast, type ActorKey, type Cast, type CastMember } from '../cast';
 import { nextLifecycle, type ActorLifecycleState, type LifecycleFrame } from '../actorLifecycle';
 import {
@@ -62,6 +66,11 @@ import { sfxBus } from '../sfxBus';
 /** M8 8e: how often the bubble/label layout (`game/labels`) is recomputed — a throttle, not every
  *  frame, since it's a many-subject greedy placement and labels don't need to react per-pixel. */
 const LABEL_REFRESH_MS = 120;
+const KO_REFRESH_MS = 1000;
+
+interface KoView extends KoTarget {
+  readonly agentId: string | null;
+}
 
 /** The Receptionist is a real `Character` but lives outside the cast reconcile map (`characters`). */
 const RECEPTIONIST_KEY: ActorKey = 'npc:receptionist';
@@ -119,6 +128,8 @@ export interface OfficeState {
    *  `resolveCast` call uses — a pin isn't absolute (a challenger that needs you can still preempt it
    *  for one cycle), but it is fed back in every frame, so it wins back the next one. */
   pinnedPrimary: Record<string, string>;
+  /** M14: hero progression by hero id (KO badges, equipped title on the plate). */
+  progress: Readonly<Record<string, HeroProgress>>;
   /** M9: this browser's monitor screen effect (the per-browser toggle over the server default,
    *  resolved in OfficeView). Omitted = follow `office.shaders.screen`. */
   screenFx?: { on: boolean; effect: 'crt' | 'lcd' | 'vhs' };
@@ -277,6 +288,10 @@ export class OfficeScene extends Phaser.Scene {
   private claims = new CosmeticClaims();
   private life!: LifeDirector;
   private npcs!: NpcDirector;
+  /** M14: KO badge sync, run on a 1 s throttle and on every `setOfficeState`. */
+  private ko = new KoPresence();
+  private koTimer = 0;
+  private koViews = new WeakMap<Character, KoView>();
   /** M12 G3: furniture that opens panels (section 4). */
   private triggers!: FurnitureTriggerLayer;
   /** M13: footstep/typing ticks near the camera centre. */
@@ -1143,6 +1158,50 @@ export class OfficeScene extends Phaser.Scene {
     sfxBus.setAmbient({ style: this.theme.id === 'modern' ? 'modern' : this.theme.id === 'guild' ? 'guild' : 'rift', night: isNight });
   }
 
+  holdNpc(id: string): boolean {
+    return this.npcs.hold(id);
+  }
+
+  releaseNpc(id: string) {
+    this.npcs.release(id);
+  }
+
+  dismissNpc(id: string) {
+    this.npcs.dismiss(id);
+  }
+
+  /** M14: while a battle covers the canvas, ignore office input and skip rendering (the office keeps simulating). */
+  setBattleActive(on: boolean) {
+    this.input.enabled = !on;
+    this.cameras.main.setVisible(!on);
+  }
+
+  private applyKo() {
+    const state = this.state;
+    if (!state) return;
+    // KoPresence keys its change cache on the target object, so each Character gets one stable live view.
+    const views: KoView[] = [];
+    for (const c of this.characters.values()) {
+      let v = this.koViews.get(c);
+      if (!v) {
+        v = {
+          get heroId() { return c.heroId; },
+          get lifecycle() { return c.lifecycleFrame.state; },
+          get agentId() { return c.boundAgentId; },
+          setKoBadge: (k) => c.setKoBadge(k),
+        };
+        this.koViews.set(c, v);
+      }
+      views.push(v);
+    }
+    this.ko.apply(
+      views,
+      (id) => getProgress(state.progress, id),
+      (v) => state.agents.find((a) => a.id === (v as KoView).agentId),
+      Date.now(),
+    );
+  }
+
   setOfficeState(state: OfficeState) {
     const prevZoom = this.state?.settings.office.zoom;
     const prevAmbient = this.state?.settings.office.ambientEffects;
@@ -1187,6 +1246,7 @@ export class OfficeScene extends Phaser.Scene {
     this.drama.afterCast(Date.now());
     this.life.afterCast(Date.now());
     this.npcs.afterCast(Date.now());
+    this.applyKo();
     const beacon = office.selectionBeacon ?? true;
     for (const c of this.characters.values()) c.setBeaconEnabled(beacon);
     this.applyFocusDim();
@@ -1431,7 +1491,9 @@ export class OfficeScene extends Phaser.Scene {
     // M12: the hero's per-style look/title for the style this actor is drawn in (the realm's theme on
     // the Multiverse, else the floor's).
     const heroLook = hero ? heroLookForStyle(hero, theme.id) : null;
-    const themedTitle = titleFor(theme, agent.role, role?.title, heroLook?.title);
+    const themedTitle = hero
+      ? plateTitle({ title: heroLook?.title }, getProgress(state.progress, hero.id), theme, (ht) => titleFor(theme, agent.role, role?.title, ht ?? undefined))
+      : titleFor(theme, agent.role, role?.title);
     c.setLook({ color, name: hero?.name, title: themedTitle, description: agent.isMain ? undefined : agent.description, sprite: role?.sprite ?? 0 }, true);
 
     const themeCostume = resolveCostume(theme, agent.role);
@@ -1705,6 +1767,11 @@ export class OfficeScene extends Phaser.Scene {
     this.drama.update(time, delta);
     this.life.update(time, delta);
     this.npcs.update(time, delta, speed);
+    this.koTimer -= delta;
+    if (this.koTimer <= 0) {
+      this.koTimer = KO_REFRESH_MS;
+      this.applyKo();
+    }
     this.triggers.update(time, this.cameras.main);
     this.proximity.tick(time, () => this.proximityActors(), () => listenerFromCamera(this.cameras.main));
     if (this.hoveredKey && !this.actorFor(this.hoveredKey)) this.hoveredKey = null; // a hovered NPC was destroyed

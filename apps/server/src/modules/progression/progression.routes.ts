@@ -1,6 +1,5 @@
 import { EmptyBodySchema, ProgressListQuerySchema, SkillAllocationSchema, TitleEquipSchema } from '@tagconn/shared';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
-import { HttpError } from '../../core/http/errors.js';
 import { HeroParamsSchema } from '../heroes/heroes.schema.js';
 import { BODY_LIMIT } from './progression.schema.js';
 
@@ -21,11 +20,6 @@ export const progressionRoutes: FastifyPluginAsyncZod = async (app) => {
     '/api/heroes/:id/skills',
     {
       ...write,
-      // JSON.parse yields `__proto__` as an own key, which zod's record silently skips; reject it explicitly (F14).
-      preValidation: async (req) => {
-        const skills = (req.body as { skills?: unknown } | null)?.skills;
-        if (typeof skills === 'object' && skills !== null && Object.hasOwn(skills, '__proto__')) throw new HttpError(400, 'Invalid skill id');
-      },
       schema: { params: HeroParamsSchema, body: SkillAllocationSchema },
     },
     async (req) => progressionService.setSkills(req.params.id, req.body),

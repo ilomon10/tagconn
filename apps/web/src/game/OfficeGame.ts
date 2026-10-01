@@ -3,6 +3,8 @@ import { OfficeScene, type OfficeFloorInfo, type OfficeFloorNeighbor, type Offic
 import type { SafeInsets } from './camera/insets';
 import type { FurnitureAction } from './procgen/types';
 import type { EncounterEvent } from './npc/types';
+import { launchBattle } from './scenes/BattleScene';
+import type { BattleSceneHandle, BattleSceneInput } from './battle/types';
 
 export type { OfficeFloorInfo, OfficeFloorNeighbor, OfficeState };
 
@@ -60,6 +62,8 @@ export class OfficeGame {
   private pending: OfficeState | null = null;
   private pendingInsets: SafeInsets | null = null;
   private destroyed = false;
+  /** M14: the running battle scene, if any (the office scene keeps simulating behind it). */
+  private battle: BattleSceneHandle | null = null;
   /** Set for the whole stairs transition, fade-out through fade-in (bug: re-entrancy). Callers
    *  (hotkeys, stairs clicks, top bar buttons) check this and no-op rather than stacking transitions. */
   private transitioning = false;
@@ -188,6 +192,33 @@ export class OfficeGame {
     });
   }
 
+  holdEncounter(npcId: string): boolean {
+    return this.scene?.holdNpc(npcId) ?? false;
+  }
+
+  releaseEncounter(npcId: string): void {
+    this.scene?.releaseNpc(npcId);
+  }
+
+  dismissEncounter(npcId: string): void {
+    this.scene?.dismissNpc(npcId);
+  }
+
+  get battleOpen(): boolean {
+    return this.battle !== null;
+  }
+
+  /** M14: launches the battle scene (`launchBattle` adds and removes it itself) over the office (null if one is open, the office is not ready or a floor transition runs). */
+  openBattle(input: BattleSceneInput): BattleSceneHandle | null {
+    if (!this.scene || this.battle || this.transitioning) return null;
+    this.scene.setBattleActive(true);
+    this.battle = launchBattle(this.game, input, () => {
+      this.scene?.setBattleActive(false);
+      this.battle = null;
+    });
+    return this.battle;
+  }
+
   destroy() {
     this.destroyed = true;
     this.listeners.encounter.clear();
@@ -201,6 +232,8 @@ export class OfficeGame {
     this.listeners.receptionistClick.clear();
     this.listeners.furnitureClick.clear();
     this.scene = null;
+    this.battle?.destroy();
+    this.battle = null;
     this.game.destroy(true);
   }
 }

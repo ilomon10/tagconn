@@ -6,7 +6,7 @@ import Fastify from 'fastify';
 import { io as connect, type Socket } from 'socket.io-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { App } from '../../../app.js';
-import { adminHeaders, buildTestApp, makeTempDir } from '../../../../test/helpers.js';
+import { adminHeaders, buildTestApp, loadFixture, makeTempDir } from '../../../../test/helpers.js';
 import { registerAdminAccess } from '../admin.js';
 
 type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -236,6 +236,43 @@ describe('request gating (DNS rebinding / CSRF)', () => {
       headers: { 'content-type': 'application/json', ...adminHeaders(app) },
     });
     expect(reset.statusCode).toBe(200);
+  });
+
+  it('rejects __proto__ / constructor.prototype keys at any depth with a 400 (global JSON guard)', async () => {
+    app = await buildTestApp();
+    const post = (payload: string, url = '/api/settings/reset') =>
+      app!.inject({ method: 'POST', url, headers: { 'content-type': 'application/json', ...adminHeaders(app!) }, payload });
+    const bad = [
+      '{"__proto__":1}',
+      '{"a":{"b":{"__proto__":{"x":1}}}}',
+      '{"a":[{"__proto__":1}]}',
+      '[{"constructor":{"prototype":{"x":1}}}]',
+      '{"a":{"constructor":{"prototype":{}}}}',
+    ];
+    for (const payload of bad) {
+      const res = await post(payload);
+      expect(res.statusCode, payload).toBe(400);
+      expect(res.json()).toMatchObject({ statusCode: 400, error: expect.any(String) });
+    }
+    // Hook ingest is untrusted JSON too.
+    const hook = await post('{"session_id":"s","hook_event_name":"SessionStart","x":{"__proto__":1}}', '/api/hooks');
+    expect(hook.statusCode).toBe(400);
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+
+  it('still accepts look-alike keys (proto, __proto, constructor without prototype) and real hook fixtures', async () => {
+    app = await buildTestApp();
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/api/settings/reset',
+      headers: { 'content-type': 'application/json', ...adminHeaders(app) },
+      payload: '{"proto":1,"__proto":2,"a":{"constructor":3,"prototype":4}}',
+    });
+    expect(ok.statusCode).toBe(200);
+    for (const payload of loadFixture()) {
+      const res = await app.inject({ method: 'POST', url: '/api/hooks', payload });
+      expect(res.statusCode).toBe(202);
+    }
   });
 
   it('rejects a socket.io handshake from a foreign Origin, accepts a configured one', async () => {
