@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { Agent } from '@tagconn/shared';
 import { resolveCast } from '../../game/cast';
 import { ALL_FLOORS, useOfficeStore } from '../../stores/officeStore';
@@ -40,6 +40,9 @@ export function useHiddenAgentIds(agents: Agent[], now: number): ReadonlySet<str
     // per realm for the *scene*; the HUD approximates with the floor-wide cap for its own count).
     maxCharacters: selected === ALL_FLOORS ? office.multiverseMaxCharacters : office.maxCharacters,
   });
-  prevPrimary.current = cast.primary;
+  // Committed after render (not written during it) so a discarded or repeated render can't corrupt the hysteresis.
+  useEffect(() => {
+    prevPrimary.current = cast.primary;
+  });
   return new Set(cast.hidden);
 }

@@ -497,7 +497,7 @@ so exactly one item per action per floor glows. Kinds per action (style-agnostic
 | quests (Quests, Q) | `notice-board` | `notice-board` (w 1) | Notice board | Quest board | Bounty shard |
 | settings (Settings, S) | `console` | `console` (w 1) | Server console | Arcane terminal | Rift console |
 | heroes (Heroes, H) | `roster-board` | `roster-board` (w 1) | Team roster | Hall of Heroes | Hero constellation |
-| receptionist (Receptionist, D) | `reception-desk` | never placed | Reception desk | Gatekeeper's desk | Nexus gate desk |
+| receptionist (Receptionist, D) | `reception-desk` | placed in the entrance only (see 5.3) | Reception desk | Gatekeeper's desk | Nexus gate desk |
 
 Pure module `game/furnitureTriggers.ts` (task T4):
 
@@ -562,9 +562,9 @@ export class FurnitureTriggerLayer {
 - `app/useMenuActions.ts:32`: extract `usePanelActions(): Record<'board'|'log'|'quests'|'roles'|'settings'|'heroes'|'receptionist', { run(): void; disabled: boolean }>`
   (the bodies at `useMenuActions.ts:45-52`); `useMenuActions` composes it. No behaviour change for the menu.
 - `features/office/useFurnitureTriggers.ts`: `useFurnitureTriggers(game: OfficeGame | null)` subscribes
-  `game.on('furnitureClick', (a) => ...)`: ignore when `isModalOpen()`; `receptionist` opens the panel directly
-  (`useReceptionistUiStore.getState().openPanel()`, the in-world rule at `OfficeView.tsx:403-409`); others call
-  `usePanelActions()[a].run()` unless disabled.
+  `game.on('furnitureClick', (a) => ...)`: ignore when `isModalOpen()`; every action, `receptionist` included, calls
+  `usePanelActions()[a].run()` unless disabled, so the receptionist goes through the same admin `guard()` as the menu
+  (a non-admin gets the pairing dialog; Gate 2 security Info2).
 - **Keyboard/a11y parity:** every trigger duplicates a menu entry and its hotkey (B/L/Q/S/H/D), shown in the
   tooltip; the canvas adds no focus stops. `docs/guide` says so (gate 2).
 
@@ -635,11 +635,15 @@ internal `genOpts.triggers === false` (the back-wall parity test passes `{ backW
 For each action in `TRIGGER_ORDER`:
 1. Existing item of `TRIGGER_KINDS[action]`: pick the one in the entrance, else a lounge, else any room (ties: lowest
    y, then x); set `trigger`. Pins count.
-2. Else (not `receptionist`): place `TRIGGER_PLACE[action]` in the entrance, then each lounge (by id), using the
+2. Else: place `TRIGGER_PLACE[action]` in the entrance, then each lounge (by id), using the
    `placeAppliances` rules (`backWall.ts:140-150` validity, the component no-split check `:222-237`, front cell
    free): first the interior top row against a north wall (`againstNorthWall: true`, add its columns to
    `tallColumnsByRoom`), then any interior edge cell; w 2 falls back to w 1. Blocking, no seats.
    `rngFor(seed, 'triggers')` only orders equal candidates.
+   **Deviation (Gate 2, review L9):** the original design never placed a missing reception desk (`receptionist` had no
+   `TRIGGER_PLACE` entry), so floors without a recipe-made desk had no receptionist trigger. The generator now places a
+   missing `reception-desk` (w 3, `RECEPTION_PLACE` in `triggers.ts`) in the **entrance room only** (never a lounge), so at
+   least 95% of generated floors carry all six triggers (property-tested in `triggers.test.ts`).
 3. Nothing fits: no trigger for that action (the menu still works). Never a new issue.
 
 ### 5.4 Editor (task T6: `PlanCanvas.tsx`, `Inspector.tsx`, `OfficeEditor.tsx`, `shortcuts.ts`, `stores/editorStore.ts`, `features/editor/pins.ts` new)

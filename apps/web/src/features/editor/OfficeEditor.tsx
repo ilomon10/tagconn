@@ -9,7 +9,7 @@ import { draftAsLayout, useEditorStore, type EditorTool } from '../../stores/edi
 import { assignLayout, classifySaveLayoutError, deleteLayout, refreshLayouts, saveLayout } from '../../lib/layoutCommands';
 import { resolveShortcut, type KeyLike } from './shortcuts';
 import { autoDoorsForRoom } from './reachability';
-import { pinsForLockAll } from './pins';
+import { planLockAll } from './pins';
 import { canSaveLayout, sealedRoomWarnings } from './saveGate';
 import { PlanCanvas } from './PlanCanvas';
 import { Inspector } from './Inspector';
@@ -63,7 +63,7 @@ const HELP_LINES = [
  */
 export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void; targetProjectId?: string }) {
   const store = useEditorStore();
-  const { draft, selection, selectedDoor, selectedFurniture, tool, history, future, dirty, builtin, originalId, originalUpdatedAt } = store;
+  const { draft, selection, selectedDoor, selectedFurniture, pruneNotice, tool, history, future, dirty, builtin, originalId, originalUpdatedAt } = store;
   const layouts = useLayoutStore((s) => s.layouts);
   const settings = useSettingsStore((s) => s.settings);
   const selectedProjectId = useOfficeStore((s) => s.selectedProjectId);
@@ -98,6 +98,7 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
   // the geometry-only check for the instant after an edit, before the 120ms debounce recomputes the map.
   const issues = generatedMap?.issues ?? (draft ? validateLayout(draft) : []);
   const canSave = !!draft && canSaveLayout(issues, builtin);
+  const lockPlan = useMemo(() => (selectedRoom ? planLockAll(generatedMap, selectedRoom) : null), [generatedMap, selectedRoom]);
 
   // ---------------------------------------------------------------------------------------- open
   useEffect(() => {
@@ -484,7 +485,17 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
         </nav>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {builtin && (
+            <p className="shrink-0 bg-amber-900/80 px-3 py-1 text-center text-[11px] text-amber-100">
+              Read-only builtin layout — "Duplicate to edit" to make changes.
+            </p>
+          )}
           <PlanCanvas generatedMap={generatedMap} issues={issues} theme={theme} flashRoomIds={flashRoomIds} />
+          {pruneNotice && (
+            <p className="shrink-0 border-t border-ink-700 bg-ink-900 px-3 py-1 text-[11px] text-amber-300" role="status">
+              {pruneNotice.count} locked item{pruneNotice.count === 1 ? '' : 's'} no longer fit{pruneNotice.count === 1 ? 's' : ''} and {pruneNotice.count === 1 ? 'was' : 'were'} released. Undo to restore.
+            </p>
+          )}
           <div className="h-20 shrink-0 overflow-hidden border-t border-ink-700 bg-ink-900 md:h-32">
             <IssueList issues={issues} rooms={draft.rooms} reachability={generatedMap?.reachability} onSelectIssue={flash} onFix={performFix} />
           </div>
@@ -519,10 +530,11 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           onAutoDoors={(id) => store.setRoomDoors(id, undefined)}
           onSealRoom={(id) => store.sealRoom(id)}
           selectedFurniture={selectedFurniture}
-          lockableCount={selectedRoom ? pinsForLockAll(generatedMap, selectedRoom).length : 0}
+          lockableCount={lockPlan?.pins.length ?? 0}
+          lockOverflow={lockPlan?.overflow ?? 0}
           onLockFurniture={(roomId, pin) => store.lockFurniture(roomId, pin)}
           onReleaseFurniture={(roomId, index) => store.releasePin(roomId, index)}
-          onLockAll={(id) => selectedRoom && store.lockAll(id, pinsForLockAll(generatedMap, selectedRoom))}
+          onLockAll={(id) => lockPlan && store.lockAll(id, lockPlan.pins)}
           onReleaseAll={(id) => store.releaseAll(id)}
         />
         </div>

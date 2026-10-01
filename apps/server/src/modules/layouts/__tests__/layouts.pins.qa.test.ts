@@ -33,7 +33,7 @@ describe('QA M12 W2: pinned furniture persistence', () => {
 
   it('a stale (outside-the-room) pin is a warning, so the layout still saves', async () => {
     app = await buildTestApp();
-    const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: withPins([{ kind: 'work-desk', x: 900, y: 900, w: 2, h: 1 }]), headers: adminHeaders(app) });
+    const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: withPins([{ kind: 'work-desk', x: 60, y: 60, w: 2, h: 1 }]), headers: adminHeaders(app) });
     expect(res.statusCode).toBe(201);
   });
 
@@ -43,6 +43,7 @@ describe('QA M12 W2: pinned furniture persistence', () => {
     for (const pins of [
       [{ kind: 'Bad Kind', x: 0, y: 0, w: 1, h: 1 }],
       [{ kind: 'desk', x: 0, y: 0, w: 0, h: 1 }],
+      [{ kind: 'desk', x: 900, y: 0, w: 1, h: 1 }], // beyond the largest grid (LAYOUT_LIMITS.maxWidth)
       Array.from({ length: 49 }, (_, i) => ({ kind: 'desk', x: i, y: 0, w: 1, h: 1 })),
     ]) {
       const res = await app.inject({ method: 'POST', url: '/api/layouts', payload: withPins(pins), headers });

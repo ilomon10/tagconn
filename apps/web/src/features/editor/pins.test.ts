@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateLayout, type LayoutRoom, type PinnedFurniture } from '@tagconn/shared';
 import type { GeneratedMap } from '../../game/procgen';
-import { clampPinPos, hitFurnitureAt, isPinnableItem, pinFits, pinFromPlaced, pinsForLockAll, prunePins, unpinnableReason } from './pins';
+import { clampPinPos, hitFurnitureAt, isPinnableItem, pinFits, pinFromPlaced, planLockAll, pinsForLockAll, prunePins, unpinnableReason } from './pins';
 
 // A walled (explicit) desks room at (2,2) 10x8: interior (3,3) 8x6.
 const room = (over: Partial<LayoutRoom> = {}): LayoutRoom => ({ id: 'a', type: 'desks', x: 2, y: 2, w: 10, h: 8, walled: true, ...over });
@@ -91,5 +91,16 @@ describe('pinsForLockAll', () => {
     expect(pins.length).toBeLessThanOrEqual(48);
     const issues = validateLayout({ width: 30, height: 20, rooms: [{ ...r, furniture: pins }] });
     expect(issues.filter((i) => i.code === 'pinned-invalid')).toEqual([]);
+  });
+});
+
+describe('planLockAll', () => {
+  it('counts the items that fit but for the per-room cap', () => {
+    const items = Array.from({ length: 54 }, (_, i) => ({ roomId: 'a', kind: 'plant' as const, x: 3 + (i % 8), y: 3 + Math.floor(i / 8), w: 1, h: 1 }));
+    const r = room({ w: 12, h: 10 });
+    const plan = planLockAll(mapOf(items), r);
+    expect(plan.pins).toHaveLength(48);
+    expect(plan.overflow).toBe(6);
+    expect(planLockAll(null, r)).toEqual({ pins: [], overflow: 0 });
   });
 });

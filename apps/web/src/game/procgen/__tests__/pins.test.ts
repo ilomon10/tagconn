@@ -174,10 +174,61 @@ describe('pins: helpers', () => {
     expect(seatsFor('table', { x: 1, y: 1, w: 2, h: 1 }, interior)).toHaveLength(6);
   });
 
-  it('resolvePins reports a blocking pin on a door apron as pinned-blocks but keeps it', () => {
+  it('resolvePins skips a blocking pin on a door apron with pinned-blocks, and keeps a soft one', () => {
     const room = { id: 'r', type: 'desks' as const, name: undefined, furniture: [{ kind: 'work-desk', x: 0, y: 0, w: 2, h: 1 }] };
     const res = resolvePins(room, { x: 5, y: 5, w: 6, h: 4 }, new Set(['6,5']));
-    expect(res.items).toHaveLength(1);
+    expect(res.items).toHaveLength(0);
     expect(res.issues.map((i) => i.code)).toEqual(['pinned-blocks']);
+    const rug = { ...room, furniture: [{ kind: 'rug', x: 0, y: 0, w: 2, h: 1 }] };
+    expect(resolvePins(rug, { x: 5, y: 5, w: 6, h: 4 }, new Set(['6,5'])).items).toHaveLength(1);
+  });
+
+  it('a pin over an AUTOMATIC door apron is skipped with a warning and never seals the room', () => {
+    const base = generateMap(DEFAULT_LAYOUT);
+    const door = base.doors.find((d) => d.roomId !== 'stairs' && DEFAULT_LAYOUT.rooms.some((r) => r.id === d.roomId && r.type !== 'stairs'))!;
+    const desks = DEFAULT_LAYOUT.rooms.find((r) => r.id === door.roomId)!;
+    const interior = roomInterior(desks);
+    const inside = (x: number, y: number) => x >= interior.x && x < interior.x + interior.w && y >= interior.y && y < interior.y + interior.h;
+    const apron = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => ({ x: door.x + dx!, y: door.y + dy! })).find((p) => inside(p.x, p.y))!;
+    const layout: OfficeLayout = {
+      ...DEFAULT_LAYOUT,
+      rooms: DEFAULT_LAYOUT.rooms.map((r) => (r.id === desks.id ? { ...r, furniture: [{ kind: 'table', x: apron.x - interior.x, y: apron.y - interior.y, w: 1, h: 1 }] } : r)),
+    };
+    const map = generateMap(layout);
+    expect(map.layoutId).toBe(layout.id);
+    expect(map.furniture.some((f) => f.pinned && f.roomId === desks.id)).toBe(false);
+    expect(map.issues.filter((i) => i.code === 'pinned-blocks' && i.roomIds?.includes(desks.id))).toHaveLength(1);
+    expect(map.reachability.unreachableRooms).toEqual([]);
+  });
+
+  it('a pin that displaces a recipe item takes the item\'s recipe seats with it', () => {
+    const desks = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'desks')!;
+    const interior = roomInterior(desks);
+    const base = generateMap(DEFAULT_LAYOUT);
+    const desk = base.furniture.find((f) => f.roomId === desks.id && f.kind === 'work-desk' && !f.pinned)!;
+    const rug: PinnedFurniture = { kind: 'rug', x: desk.x - interior.x, y: desk.y - interior.y, w: desk.w, h: desk.h };
+    const layout: OfficeLayout = { ...DEFAULT_LAYOUT, rooms: DEFAULT_LAYOUT.rooms.map((r) => (r.id === desks.id ? { ...r, furniture: [rug] } : r)) };
+    const map = generateMap(layout);
+    expect(map.furniture.some((f) => f.roomId === desks.id && f.kind === 'work-desk' && f.x === desk.x && f.y === desk.y)).toBe(false);
+    // The recipe seats the desk's row from above (y - 1): with the desk gone, nobody sits there.
+    const seats = map.rooms.find((r) => r.id === desks.id)!.seats;
+    const orphans = seats.filter((st) => st.x >= desk.x && st.x < desk.x + desk.w && Math.abs(st.y - desk.y) === 1 && st.y < desk.y);
+    expect(orphans).toEqual([]);
+    // ...while the unpinned layout does seat it.
+    const baseSeats = base.rooms.find((r) => r.id === desks.id)!.seats;
+    expect(baseSeats.some((st) => st.x === desk.x && st.y === desk.y - 1)).toBe(true);
+  });
+
+  it('reports each bad pin kind once per room (validateLayout and resolvePins no longer both report it)', () => {
+    const desks = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'desks')!;
+    const bad: PinnedFurniture[] = [
+      { kind: 'plant', x: 2, y: 2, w: 1, h: 1 },
+      { kind: 'crate', x: 2, y: 2, w: 1, h: 1 },
+      { kind: 'lamp', x: 2, y: 2, w: 1, h: 1 },
+      { kind: 'unicorn', x: 4, y: 4, w: 1, h: 1 },
+    ];
+    const layout: OfficeLayout = { ...DEFAULT_LAYOUT, rooms: DEFAULT_LAYOUT.rooms.map((r) => (r.id === desks.id ? { ...r, furniture: bad } : r)) };
+    const mine = generateMap(layout).issues.filter((i) => i.code.startsWith('pinned-') && i.roomIds?.includes(desks.id));
+    expect(mine.map((i) => i.code)).toEqual(['pinned-invalid']);
   });
 });

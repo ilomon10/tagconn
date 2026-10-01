@@ -56,6 +56,12 @@ describe('createSeenStore', () => {
     expect(JSON.parse(st.data.get(SEEN_STORAGE_KEY)!)).toEqual(['board']);
     expect(createSeenStore(st).has('board')).toBe(true);
   });
+  it('does not accept inherited property names as actions', () => {
+    const st = fake(JSON.stringify(['toString', 'constructor', '__proto__', 'board']));
+    const s = createSeenStore(st);
+    expect(s.has('toString' as never)).toBe(false);
+    expect(s.has('board')).toBe(true);
+  });
   it('ignores corrupt or hostile storage', () => {
     expect(createSeenStore(fake('not json')).has('board')).toBe(false);
     expect(createSeenStore(fake('{"a":1}')).has('board')).toBe(false);

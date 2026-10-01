@@ -279,15 +279,19 @@ const kindLabel = (kind: string) => {
 function LockedFurnitureFields({
   room,
   lockable,
+  overflow,
   onLockAll,
   onReleaseAll,
 }: {
   room: LayoutRoom;
   lockable: number;
+  /** Generated items that would fit but for the per-room cap. */
+  overflow: number;
   onLockAll: () => void;
   onReleaseAll: () => void;
 }) {
   const locked = room.furniture?.length ?? 0;
+  const atLimit = locked + lockable >= LAYOUT_LIMITS.maxPinnedPerRoom && overflow > 0;
   return (
     <div className="space-y-2 border-t border-ink-700 p-2.5">
       <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-ink-400">
@@ -299,7 +303,11 @@ function LockedFurnitureFields({
           className="flex-1"
           disabled={lockable === 0 || locked >= LAYOUT_LIMITS.maxPinnedPerRoom}
           onClick={onLockAll}
-          title="Locks every generated item where it stands, so generation keeps them"
+          title={
+            atLimit
+              ? `Locks ${lockable} more (limit ${LAYOUT_LIMITS.maxPinnedPerRoom} per room); ${overflow} stay generated`
+              : 'Locks every generated item where it stands, so generation keeps them'
+          }
         >
           Lock all
         </Button>
@@ -307,6 +315,11 @@ function LockedFurnitureFields({
           Release all
         </Button>
       </div>
+      {atLimit && locked >= LAYOUT_LIMITS.maxPinnedPerRoom && (
+        <p className="text-[10px] text-amber-300" role="status">
+          {locked} of {locked + lockable + overflow} locked (limit)
+        </p>
+      )}
     </div>
   );
 }
@@ -361,6 +374,7 @@ function RoomFields({
   onSealRoom,
   selectedFurniture,
   lockableCount,
+  lockOverflow,
   onLockFurniture,
   onReleaseFurniture,
   onLockAll,
@@ -369,6 +383,7 @@ function RoomFields({
   room: LayoutRoom;
   selectedFurniture: FurnitureSelection | null;
   lockableCount: number;
+  lockOverflow: number;
   onLockFurniture: (pin: PinnedFurniture) => void;
   onReleaseFurniture: (index: number) => void;
   onLockAll: () => void;
@@ -426,7 +441,7 @@ function RoomFields({
       {room.type !== 'stairs' && selectedFurniture && selectedFurniture.roomId === room.id && (
         <FurnitureItemFields room={room} selection={selectedFurniture} onLock={onLockFurniture} onRelease={onReleaseFurniture} />
       )}
-      {room.type !== 'stairs' && <LockedFurnitureFields room={room} lockable={lockableCount} onLockAll={onLockAll} onReleaseAll={onReleaseAll} />}
+      {room.type !== 'stairs' && <LockedFurnitureFields room={room} lockable={lockableCount} overflow={lockOverflow} onLockAll={onLockAll} onReleaseAll={onReleaseAll} />}
       {furnishable && (
         <FurnishFields room={room} layoutDefaults={furnishDefaults} onFurnish={onFurnish} onReroll={onRerollFurnish} onReset={onResetFurnish} />
       )}
@@ -449,6 +464,7 @@ export function Inspector({
   onSealRoom,
   selectedFurniture,
   lockableCount,
+  lockOverflow,
   onLockFurniture,
   onReleaseFurniture,
   onLockAll,
@@ -456,6 +472,7 @@ export function Inspector({
 }: {
   selectedFurniture: FurnitureSelection | null;
   lockableCount: number;
+  lockOverflow: number;
   onLockFurniture: (roomId: string, pin: PinnedFurniture) => void;
   onReleaseFurniture: (roomId: string, index: number) => void;
   onLockAll: (roomId: string) => void;
@@ -488,6 +505,7 @@ export function Inspector({
           onSealRoom={() => onSealRoom(selectedRoom.id)}
           selectedFurniture={selectedFurniture}
           lockableCount={lockableCount}
+          lockOverflow={lockOverflow}
           onLockFurniture={(pin) => onLockFurniture(selectedRoom.id, pin)}
           onReleaseFurniture={(index) => onReleaseFurniture(selectedRoom.id, index)}
           onLockAll={() => onLockAll(selectedRoom.id)}

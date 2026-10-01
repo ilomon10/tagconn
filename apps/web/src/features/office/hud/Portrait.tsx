@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import type { HeroAppearance, HeroLookStyle } from '@tagconn/shared';
 import { paintPortrait } from '../../../game/heroPreview';
 import { resolveCostume } from '../../../game/lookResolver';
@@ -19,7 +19,7 @@ const FRAMES = {
 
 /** A character portrait on a plain 2D canvas, drawn once per (look, crop, scale) from the same bitmaps the
  *  scene uses. No animation. `scale` is CSS px per bitmap px. */
-export function Portrait({ look, crop = 'bust', scale = 2, className }: { look: PortraitLook; crop?: 'bust' | 'full'; scale?: number; className?: string }) {
+function PortraitImpl({ look, crop = 'bust', scale = 2, className }: { look: PortraitLook; crop?: 'bust' | 'full'; scale?: number; className?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const f = FRAMES[crop];
   const key = JSON.stringify([look, crop, scale]);
@@ -41,3 +41,9 @@ export function Portrait({ look, crop = 'bust', scale = 2, className }: { look: 
   }, [key]);
   return <canvas ref={ref} width={f.w * scale} height={f.h * scale} aria-hidden="true" className={className} style={{ imageRendering: 'pixelated', width: f.w * scale, height: f.h * scale }} />;
 }
+
+/** Memoized: `look` is a fresh object every render, so compare it by content (once per props change, not per effect). */
+export const Portrait = memo(
+  PortraitImpl,
+  (a, b) => a.crop === b.crop && a.scale === b.scale && a.className === b.className && JSON.stringify(a.look) === JSON.stringify(b.look),
+);

@@ -151,8 +151,8 @@ export type DoorSpec = z.infer<typeof DoorSpecSchema>;
  */
 export const PinnedFurnitureSchema = z.object({
   kind: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
-  x: z.number().int().min(0),
-  y: z.number().int().min(0),
+  x: z.number().int().min(0).max(LAYOUT_LIMITS.maxWidth),
+  y: z.number().int().min(0).max(LAYOUT_LIMITS.maxHeight),
   w: z.number().int().min(1).max(8),
   h: z.number().int().min(1).max(8),
   /** Paint variant index, as generated. */
@@ -391,7 +391,9 @@ export function validateLayout(layout: LayoutGeometry): LayoutIssue[] {
 
   // Pinned furniture (M12): inside the interior, no overlaps between pins, never on a door span.
   // Warnings, not errors: the generator skips a bad pin, so a stale pin never makes a floor fall back to
-  // DEFAULT_LAYOUT (the Hall Planner prunes pins on every room edit).
+  // DEFAULT_LAYOUT. The Hall Planner prunes pins on room edits it makes (resize, type, walled, doors); a pin
+  // that goes stale some other way (a hand-edited layout, an auto door the planner cannot see) is skipped
+  // by the generator, with a warning.
   for (const r of rooms) {
     if (!r.furniture?.length) continue;
     const name = r.name ?? r.type;

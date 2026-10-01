@@ -365,7 +365,8 @@ const MODERN: Record<FurnitureKind, Painter> = {
     rect(0x51697c, x, y + 3, w, 4);
     rect(0x22252e, x + 3, y - 2, 8, 6);
     rect(0x5fb8ff, x + 4, y - 1, 6, 4);
-    rect(0xf5f5f5, x + w - 8, y + 5, 6, 3);
+    // A 1-tile desk (placed by the trigger pass when the entrance is tight) has no room for paper beside the monitor.
+    if (f.w >= 2) rect(0xf5f5f5, x + w - 8, y + 5, 6, 3);
   },
   bench: (g, f, T, rect) => {
     const x = f.x * T;

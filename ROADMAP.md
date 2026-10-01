@@ -199,7 +199,7 @@ default, Docker optional; installer + auto-update. Design: `docs/design/desktop.
   - [ ] Signed releases: user creates the `release` environment (reviewers, v* tag rule), a v* tag ruleset and the signing key; PM sets the updater pubkey → updates on
   - [ ] Real-Windows checklist (docs/design/desktop.md, 17 items; N4 path aliases first) → drop the "preview" label
 
-## M12: Office fixes + "the office is the game" → v0.5.2 (fixes) / v0.6.0 (features) [in progress]
+## M12: Office fixes + "the office is the game" → v0.5.2 (fixes) / v0.6.0 (features) [released 2026-10-01]
 
 Plan: `~/.claude-sessions/profiles/ilomon/plans/fix-the-role-serene-creek.md`. User decisions (2026-10-01): floors = git root
 (session pinned to its first floor, subfolder floors merged), compact top bar + ☰ game menu with overlay panels, a hero's
@@ -220,7 +220,8 @@ role can't change while bound, fixes ship first.
   - [x] G3 Furniture triggers (T4 layer + art, T5 one trigger item per action per floor, reception desk placed when missing) [Developers]
   - [x] G4 Furniture locking: T5 pins in procgen (placed first, never removed, `seatsFor`) · T6 Hall Planner Furniture tool (F): drag to lock, Release, Lock all, undo/redo [Developers]
   - [x] W2-W PM wiring: DramaDirector + FurnitureTriggerLayer in OfficeScene, `useFurnitureTriggers` in OfficeView; pin checks are warnings so a stale pin never drops a floor to the default layout
-  - [ ] Gate 2: QA + review + security + docs → v0.6.0
+  - [x] Gate 2: QA (6/6 pass; drama settings not editable, stale "left" card) + review (5 Med: stuck drama after rebuild, streak off-by-one, HUD without on-a-roll, door edits skip pin prune, orphan recipe seat) + security (3 Low) + docs → fixes [x]: drama reset/reseat, shared streak API, nested Settings groups, card auto-clear, pin prune on door edits, auto-door aprons, issue dedupe/cap, trigger split-check cap, pin x/y max, prune/cap hints, preview textures, bubbles avoid name tags, 1-tile reception desk art → v0.6.0
+- [x] v0.5.3 (from `release/0.5.x`): `office:runner` through `tsx` (ERR_MODULE_NOT_FOUND) + `tsx` as a root devDependency, connect/probe logs
 
 ## Backlog
 

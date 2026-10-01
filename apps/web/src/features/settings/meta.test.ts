@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSettings, GUI_IMMUTABLE_SETTINGS, type Settings } from '@tagconn/shared';
-import { HIDDEN_SETTINGS, KEY_HINTS, SECTION_LABELS, envVarName } from './meta';
+import { HIDDEN_SETTINGS, KEY_HINTS, SECTION_LABELS, envVarName, numberBounds } from './meta';
 
 const settings = defaultSettings();
 const sections = Object.keys(settings) as (keyof Settings)[];
@@ -86,5 +86,19 @@ describe('GUI-immutable coverage', () => {
     for (const path of immutableLeaves) {
       expect(envVarName(path)).toMatch(/^OFFICE_[A-Z0-9_]+__[A-Z0-9_]+$/);
     }
+  });
+});
+
+describe('numberBounds', () => {
+  it('reads min/max/int from the schema at nested depth', () => {
+    expect(numberBounds('office.drama.idleChatSec')).toEqual({ min: 5, max: 3600, int: false });
+    expect(numberBounds('office.drama.streakTools')).toEqual({ min: 2, max: 100, int: true });
+  });
+  it('is empty for non-numbers and unknown paths', () => {
+    expect(numberBounds('office.drama.enabled')).toEqual({ int: false });
+    expect(numberBounds('office.nope.x')).toEqual({ int: false });
+  });
+  it('has bounds for every numeric office.drama field', () => {
+    for (const [k, v] of Object.entries(settings.office.drama)) if (typeof v === 'number') expect(numberBounds(`office.drama.${k}`).min, k).toBeDefined();
   });
 });

@@ -219,7 +219,7 @@ export function OfficeView({ active }: { active: boolean }) {
   const phone = useMediaQuery(PHONE_QUERY);
   const [trayOpen, setTrayOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  // M9 8f: what the `[`/`]` cycling hotkeys below announce to screen readers — mirrors the drawer's
+  // M9 8f: what screen readers hear when the selection changes — mirrors the drawer's
   // own status card (the bound hero's name, else the themed title of the agent's floor).
   const [announcement, setAnnouncement] = useState('');
 
@@ -344,7 +344,7 @@ export function OfficeView({ active }: { active: boolean }) {
   // yet: `]` starts at the first agent, `[` at the last. Same guards as the floor hotkeys above
   // (ignored while typing or while a modal covers the screen); selecting goes through the same
   // `setSelected`/`focus` path a chip or scene click uses, so the character glows and the status
-  // card shows identically. The announced label mirrors the card: the bound hero's name, else the themed role title.
+  // card shows identically. The announcement (below) covers every selection path.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== '[' && e.key !== ']') return;
@@ -359,15 +359,32 @@ export function OfficeView({ active }: { active: boolean }) {
       setSelected(agent.id);
       setFollow(false);
       game?.focus(agent.id);
-      const heroes = useHeroStore.getState().heroes;
-      const hero = Object.values(heroes).find((h) => h.boundAgentId === agent.id);
-      const title = roleLookup(agent.role, { projectId: agent.projectId, hero }).themedTitle;
-      const label = hero ? `${hero.name}, ${title}` : title;
-      setAnnouncement(`${label} selected, ${idx + 1} of ${agents.length}`);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [agents, selected, game, roleLookup]);
+  }, [agents, selected, game]);
+
+  // Announce every selection change (key, chip or scene click) to screen readers, not just `[`/`]`.
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
+  useEffect(() => {
+    const list = agentsRef.current;
+    const idx = selected ? list.findIndex((a) => a.id === selected) : -1;
+    const agent = list[idx];
+    if (!agent) return;
+    const hero = Object.values(useHeroStore.getState().heroes).find((h) => h.boundAgentId === agent.id);
+    const title = roleLookup(agent.role, { projectId: agent.projectId, hero }).themedTitle;
+    setAnnouncement(`${hero ? `${hero.name}, ${title}` : title} selected, ${idx + 1} of ${list.length}`);
+    // Only a selection change announces; the roster moving underneath must not re-announce.
+  }, [selected]);
+
+  // The selected agent left the office (or this floor): show the card's "left" note briefly, then deselect.
+  const selectedGone = selected !== null && !agents.some((a) => a.id === selected);
+  useEffect(() => {
+    if (!selectedGone) return;
+    const t = setTimeout(closePanel, 1500);
+    return () => clearTimeout(t);
+  }, [selectedGone, selected]);
 
   // M8 8h: a Multiverse realm was clicked in the scene — travel there with the normal stairs
   // transition. `null` (the overflow realm) opens the floor picker instead (design section 6.3).

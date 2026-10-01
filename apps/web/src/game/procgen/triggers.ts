@@ -74,6 +74,9 @@ function shuffle<T>(arr: T[], rand: () => number): T[] {
   return arr;
 }
 
+/** Cap on the flood-fill split tests one `placeIn` call may run (security review: unbounded on a 128x96 room). */
+const MAX_SPLIT_CHECKS = 200;
+
 const byLowestYThenX = (a: Rect, b: Rect) => a.y - b.y || a.x - b.x;
 
 /** Marks / places one trigger item per action. See the file header and design 5.3. */
@@ -151,6 +154,9 @@ export function assignTriggers(input: TriggerPassInput): void {
     if (!starts.length) return false;
     const baseReach = reachFrom(interior, blocked, starts);
 
+    // The split test is a full flood fill, so a big room is bounded to MAX_SPLIT_CHECKS of them per room and action
+    // (the cheap checks above it are not counted); past that no more candidates are accepted.
+    let splitChecks = 0;
     const valid = (x: number, y: number, w: number, northWall: boolean): boolean => {
       if (x < interior.x || x + w > interior.x + interior.w) return false;
       const cells = cellsOf({ x, y, w, h: 1 });
@@ -164,6 +170,7 @@ export function assignTriggers(input: TriggerPassInput): void {
         if (blocked.has(key(front)) || aprons.has(key(front))) return false;
       }
       // No split: every cell that could be reached before still can be (bar the item's own cells).
+      if (++splitChecks > MAX_SPLIT_CHECKS) return false;
       const after = new Set(blocked);
       for (const c of cells) after.add(c);
       const reach = reachFrom(interior, after, starts);

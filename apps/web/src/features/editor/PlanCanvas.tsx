@@ -810,11 +810,6 @@ export function PlanCanvas({
           {furnitureHint}
         </div>
       )}
-      {builtin && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 bg-amber-900/80 px-3 py-1 text-center text-[11px] text-amber-100">
-          Read-only builtin layout — "Duplicate to edit" to make changes.
-        </div>
-      )}
     </div>
   );
 }

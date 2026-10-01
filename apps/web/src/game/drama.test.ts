@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SettingsSchema } from '@tagconn/shared';
 import {
-  EMPTY_DRAMA, StreakTracker, dramaBucket, dramaFor, dramaRng, nextDramaDelayMs, pickAntic, pickCast, pickExchange, strainFor, strainLine,
+  EMPTY_DRAMA, StreakTracker, isAgentOnARoll, observeAgents, resetStreaks, dramaBucket, dramaFor, dramaRng, nextDramaDelayMs, pickAntic, pickCast, pickExchange, strainFor, strainLine,
   type DramaCandidate, type StrainInput,
 } from './drama';
 import { guildTheme } from './themes/guild';
@@ -153,6 +153,37 @@ describe('StreakTracker', () => {
     expect(t.isOnARoll('a', 20_000, sc)).toBe(false);
     t.observe('a', 8, 40_000);
     expect(t.isOnARoll('a', 40_000, sc)).toBe(true);
+  });
+  it('counts exactly streakTools tools in the window (baseline is the sample at or before the window start)', () => {
+    const t = new StreakTracker();
+    t.observe('a', 0, 0);
+    t.observe('a', 1, 10_000);
+    t.observe('a', 9, 60_000);
+    // window starts at 0: the baseline is the sample at 0 (count 0), so 9 >= 8
+    expect(t.isOnARoll('a', 60_000, sc)).toBe(true);
+    const u = new StreakTracker();
+    u.observe('a', 5, 0);
+    u.observe('a', 13, 30_000);
+    expect(u.isOnARoll('a', 30_000, sc)).toBe(true);
+    u.observe('a', 12, 40_000);
+    expect(u.isOnARoll('a', 40_000, sc)).toBe(false);
+  });
+  it('a burst of 8 inside the window registers on the 8th tool, not the 9th', () => {
+    const t = new StreakTracker();
+    t.observe('a', 20, 0);
+    t.observe('a', 22, 30_000);
+    t.observe('a', 28, 80_000);
+    // window [20_000, 80_000]: baseline = last sample at or before 20_000 (count 20); 28 - 20 = 8
+    expect(t.isOnARoll('a', 80_000, sc)).toBe(true);
+  });
+  it('shared helpers feed and read one tracker', () => {
+    resetStreaks();
+    observeAgents([{ id: 'x', toolCount: 0 }], 0);
+    observeAgents([{ id: 'x', toolCount: 8 }], 5000);
+    expect(isAgentOnARoll('x', 5000, sc)).toBe(true);
+    expect(isAgentOnARoll('y', 5000, sc)).toBe(false);
+    resetStreaks();
+    expect(isAgentOnARoll('x', 5000, sc)).toBe(false);
   });
   it('forgets the burst once the window passes', () => {
     const t = new StreakTracker();

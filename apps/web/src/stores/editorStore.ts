@@ -96,6 +96,8 @@ export interface EditorState {
   selectedDoor: { roomId: string; index: number } | null;
   /** The Furniture tool's current pick (M12); see `FurnitureSelection`. */
   selectedFurniture: FurnitureSelection | null;
+  /** How many locked items the last room edit released because they no longer fit; cleared by the next edit, undo or redo. */
+  pruneNotice: { count: number } | null;
   tool: EditorTool;
   /** Room type the Room tool stamps next (remembers the last pick; Stairs tool forces 'stairs'). */
   pendingRoomType: RoomType;
@@ -196,14 +198,21 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       future: [],
       dirty: true,
       selectedFurniture: reconcileFurnitureSelection(next, s.selectedFurniture),
+      pruneNotice: null,
     }));
 
-  const mutateRooms = (fn: (rooms: LayoutRoom[]) => LayoutRoom[]) => {
+  const countPins = (d: OfficeLayoutInput) => d.rooms.reduce((n, r) => n + (r.furniture?.length ?? 0), 0);
+
+  /** `prune`: drop pins the edit made stale (resize, type, walled, doors) inside the same undo step, and note how many. */
+  const mutateRooms = (fn: (rooms: LayoutRoom[]) => LayoutRoom[], opts: { prune?: boolean } = {}) => {
     const s = get();
     if (!s.draft || s.builtin) return;
     const prev = s.draft;
-    const next = { ...prev, rooms: fn(prev.rooms) };
+    const rooms = opts.prune ? fn(prev.rooms).map((r) => prunePins(r)) : fn(prev.rooms);
+    const next = { ...prev, rooms };
     commit(prev, next);
+    const released = countPins(prev) - countPins(next);
+    if (opts.prune && released > 0) set({ pruneNotice: { count: released } });
   };
 
   /** Replaces one room's pin list as one commit; `undefined`/empty clears it. */
@@ -219,6 +228,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     selection: [],
     selectedDoor: null,
     selectedFurniture: null,
+    pruneNotice: null,
     tool: 'select',
     pendingRoomType: 'desks',
     history: [],
@@ -235,6 +245,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         selection: [],
         selectedDoor: null,
         selectedFurniture: null,
+        pruneNotice: null,
         tool: 'select',
         history: [],
         future: [],
@@ -251,6 +262,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         selection: [],
         selectedDoor: null,
         selectedFurniture: null,
+        pruneNotice: null,
         tool: 'select',
         history: [],
         future: [],
@@ -267,6 +279,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         selection: [],
         selectedDoor: null,
         selectedFurniture: null,
+        pruneNotice: null,
         tool: 'select',
         history: [],
         future: [],
@@ -288,7 +301,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     addRoom: (room) => mutateRooms((rooms) => [...rooms, room]),
 
     // Pins that no longer fit the changed room (size, type, walled, doors) are dropped, so a draft never fails validateLayout over them.
-    updateRoom: (id, patch) => mutateRooms((rooms) => rooms.map((r) => (r.id === id ? prunePins({ ...r, ...patch }) : r))),
+    updateRoom: (id, patch) => mutateRooms((rooms) => rooms.map((r) => (r.id === id ? { ...r, ...patch } : r)), { prune: true }),
 
     removeRooms: (ids) => {
       const remove = new Set(ids);
@@ -311,12 +324,12 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       ),
 
     setRoomDoors: (roomId, doors) => {
-      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: doors ? doors.slice() : undefined } : r)));
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: doors ? doors.slice() : undefined } : r)), { prune: true });
       set((s) => (s.selectedDoor?.roomId === roomId ? { selectedDoor: null } : {}));
     },
 
     sealRoom: (roomId) => {
-      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: [] } : r)));
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: [] } : r)), { prune: true });
       set((s) => (s.selectedDoor?.roomId === roomId ? { selectedDoor: null } : {}));
     },
 
@@ -325,7 +338,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       if (!s.draft || s.builtin) return;
       const room = s.draft.rooms.find((r) => r.id === roomId);
       if (!room || room.doors !== undefined) return; // already explicit (including sealed [])
-      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: autoDoors.slice() } : r)));
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: autoDoors.slice() } : r)), { prune: true });
     },
 
     addDoor: (roomId, door, autoDoors = []) => {
@@ -336,7 +349,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const current = room.doors ?? autoDoors;
       if (current.length >= LAYOUT_LIMITS.maxDoorsPerRoom) return;
       const next = [...current, door];
-      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: next } : r)));
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: next } : r)), { prune: true });
     },
 
     updateDoor: (roomId, index, patch, autoDoors = []) => {
@@ -347,7 +360,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       if (!room || !current[index]) return;
       const next = current.slice();
       next[index] = { ...next[index]!, ...patch };
-      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: next } : r)));
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: next } : r)), { prune: true });
     },
 
     removeDoor: (roomId, index, autoDoors = []) => {
@@ -357,7 +370,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const current = room?.doors ?? autoDoors;
       if (!room || !current[index]) return;
       const next = current.filter((_, i) => i !== index);
-      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: next } : r)));
+      mutateRooms((rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: next } : r)), { prune: true });
       set((st) => (st.selectedDoor?.roomId === roomId && st.selectedDoor.index === index ? { selectedDoor: null } : {}));
     },
 
@@ -371,14 +384,17 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const width = door.width ?? 1;
       const offset = Math.max(1, Math.min(len - 1 - width, door.offset + delta));
       if (offset === door.offset) return;
-      mutateRooms((rooms) =>
-        rooms.map((r) => (r.id === roomId ? { ...r, doors: r.doors!.map((d, i) => (i === index ? { ...d, offset } : d)) } : r)),
+      mutateRooms(
+        (rooms) => rooms.map((r) => (r.id === roomId ? { ...r, doors: r.doors!.map((d, i) => (i === index ? { ...d, offset } : d)) } : r)),
+        { prune: true },
       );
     },
 
     setDoorRect: (roomId, index, rect) => {
       const s = get();
       if (!s.draft || s.builtin) return;
+      // Prune from the pre-drag pins (as resizeRoomTo does) so dragging a door off a pin and back restores it.
+      const base = s.gestureBaseline?.rooms.find((r) => r.id === roomId)?.furniture;
       set({
         draft: {
           ...s.draft,
@@ -386,7 +402,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
             if (r.id !== roomId || !r.doors?.[index]) return r;
             const doors = r.doors.slice();
             doors[index] = { ...doors[index]!, ...rect };
-            return { ...r, doors };
+            return prunePins({ ...r, doors }, base ?? r.furniture);
           }),
         },
       });
@@ -565,13 +581,19 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       set({ gestureBaseline: null });
       // Skip the history entry if the gesture ended back where it started (e.g. a drag out and back).
       if (!baseline || !s.draft || JSON.stringify(baseline) === JSON.stringify(s.draft)) return;
-      set((s2) => ({ history: cap([...s2.history, baseline], HISTORY_LIMIT), future: [], dirty: true }));
+      const released = countPins(baseline) - countPins(s.draft);
+      set((s2) => ({
+        history: cap([...s2.history, baseline], HISTORY_LIMIT),
+        future: [],
+        dirty: true,
+        pruneNotice: released > 0 ? { count: released } : null,
+      }));
     },
 
     cancelGesture: () => {
       const s = get();
       if (!s.gestureBaseline) return;
-      set({ draft: s.gestureBaseline, gestureBaseline: null, selectedFurniture: reconcileFurnitureSelection(s.gestureBaseline, s.selectedFurniture) });
+      set({ draft: s.gestureBaseline, gestureBaseline: null, pruneNotice: null, selectedFurniture: reconcileFurnitureSelection(s.gestureBaseline, s.selectedFurniture) });
     },
 
     nudgeSelection: (dx, dy) => {
@@ -592,6 +614,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         history: s.history.slice(0, -1),
         future: cap([s.draft, ...s.future], HISTORY_LIMIT),
         dirty: true,
+        pruneNotice: null,
         selectedFurniture: reconcileFurnitureSelection(prevDraft, s.selectedFurniture),
       });
     },
@@ -604,6 +627,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         future: s.future.slice(1),
         history: cap([...s.history, s.draft], HISTORY_LIMIT),
         dirty: true,
+        pruneNotice: null,
         selectedFurniture: reconcileFurnitureSelection(nextDraft, s.selectedFurniture),
       });
     },

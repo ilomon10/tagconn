@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Agent } from '@tagconn/shared';
 import { useNow } from '../../../lib/hooks';
-import { strainFor } from '../../../game/drama';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { Button, Checkbox, Empty, cx } from '../../../components/ui';
 import { useHiddenAgentIds } from '../useHiddenAgentIds';
 import { AgentRow } from './AgentRows';
 import { PortraitChip } from './PortraitChip';
+import { useStrains } from './useStrains';
 
 interface PartyBarProps {
   /** In roster order (`useFloorAgents()`), so `[`/`]` cycling matches the bar left to right. */
@@ -29,6 +29,11 @@ export function PartyBar({ agents, selectedId, onSelect, phone, trayOpen, onTray
   const now = useNow();
   const drama = useSettingsStore((s) => s.settings.office.drama);
   const hidden = useHiddenAgentIds(agents, now);
+  const strains = useStrains(agents, now, drama);
+  // A stable handler so a ticking bar doesn't re-render every memoized chip.
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const selectChip = useCallback((id: string) => onSelectRef.current(id), []);
   const [showOffCanvas, setShowOffCanvas] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const shown = showOffCanvas ? agents : agents.filter((a) => !hidden.has(a.id));
@@ -44,7 +49,7 @@ export function PartyBar({ agents, selectedId, onSelect, phone, trayOpen, onTray
   if (agents.length === 0) return null;
 
   const chip = (a: Agent) => (
-    <PortraitChip key={a.id} agent={a} selected={a.id === selectedId} offCanvas={hidden.has(a.id)} strain={strainFor(a, now, drama, false)} onSelect={() => onSelect(a.id)} />
+    <PortraitChip key={a.id} agent={a} selected={a.id === selectedId} offCanvas={hidden.has(a.id)} strain={strains.get(a.id) ?? null} onSelect={selectChip} />
   );
   const offToggle = offCanvasCount > 0 && (
     <button

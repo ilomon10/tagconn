@@ -5,7 +5,8 @@ import type { Agent, Settings } from '@tagconn/shared';
 import type { ActorKey } from '../cast';
 import type { Character } from '../actors/Character';
 import {
-  StreakTracker,
+  isAgentOnARoll,
+  observeAgents,
   dramaBucket,
   dramaFor,
   dramaRng,
@@ -70,8 +71,7 @@ const tileKey = (p: Point) => `${p.x},${p.y}`;
 
 export class DramaDirector {
   private agentsById = new Map<string, Agent>();
-  private trackedIds = new Set<string>();
-  private tracker = new StreakTracker();
+  private attempt = 0;
   private scenes: DramaScene[] = [];
   private reserved = new Set<string>();
   private busy = new Set<ActorKey>();
@@ -84,8 +84,15 @@ export class DramaDirector {
 
   constructor(private host: DramaHost) {}
 
-  /** buildWorld / floor change: drop every scene and every timer, touch no character (they are about to be teleported or destroyed). */
+  /** buildWorld / floor change: drop every scene and every timer. Characters only lose their drama emote and bubble
+   *  (they are about to be teleported, reseated or destroyed; the scene sends resting actors to their new spots). */
   reset(): void {
+    for (const c of this.host.actors().values()) c.clearDrama();
+    this.dropState();
+  }
+
+  private dropState(): void {
+    this.attempt = 0;
     this.scenes = [];
     this.reserved.clear();
     this.busy.clear();
@@ -100,15 +107,9 @@ export class DramaDirector {
   /** End of setOfficeState: re-index agents, feed StreakTracker, cancel scenes whose cast became ineligible, refresh strain now. */
   afterCast(nowMs: number): void {
     const agents = this.host.agents();
-    const live = new Set<string>();
     this.agentsById.clear();
-    for (const a of agents) {
-      this.agentsById.set(a.id, a);
-      live.add(a.id);
-      this.tracker.observe(a.id, a.toolCount, nowMs);
-    }
-    for (const id of this.trackedIds) if (!live.has(id)) this.tracker.forget(id);
-    this.trackedIds = live;
+    for (const a of agents) this.agentsById.set(a.id, a);
+    observeAgents(agents, nowMs);
     this.checkScenes(Date.now());
     this.refreshStrain();
   }
@@ -126,10 +127,8 @@ export class DramaDirector {
   }
 
   destroy(): void {
-    this.reset();
+    this.dropState();
     this.agentsById.clear();
-    for (const id of this.trackedIds) this.tracker.forget(id);
-    this.trackedIds.clear();
   }
 
   // ---------------------------------------------------------------- flags
@@ -152,6 +151,7 @@ export class DramaDirector {
     const c = this.cfg();
     const now = Date.now();
     const animated = !!c && c.office.ambientEffects && !this.host.reducedMotion();
+    for (const key of this.prevStrain.keys()) if (!this.host.actors().has(key)) this.prevStrain.delete(key);
     for (const [key, ch] of this.host.actors()) {
       const agent = ch.boundAgentId ? this.agentsById.get(ch.boundAgentId) : undefined;
       if (!c || !c.drama.enabled || ch.lifecycleFrame.state !== 'quest' || ch.leaving || ch.gone || !agent) {
@@ -159,7 +159,7 @@ export class DramaDirector {
         this.prevStrain.delete(key);
         continue;
       }
-      const kind = strainFor(agent, now, c.drama, this.tracker.isOnARoll(agent.id, now, c.drama));
+      const kind = strainFor(agent, now, c.drama, isAgentOnARoll(agent.id, now, c.drama));
       ch.setStrain(kind, animated);
       const seen = this.prevStrain.has(key);
       const prev = this.prevStrain.get(key) ?? null;
@@ -264,8 +264,9 @@ export class DramaDirector {
 
   private finish(s: DramaScene): void {
     this.releaseSpots(s);
-    for (const k of s.keys) this.busy.delete(k);
     this.scenes = this.scenes.filter((x) => x !== s);
+    // A key released by `cancel` may already belong to a newer scene: only free the keys no other scene owns.
+    for (const k of s.keys) if (!this.scenes.some((x) => x.keys.includes(k))) this.busy.delete(k);
   }
 
   private stepScenes(now: number): void {
@@ -349,20 +350,22 @@ export class DramaDirector {
 
   private tryStart(now: number, bucket: number): void {
     const busyRooms = new Set(this.scenes.map((s) => s.roomId));
-    const cast = pickCast(this.candidates(), busyRooms, `${this.host.floorKey()}|${bucket}`);
+    // The attempt counter keeps two attempts in the same bucket from picking the same antic.
+    const n = this.attempt++;
+    const cast = pickCast(this.candidates(), busyRooms, `${this.host.floorKey()}|${bucket}|${n}`);
     if (!cast) return;
     let keys = cast.keys.slice() as ActorKey[];
     const first = this.char(keys[0]!);
     if (!first) return;
     const props = this.propsOf(cast.roomId);
     const content = dramaFor(this.host.themeFor(first));
-    let antic = pickAntic(content, props, keys.length as 1 | 2, `${keys.join('+')}|${bucket}`);
+    let antic = pickAntic(content, props, keys.length as 1 | 2, `${keys.join('+')}|${bucket}|${n}`);
     if (!antic && keys.length === 2) {
       keys = [keys[0]!];
-      antic = pickAntic(content, props, 1, `${keys[0]}|${bucket}`);
+      antic = pickAntic(content, props, 1, `${keys[0]}|${bucket}|${n}`);
     }
     if (!antic) return;
-    const exchange = pickExchange(antic, `${keys.join('+')}|${bucket}`);
+    const exchange = pickExchange(antic, `${keys.join('+')}|${bucket}|${n}`);
     const scene: DramaScene = {
       roomId: cast.roomId,
       keys,
@@ -370,7 +373,7 @@ export class DramaDirector {
       phaseAt: now,
       emote: antic.emote ?? null,
       lines: exchange,
-      playMs: PLAY_MIN_MS + Math.floor(dramaRng(`${keys.join('+')}|${bucket}|len`)() * PLAY_SPAN_MS),
+      playMs: PLAY_MIN_MS + Math.floor(dramaRng(`${keys.join('+')}|${bucket}|${n}|len`)() * PLAY_SPAN_MS),
       replied: false,
       arrived: new Set(),
       spots: [],

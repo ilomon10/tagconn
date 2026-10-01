@@ -11,7 +11,7 @@ import { useRequireAdmin } from '../auth/useRequireAdmin';
 import { PendingImportsPanel } from '../attribution/PendingImportsPanel';
 import { SaveProfilePanel } from '../attribution/SaveProfilePanel';
 import { Badge, Button, Checkbox, Field, Input, Panel, Select, Textarea } from '../../components/ui';
-import { ENUM_OPTIONS, HIDDEN_SETTINGS, KEY_HINTS, NUMBER_STEP, SECTION_LABELS, envVarName, humanize } from './meta';
+import { ENUM_OPTIONS, HIDDEN_SETTINGS, KEY_HINTS, NUMBER_STEP, SECTION_LABELS, envVarName, humanize, numberBounds } from './meta';
 import { RulesTable } from './RulesTable';
 import { KeyValueEditor, ZoneRectsEditor } from './RecordEditors';
 
@@ -161,8 +161,68 @@ function ShaderEffectsGroup({ value, base, onChange }: { value: Shaders; base: S
   );
 }
 
+const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** A fixed-shape nested object (`office.drama`, and any future one) as a labelled group of controls:
+ *  booleans toggle, numbers get min/max/step from the zod schema, enums a select. Hints come from
+ *  `KEY_HINTS['<path>.<key>']`. Record maps with a dedicated editor are routed before this in `LeafControl`. */
+export function NestedGroup({ path, value, base, onChange }: { path: string; value: Record<string, unknown>; base: Record<string, unknown>; onChange: (next: Record<string, unknown>) => void }) {
+  return (
+    <div className="space-y-2 rounded-md border border-ink-700 bg-ink-900/50 p-3" data-testid={`group-${path}`}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 xl:grid-cols-3">
+        {Object.entries(value).map(([k, v]) => {
+          const sub = `${path}.${k}`;
+          const dirty = JSON.stringify(v) !== JSON.stringify(base[k]);
+          const set = (next: unknown) => onChange({ ...value, [k]: next });
+          const opts = ENUM_OPTIONS[sub];
+          let control: ReactNode;
+          if (isPlainObject(v)) control = <NestedGroup path={sub} value={v} base={isPlainObject(base[k]) ? (base[k] as Record<string, unknown>) : {}} onChange={set} />;
+          else if (opts)
+            control = (
+              <Select value={String(v)} onChange={(e) => set(e.target.value)}>
+                {opts.map((o) => (
+                  <option key={o}>{o}</option>
+                ))}
+              </Select>
+            );
+          else if (typeof v === 'boolean') control = <Checkbox checked={v} onChange={set} label={v ? 'On' : 'Off'} />;
+          else if (typeof v === 'number') {
+            const b = numberBounds(sub);
+            control = (
+              <Input
+                type="number"
+                min={b.min}
+                max={b.max}
+                step={NUMBER_STEP[sub] ?? 1}
+                value={Number.isFinite(v) ? v : ''}
+                onChange={(e) => set(e.target.value === '' ? NaN : Number(e.target.value))}
+              />
+            );
+          } else if (typeof v === 'string') control = <Input className="font-pixel" value={v} onChange={(e) => set(e.target.value)} />;
+          else control = <Textarea rows={3} value={JSON.stringify(v, null, 2)} readOnly />;
+          return (
+            <div key={k} className={isPlainObject(v) ? 'col-span-full' : undefined}>
+              <Field
+                label={
+                  <span className={dirty ? 'text-cozy' : undefined}>
+                    {humanize(k)}
+                    {dirty && ' •'}
+                  </span>
+                }
+                hint={KEY_HINTS[sub]}
+              >
+                {control}
+              </Field>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Renders the right control for one settings leaf. */
-function LeafControl({ section, k, value, set, roles }: { section: Section; k: string; value: unknown; set: Setter; roles: string[] }) {
+function LeafControl({ section, k, value, base, set, roles }: { section: Section; k: string; value: unknown; base?: unknown; set: Setter; roles: string[] }) {
   const path = `${section}.${k}`;
   const onChange = (v: unknown) => set(section, k, v);
   const enumOpts = ENUM_OPTIONS[path];
@@ -181,6 +241,7 @@ function LeafControl({ section, k, value, set, roles }: { section: Section; k: s
       </Select>
     );
   if (typeof value === 'boolean') return <Checkbox checked={value} onChange={onChange} label={value ? 'On' : 'Off'} />;
+  if (isPlainObject(value)) return <NestedGroup path={path} value={value} base={isPlainObject(base) ? base : {}} onChange={onChange} />;
   if (typeof value === 'number')
     return <Input type="number" step={NUMBER_STEP[path] ?? 1} value={Number.isFinite(value) ? value : ''} onChange={(e) => onChange(e.target.value === '' ? NaN : Number(e.target.value))} />;
   if (Array.isArray(value)) return <StringList value={value as string[]} onChange={onChange} />;
@@ -246,7 +307,7 @@ function SectionPanel({ section, values, base, set, roles }: { section: Section;
           const path = `${section}.${k}`;
           const dirty = JSON.stringify(v) !== JSON.stringify(base[k]);
           return (
-            <div key={k} className={WIDE.has(path) ? 'col-span-full' : undefined}>
+            <div key={k} className={WIDE.has(path) || isPlainObject(v) ? 'col-span-full' : undefined}>
               <Field
                 label={
                   <span className={dirty ? 'text-cozy' : undefined}>
@@ -262,7 +323,7 @@ function SectionPanel({ section, values, base, set, roles }: { section: Section;
                   </>
                 }
               >
-                <LeafControl section={section} k={k} value={v} set={set} roles={roles} />
+                <LeafControl section={section} k={k} value={v} base={base[k]} set={set} roles={roles} />
               </Field>
             </div>
           );

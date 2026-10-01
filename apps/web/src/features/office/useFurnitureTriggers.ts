@@ -3,24 +3,15 @@ import { usePanelActions } from '../../app/useMenuActions';
 import type { OfficeGame } from '../../game/OfficeGame';
 import type { FurnitureAction } from '../../game/procgen/types';
 import { isModalOpen } from '../../lib/floors';
-import { useReceptionistUiStore } from '../receptionist/uiStore';
 
 type PanelRun = { run: () => void; disabled: boolean };
 
 /**
- * Pure routing of a furniture click (M12 G3): ignored while a modal is open; the receptionist opens its
- * panel directly (the in-world rule, like `receptionistClick`: the panel gates itself); every other action
- * runs the same panel action as the menu unless it is disabled.
+ * Pure routing of a furniture click (M12 G3): ignored while a modal is open; every action, the receptionist
+ * included, runs the same panel action as the menu (so the admin guard applies) unless it is disabled.
  */
-export function routeFurnitureClick(
-  action: FurnitureAction,
-  deps: { modalOpen: boolean; panels: Record<Exclude<FurnitureAction, 'receptionist'>, PanelRun>; openReceptionist: () => void },
-): boolean {
+export function routeFurnitureClick(action: FurnitureAction, deps: { modalOpen: boolean; panels: Record<FurnitureAction, PanelRun> }): boolean {
   if (deps.modalOpen) return false;
-  if (action === 'receptionist') {
-    deps.openReceptionist();
-    return true;
-  }
   const panel = deps.panels[action];
   if (!panel || panel.disabled) return false;
   panel.run();
@@ -35,7 +26,7 @@ export function useFurnitureTriggers(game: OfficeGame | null): void {
   useEffect(() => {
     if (!game) return;
     return game.on('furnitureClick', (action) =>
-      routeFurnitureClick(action, { modalOpen: isModalOpen(), panels: ref.current, openReceptionist: () => useReceptionistUiStore.getState().openPanel() }),
+      routeFurnitureClick(action, { modalOpen: isModalOpen(), panels: ref.current }),
     );
   }, [game]);
 }

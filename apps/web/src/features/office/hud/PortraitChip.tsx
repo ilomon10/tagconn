@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { Agent } from '@tagconn/shared';
 import { useThemedRoleLookup } from '../../../lib/hooks';
 import type { StrainKind } from '../../../game/themes/types';
@@ -7,9 +8,9 @@ import { StrainIcon } from './StrainIcon';
 import { STATUS_DOT, statusLabel } from './status';
 import { usePortraitLook } from './usePortraitLook';
 
-/** One party member: a bust in a role-colour ring, with a status dot, the strain emote and a `main` pip.
+/** One party member (memoized: the bar ticks every second, a chip only re-renders when its own props change): a bust in a role-colour ring, with a status dot, the strain emote and a `main` pip.
  *  Raised when selected, dimmed when done or off canvas. */
-export function PortraitChip({ agent, selected, offCanvas, strain, onSelect }: { agent: Agent; selected: boolean; offCanvas: boolean; strain: StrainKind | null; onSelect: () => void }) {
+export const PortraitChip = memo(function PortraitChip({ agent, selected, offCanvas, strain, onSelect }: { agent: Agent; selected: boolean; offCanvas: boolean; strain: StrainKind | null; onSelect: (id: string) => void }) {
   const { look, hero } = usePortraitLook(agent);
   const role = useThemedRoleLookup()(agent.role, { projectId: agent.projectId, hero });
   const name = hero ? hero.name : role.themedTitle;
@@ -17,7 +18,7 @@ export function PortraitChip({ agent, selected, offCanvas, strain, onSelect }: {
   return (
     <button
       type="button"
-      onClick={onSelect}
+      onClick={() => onSelect(agent.id)}
       aria-label={label}
       aria-pressed={selected}
       title={`${name} · ${statusLabel(agent)}`}
@@ -39,4 +40,4 @@ export function PortraitChip({ agent, selected, offCanvas, strain, onSelect }: {
       )}
     </button>
   );
-}
+});

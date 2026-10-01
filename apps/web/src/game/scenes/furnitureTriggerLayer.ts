@@ -12,10 +12,14 @@ export interface TriggerHost {
   canClick(): boolean;
   emit(action: FurnitureAction): void;
   reducedMotion(): boolean;
+  /** The style an item is drawn in (the realm's inside a Multiverse realm block); default: the layer's style. */
+  styleFor?(f: PlacedFurniture): ThemeDefinition['id'];
 }
 
 const RING_COLOR = 0xf3c94d;
 const RING_DEPTH = 0.5;
+/** Above realm zones (-3), below characters; stairs zones sit at -1 so they never tie. */
+const TRIGGER_DEPTH = -1.5;
 const PULSE_THROTTLE_MS = 500;
 const PULSE_MS = 600;
 const PULSE_COUNT = 3;
@@ -61,7 +65,7 @@ export class FurnitureTriggerLayer {
       const cy = f.y * T + h / 2;
       const entry: Entry = {
         furniture: f,
-        zone: this.scene.add.zone(cx, cy, w, h).setDepth(-1),
+        zone: this.scene.add.zone(cx, cy, w, h).setDepth(TRIGGER_DEPTH),
         ring: this.makeRing(cx, cy, w, h).setVisible(false),
         pulse: this.makeRing(cx, cy, w, h).setVisible(false),
         baseW: w,
@@ -73,7 +77,7 @@ export class FurnitureTriggerLayer {
       entry.zone.on('pointerover', () => {
         entry.hovered = true;
         entry.ring.setVisible(true);
-        this.host.showTooltip(triggerTooltip(this.styleId, action));
+        this.host.showTooltip(triggerTooltip(this.styleOf(f), action));
       });
       entry.zone.on('pointerout', () => this.unhover(entry));
       entry.zone.on('pointerup', () => {
@@ -91,7 +95,7 @@ export class FurnitureTriggerLayer {
   setStyle(styleId: ThemeDefinition['id']): void {
     this.styleId = styleId;
     for (const e of this.entries) {
-      if (e.hovered) this.host.showTooltip(triggerTooltip(styleId, e.furniture.trigger!));
+      if (e.hovered) this.host.showTooltip(triggerTooltip(this.styleOf(e.furniture, styleId), e.furniture.trigger!));
     }
   }
 
@@ -134,6 +138,10 @@ export class FurnitureTriggerLayer {
 
   destroy(): void {
     this.clear();
+  }
+
+  private styleOf(f: PlacedFurniture, fallback: ThemeDefinition['id'] = this.styleId): ThemeDefinition['id'] {
+    return this.host.styleFor?.(f) ?? fallback;
   }
 
   private makeRing(cx: number, cy: number, w: number, h: number): Phaser.GameObjects.Graphics {

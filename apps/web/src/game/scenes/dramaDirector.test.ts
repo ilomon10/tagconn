@@ -5,11 +5,15 @@ const picks = vi.hoisted(() => ({
   cast: null as null | { roomId: string; keys: string[] },
   antic: null as unknown,
   strain: null as string | null,
+  seeds: [] as string[],
   line: 'phew' as string | null,
 }));
 vi.mock('../drama', async (orig) => ({
   ...(await orig<typeof import('../drama')>()),
-  pickCast: () => picks.cast,
+  pickCast: (_c: unknown, _b: unknown, seed: string) => {
+    picks.seeds.push(seed);
+    return picks.cast;
+  },
   pickAntic: () => picks.antic,
   pickExchange: () => ['hi', 'yo'],
   nextDramaDelayMs: () => 1000,
@@ -17,6 +21,7 @@ vi.mock('../drama', async (orig) => ({
   strainLine: () => picks.line,
 }));
 
+import { resetStreaks } from '../drama';
 import { DramaDirector, type DramaHost } from './dramaDirector';
 
 type Pt = { x: number; y: number };
@@ -63,7 +68,9 @@ class FakeChar {
   }
   clearDrama() {
     this.emote = null;
+    this.cleared++;
   }
+  cleared = 0;
 }
 
 const cooler = { kind: 'water-cooler', roomId: 'lounge', x: 5, y: 2, w: 1, h: 1, blocking: true, roomType: 'lounge', variant: 0 };
@@ -119,6 +126,8 @@ beforeEach(() => {
   now = 1_000_000;
   vi.setSystemTime(now);
   picks.strain = null;
+  picks.seeds = [];
+  resetStreaks();
   picks.line = 'phew';
 });
 afterEach(() => vi.useRealTimers());
@@ -218,13 +227,34 @@ describe('DramaDirector scenes', () => {
     expect(a.emote).toBeNull();
   });
 
-  it('reset drops scenes without touching characters', () => {
-    const { a, d } = setup();
+  it('reset drops scenes and clears every actor drama state without walking anyone', () => {
+    const { a, b, d } = setup();
     start(d);
+    tick(d, 3000);
     const n = a.walks.length;
+    a.emote = 'mug';
     d.reset();
+    expect(a.emote).toBeNull();
+    expect(a.cleared).toBeGreaterThan(0);
+    expect(b.cleared).toBeGreaterThan(0);
     tick(d, 500);
     expect(a.walks).toHaveLength(n);
+  });
+
+  it('seeds each attempt in a bucket differently', () => {
+    const { d } = setup();
+    picks.cast = null;
+    tick(d, 500);
+    tick(d, 1500);
+    tick(d, 1500);
+    tick(d, 1500);
+    expect(picks.seeds.length).toBeGreaterThan(1);
+    expect(new Set(picks.seeds).size).toBe(picks.seeds.length);
+    d.reset();
+    picks.seeds = [];
+    tick(d, 500);
+    tick(d, 1500);
+    expect(picks.seeds[0]!.endsWith('|0')).toBe(true);
   });
 });
 

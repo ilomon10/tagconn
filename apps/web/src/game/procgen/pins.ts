@@ -72,8 +72,8 @@ export interface ResolvedPins {
 /**
  * Absolute-coord pins for one room. `interior` is the room's absolute interior rect and `aprons` the
  * "x,y" keys of its door aprons. Skips (with a `pinned-invalid` WARNING) unknown kinds, items outside the
- * interior, and items overlapping an earlier pin. Covering a door apron is kept but reported
- * `pinned-blocks` (warning). Never throws.
+ * interior, and items overlapping an earlier pin. A blocking pin covering a door apron (explicit or automatic) is
+ * skipped with a `pinned-blocks` warning, so locked furniture can never seal a room. Never throws.
  */
 export function resolvePins(
   room: Pick<LayoutRoom, 'id' | 'name' | 'type' | 'furniture'>,
@@ -86,7 +86,6 @@ export function resolvePins(
   if (!pins?.length) return { items, issues };
   const name = room.name ?? room.type;
   const taken = new Set<string>();
-  let coversApron = false;
   for (const f of pins) {
     if (!isPinnableKind(f.kind)) {
       issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} is not a known furniture kind and was skipped.`, roomIds: [room.id] });
@@ -103,12 +102,25 @@ export function resolvePins(
       issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} overlaps another locked item and was skipped.`, roomIds: [room.id] });
       continue;
     }
+    // A blocking pin on a door apron (explicit OR automatic door) would seal the room: skip it.
+    if (KIND_BLOCKING[f.kind] && cells.some((c) => aprons.has(c))) {
+      issues.push({ severity: 'warning', code: 'pinned-blocks', message: `${name}: a locked ${f.kind} covers a door and was skipped.`, roomIds: [room.id] });
+      continue;
+    }
     for (const c of cells) taken.add(c);
-    if (KIND_BLOCKING[f.kind] && cells.some((c) => aprons.has(c))) coversApron = true;
     items.push({ kind: f.kind, ...abs, blocking: KIND_BLOCKING[f.kind], variant: f.variant ?? 0, pinned: true });
   }
-  if (coversApron) {
-    issues.push({ severity: 'warning', code: 'pinned-blocks', message: `${name}: locked furniture covers a door.`, roomIds: [room.id] });
-  }
   return { items, issues };
+}
+
+/** One pin issue per room + code (a bad pin is otherwise reported by both `validateLayout` and `resolvePins`); other issues pass through. */
+export function dedupePinIssues(issues: readonly LayoutIssue[]): LayoutIssue[] {
+  const seen = new Set<string>();
+  return issues.filter((i) => {
+    if (!i.code.startsWith('pinned-')) return true;
+    const k = `${i.code}|${(i.roomIds ?? []).join(',')}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }

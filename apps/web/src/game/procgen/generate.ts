@@ -28,7 +28,7 @@ import {
   type DoorSpan,
   type Side,
 } from './doors';
-import { resolvePins } from './pins';
+import { dedupePinIssues, resolvePins } from './pins';
 import { decorateRoom, furnishRoom, seatsFor, type FurnishOptions, type RecipeItem, type RecipeSeat } from './recipes';
 import { buildRegionAtGrid, buildRoomToRegion, findRegions, findVoidAreas, reachableFrom, regionCentroid, type Region } from './regions';
 import { rngFor, randInt } from './rng';
@@ -630,8 +630,11 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       pinSeats.push(...seatsFor(pin.kind, pin, interior));
     }
     if (pins.items.length) pinnedRoomIds.add(room.id);
+    // Recipe items a pin displaced: their recipe seats go too, else a chair would face a missing desk.
+    const droppedForPins: RecipeItem[] = [];
     for (const item of recipe.furniture) {
       const cells = rectCells({ x: item.x, y: item.y, w: item.w, h: item.h });
+      if (pinnedCells.size && cells.some((c) => pinnedCells.has(key(c)))) droppedForPins.push(item);
       const fits =
         item.w > 0 &&
         item.h > 0 &&
@@ -640,7 +643,17 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       keptItems.push({ ...item, roomId: room.id, roomType: room.type });
       if (item.blocking) for (const c of cells) blocked.add(key(c));
     }
-    let seats: Seat[] = (pinSeats.length ? dedupeSeats([...recipe.seats, ...pinSeats]) : recipe.seats)
+    let recipeSeats = recipe.seats;
+    if (droppedForPins.length) {
+      // Recipe seats carry no owner, so a seat belongs to a seat-giving item standing cardinally next to it (or under it).
+      const supports = (it: Rect, s: Point) =>
+        (s.x >= it.x && s.x < it.x + it.w && s.y >= it.y - 1 && s.y <= it.y + it.h) || (s.y >= it.y && s.y < it.y + it.h && s.x >= it.x - 1 && s.x <= it.x + it.w);
+      const givers = (items: readonly RecipeItem[]) => items.filter((it) => seatsFor(it.kind, it, interior).length > 0);
+      const dropped = givers(droppedForPins);
+      const kept = givers(keptItems);
+      recipeSeats = recipeSeats.filter((s) => !(dropped.some((it) => supports(it, s)) && !kept.some((it) => supports(it, s))));
+    }
+    let seats: Seat[] = (pinSeats.length ? dedupeSeats([...recipeSeats, ...pinSeats]) : recipeSeats)
       .filter((s) => insideRect(s, interior) && !reserved.has(key(s)) && !blocked.has(key(s)))
       .map((s) => ({ x: s.x, y: s.y, zone: isZoneRoomType(room.type) ? room.type : 'entrance', roomId: room.id, kind: s.kind }));
 
@@ -1067,7 +1080,7 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     northWall,
     spawn,
     frontDoor,
-    issues,
+    issues: dedupePinIssues(issues),
     reachability: { unreachableRooms, unreachableSeats: unreachableSeatsTotal },
   };
 }

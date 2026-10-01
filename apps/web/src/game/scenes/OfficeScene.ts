@@ -44,7 +44,7 @@ import { isDragMove } from '../camera/drag';
 import { hitScaleFor } from '../camera/hitsize';
 import { ReducedMotionWatcher } from '../camera/reducedMotion';
 import { receptionistLookKey } from '../receptionistLook';
-import { counterScale, labelVisible, layoutLabels, type LabelSubject } from '../labels';
+import { counterScale, labelVisible, layoutLabels, type LabelSubject, type Rect as LabelRect } from '../labels';
 import { PostFxController } from '../postfx/PostFxController';
 import { DramaDirector } from './dramaDirector';
 import { FurnitureTriggerLayer } from './furnitureTriggerLayer';
@@ -381,6 +381,7 @@ export class OfficeScene extends Phaser.Scene {
       canClick: () => !this.inputLocked && !this.drag?.moved && !this.pinchGuard && !this.arrowPress,
       emit: (a) => this.events.emit('furnitureClick', a),
       reducedMotion: () => this.reducedMotion.value,
+      styleFor: (f) => this.regions.find((r) => f.x >= r.rect.x && f.y >= r.rect.y && f.x < r.rect.x + r.rect.w && f.y < r.rect.y + r.rect.h)?.theme.id ?? this.theme.id,
     });
     this.buildWorld(DEFAULT_LAYOUT, 'guild', null);
     this.night = this.add.rectangle(0, 0, this.worldW, this.worldH, 0x0b1030, 0).setOrigin(0).setDepth(90_000);
@@ -936,7 +937,9 @@ export class OfficeScene extends Phaser.Scene {
 
   private targetZoom() {
     const cam = this.cameras.main;
-    const fit = Math.min(cam.width / this.worldW, cam.height / this.worldH);
+    // Fit the map inside the safe viewport (clear of the status card and the party bar), not the full canvas.
+    const safe = safeViewportRect(cam.width, cam.height, this.insets);
+    const fit = Math.min(safe.w / this.worldW, safe.h / this.worldH);
     const cfg = this.state?.settings.office.zoom ?? 1;
     return Math.max(0.2, fit * cfg * this.userZoom);
   }
@@ -944,7 +947,10 @@ export class OfficeScene extends Phaser.Scene {
   fitCamera() {
     const cam = this.cameras.main;
     cam.setZoom(this.targetZoom());
-    if (!this.panned) cam.centerOn(this.worldW / 2, this.worldH / 2);
+    if (!this.panned) {
+      const t = centerInSafeRect(this.worldW / 2, this.worldH / 2, cam.width, cam.height, cam.zoom, this.insets);
+      cam.setScroll(t.scrollX, t.scrollY);
+    }
     this.clampCamera();
     if (this.tooltip.visible) this.placeTooltip();
   }
@@ -982,6 +988,7 @@ export class OfficeScene extends Phaser.Scene {
     this.insetsTween?.remove();
     if (prefersReducedMotion()) {
       this.insets = { ...target };
+      this.refitUnlessPanned();
       this.clampCamera();
       if (this.followId) this.recenterFollow(true);
       return;
@@ -1000,10 +1007,16 @@ export class OfficeScene extends Phaser.Scene {
           bottom: Phaser.Math.Linear(from.bottom, target.bottom, t),
           left: Phaser.Math.Linear(from.left, target.left, t),
         };
+        this.refitUnlessPanned();
         this.clampCamera();
         if (this.followId) this.recenterFollow(true);
       },
     });
+  }
+
+  /** The fit depends on the insets: while the user has not panned or zoomed, keep the whole map in the safe rect. */
+  private refitUnlessPanned() {
+    if (!this.panned && this.userZoom === 1) this.fitCamera();
   }
 
   /** Keep `agentId` centered in the safe rect while it moves; any manual drag cancels this. */
@@ -1173,14 +1186,14 @@ export class OfficeScene extends Phaser.Scene {
         } else if (next.state === 'resting') {
           // Present in the cast but its agent finished (`done`): a hero/GM actor heads to the lounge
           // instead of vanishing (section 4.2's "done agent's hero actor goes to the lounge").
-          this.enterResting(c, key, scope, heroById, restTheme, state.roles);
+          this.enterResting(c, key, scope, heroById, restTheme, state.roles, forceReseat);
         }
         // else: 'leaving' — already fading from before it reappeared in the cast (as `done`); let
         // the fade finish rather than restart resting (`boundAgentId`/`heroId` above are already
         // current for whenever it's next rebound).
       } else if (c) {
         if (next.state === 'resting') {
-          this.enterResting(c, key, scope, heroById, restTheme, state.roles);
+          this.enterResting(c, key, scope, heroById, restTheme, state.roles, forceReseat);
         } else if (next.state === 'leaving' && !c.leaving) {
           this.seats.release(key);
           const target = scope?.gate ?? this.map.spawn;
@@ -1277,10 +1290,17 @@ export class OfficeScene extends Phaser.Scene {
   /** Section 4.2: a resting actor walks to (and idles at) a lounge seat in its own realm, drawn at
    *  0.85 alpha with a dimmed "Resting · <name>" tag — entered either because its key left the cast,
    *  or because its bound agent finished while it's a persistent (hero/GM) actor. */
-  private enterResting(c: Character, key: ActorKey, scope: SeatScope | undefined, heroById: ReadonlyMap<string, Hero>, theme: ThemeDefinition, roles: readonly Role[]) {
+  private enterResting(c: Character, key: ActorKey, scope: SeatScope | undefined, heroById: ReadonlyMap<string, Hero>, theme: ThemeDefinition, roles: readonly Role[], forceReseat = false) {
     if (c.leaving) c.cancelLeave();
     const alreadyResting = c.lifecycleFrame.state === 'resting';
     c.setResting(true);
+    if (alreadyResting && forceReseat) {
+      // A rebuild (new map, new seats): an already-resting actor must not stay at its old-map spot.
+      this.seats.release(key);
+      const seat = this.seats.assign(key, 'lounge', scope);
+      c.teleport(seat);
+      c.setSeated(seat.seated);
+    }
     if (!alreadyResting) {
       this.seats.release(key);
       const seat = this.seats.assign(key, 'lounge', scope);
@@ -1412,6 +1432,7 @@ export class OfficeScene extends Phaser.Scene {
     const zoom = this.cameras.main.zoom;
     const scale = counterScale(zoom);
     const subjects: LabelSubject[] = [];
+    const obstacles: LabelRect[] = [];
     const actors: Array<[ActorKey, Character]> = [...this.characters];
     if (this.receptionist) actors.push([RECEPTIONIST_KEY, this.receptionist]);
     for (const [key, c] of actors) {
@@ -1422,6 +1443,8 @@ export class OfficeScene extends Phaser.Scene {
       const visible = labelVisible({ zoom, minZoom: office.labelMinZoom, important });
       c.setTagVisible(visible);
       c.setBubbleLod(visible);
+      const tagBox = c.tagRect;
+      if (tagBox) obstacles.push(tagBox);
       if (!visible || !c.hasBubble) continue;
       subjects.push({
         id: key,
@@ -1433,7 +1456,7 @@ export class OfficeScene extends Phaser.Scene {
         recency: c.boundAgentId ? (this.state?.agents.find((a) => a.id === c.boundAgentId)?.updatedAt ?? 0) : 0,
       });
     }
-    for (const p of layoutLabels(subjects, { maxBubbles: office.maxBubbles })) {
+    for (const p of layoutLabels(subjects, { maxBubbles: office.maxBubbles, obstacles })) {
       this.actorFor(p.id as ActorKey)?.setLabelPlacement(p.dx, p.dy, p.leader, p.collapsed);
     }
   }

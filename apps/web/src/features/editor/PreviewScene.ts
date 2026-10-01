@@ -4,6 +4,7 @@ import type { GeneratedMap } from '../../game/procgen';
 import { getTheme, prefersReducedMotion, renderGeneratedMap, type ThemeDefinition } from '../../game/themes';
 import type { OfficeLayoutInput, OfficeStyle } from '@tagconn/shared';
 import { draftAsLayout } from '../../stores/editorStore';
+import { generateTextures } from '../../game/textures';
 
 /**
  * The Hall Planner's live preview pane (guild-hall.md section 5): `generateMap(draft)` through the
@@ -50,6 +51,8 @@ export class PreviewScene extends Phaser.Scene {
   }
 
   create() {
+    // Theme fx (torch flames, ambient dots) use the shared 'icon-sparkle' texture, which only OfficeScene generated.
+    generateTextures(this);
     this.cameras.main.setBackgroundColor(this.theme.palette.bg);
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.isPanning = true;

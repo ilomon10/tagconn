@@ -74,7 +74,7 @@ export function createSeenStore(storage: Pick<Storage, 'getItem' | 'setItem'> | 
   try {
     const raw = storage?.getItem(SEEN_STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
-    if (Array.isArray(parsed)) for (const a of parsed) if (typeof a === 'string' && a in TRIGGER_PANEL) seen.add(a as FurnitureAction);
+    if (Array.isArray(parsed)) for (const a of parsed) if (typeof a === 'string' && Object.hasOwn(TRIGGER_PANEL, a)) seen.add(a as FurnitureAction);
   } catch {
     /* unreadable storage: start empty */
   }

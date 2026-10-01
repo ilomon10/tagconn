@@ -628,3 +628,60 @@ describe('editorStore furniture pins (M12)', () => {
     expect(pins()).toBeUndefined();
   });
 });
+
+describe('editorStore door edits prune stale pins (M12 gate 2)', () => {
+  beforeEach(closeStore);
+  const s = () => useEditorStore.getState();
+  const pins = () => s().draft?.rooms[0]?.furniture;
+  const pin = (x: number, y: number) => ({ kind: 'plant', x, y, w: 1, h: 1 });
+  // Room 'a': 6x5 walled -> interior 4x3; an N door at offset 2 lands on interior x 1, y 0.
+  const load = (r: Partial<LayoutRoom> = {}) => s().load(layout({ rooms: [room({ walled: true, furniture: [pin(1, 0), pin(3, 2)], ...r })] }));
+
+  it('addDoor releases the pin on the new door apron in the same undo step, notes it, and undo restores it', () => {
+    load();
+    s().addDoor('a', { side: 'n', offset: 2 });
+    expect(pins()).toEqual([pin(3, 2)]);
+    expect(s().history).toHaveLength(1);
+    expect(s().pruneNotice).toEqual({ count: 1 });
+    s().undo();
+    expect(pins()).toHaveLength(2);
+    expect(s().pruneNotice).toBeNull();
+  });
+
+  it('updateDoor, nudgeDoor, setRoomDoors and sealRoom prune too', () => {
+    load({ doors: [{ side: 'n', offset: 3 }] });
+    s().updateDoor('a', 0, { offset: 2 });
+    expect(pins()).toEqual([pin(3, 2)]);
+    s().load(layout({ rooms: [room({ walled: true, furniture: [pin(1, 0)], doors: [{ side: 'n', offset: 3 }] })] }));
+    s().nudgeDoor('a', 0, -1);
+    expect(pins()).toBeUndefined();
+    load();
+    s().setRoomDoors('a', [{ side: 'n', offset: 2 }]);
+    expect(pins()).toEqual([pin(3, 2)]);
+    load({ doors: [] });
+    s().sealRoom('a');
+    expect(pins()).toHaveLength(2); // sealing adds no door, nothing to prune
+  });
+
+  it('a door drag prunes from the pre-drag pins, so dragging off and back restores the pin', () => {
+    load({ doors: [{ side: 'n', offset: 3 }] });
+    s().beginGesture();
+    s().setDoorRect('a', 0, { offset: 2 });
+    expect(pins()).toEqual([pin(3, 2)]);
+    s().setDoorRect('a', 0, { offset: 3 });
+    expect(pins()).toHaveLength(2);
+    s().setDoorRect('a', 0, { offset: 2 });
+    s().endGesture();
+    expect(s().history).toHaveLength(1);
+    expect(s().pruneNotice).toEqual({ count: 1 });
+  });
+
+  it('a resize that drops pins notes them when the gesture ends', () => {
+    load({ furniture: [pin(0, 0), pin(3, 2)] });
+    s().beginGesture();
+    s().resizeRoomTo('a', { w: 4, h: 4 });
+    s().endGesture();
+    expect(pins()).toEqual([pin(0, 0)]);
+    expect(s().pruneNotice).toEqual({ count: 1 });
+  });
+});

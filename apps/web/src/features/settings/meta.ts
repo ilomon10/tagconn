@@ -1,4 +1,4 @@
-import type { Settings } from '@tagconn/shared';
+import { SettingsSchema, type Settings } from '@tagconn/shared';
 
 /** Human labels, hints and enum options for the generated settings form. */
 
@@ -183,3 +183,28 @@ export const humanize = (k: string) =>
     .replace(/^./, (c) => c.toUpperCase())
     .replace(/\bSec\b/, '(s)')
     .replace(/\bDb\b/, 'DB');
+
+interface ZodNode {
+  _zod: { def: { type: string; innerType?: ZodNode } };
+  shape?: Record<string, ZodNode>;
+  minValue?: number | null;
+  maxValue?: number | null;
+  isInt?: boolean;
+}
+
+const unwrapZod = (n: ZodNode): ZodNode => {
+  let cur = n;
+  while (cur._zod.def.innerType) cur = cur._zod.def.innerType;
+  return cur;
+};
+
+/** min/max/int of a numeric settings leaf at any depth (`office.drama.idleChatSec`), read from the
+ *  zod schema so nested number fields never hard-code bounds. Empty object when the path isn't a number. */
+export function numberBounds(path: string): { min?: number; max?: number; int: boolean } {
+  let node: ZodNode | undefined = SettingsSchema as unknown as ZodNode;
+  for (const part of path.split('.')) node = node && unwrapZod(node).shape?.[part];
+  const n = node && unwrapZod(node);
+  if (!n || n._zod.def.type !== 'number') return { int: false };
+  const lim = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  return { min: lim(n.minValue), max: lim(n.maxValue), int: n.isInt === true };
+}

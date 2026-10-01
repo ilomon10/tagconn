@@ -5,32 +5,23 @@ import { routeFurnitureClick } from './useFurnitureTriggers';
 const ACTIONS: FurnitureAction[] = ['board', 'log', 'quests', 'settings', 'heroes', 'receptionist'];
 
 function deps(over: { modalOpen?: boolean; disabled?: Partial<Record<string, boolean>> } = {}) {
-  const runs = Object.fromEntries(['board', 'log', 'quests', 'settings', 'heroes'].map((a) => [a, vi.fn()]));
+  const runs = Object.fromEntries(['board', 'log', 'quests', 'settings', 'heroes', 'receptionist'].map((a) => [a, vi.fn()]));
   const panels = Object.fromEntries(Object.entries(runs).map(([a, run]) => [a, { run, disabled: over.disabled?.[a] ?? false }])) as never;
-  const openReceptionist = vi.fn();
-  return { runs, openReceptionist, d: { modalOpen: over.modalOpen ?? false, panels, openReceptionist } };
+  return { runs, d: { modalOpen: over.modalOpen ?? false, panels } };
 }
 
 describe('routeFurnitureClick', () => {
-  it('routes each of the five panel actions to its run', () => {
-    for (const a of ACTIONS.filter((x) => x !== 'receptionist')) {
-      const { runs, openReceptionist, d } = deps();
+  it('routes each of the six actions to its run (the receptionist too, so the admin guard applies)', () => {
+    for (const a of ACTIONS) {
+      const { runs, d } = deps();
       expect(routeFurnitureClick(a, d)).toBe(true);
       expect(runs[a]).toHaveBeenCalledTimes(1);
-      expect(openReceptionist).not.toHaveBeenCalled();
     }
-  });
-  it('opens the receptionist panel directly', () => {
-    const { runs, openReceptionist, d } = deps();
-    expect(routeFurnitureClick('receptionist', d)).toBe(true);
-    expect(openReceptionist).toHaveBeenCalledTimes(1);
-    for (const r of Object.values(runs)) expect(r).not.toHaveBeenCalled();
   });
   it('ignores every action while a modal is open', () => {
     for (const a of ACTIONS) {
-      const { runs, openReceptionist, d } = deps({ modalOpen: true });
+      const { runs, d } = deps({ modalOpen: true });
       expect(routeFurnitureClick(a, d)).toBe(false);
-      expect(openReceptionist).not.toHaveBeenCalled();
       for (const r of Object.values(runs)) expect(r).not.toHaveBeenCalled();
     }
   });

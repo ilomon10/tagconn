@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MASKED_SECRET, defaultSettings } from '@tagconn/shared';
+import { MASKED_SECRET, SettingsSchema, defaultSettings } from '@tagconn/shared';
 import { applySettingsPatch, diffSettings, isGuiImmutable, patchKeys, restartKeysIn } from './settingsPatch';
 
 describe('settings diff', () => {
@@ -36,5 +36,15 @@ describe('settings diff', () => {
     expect(isGuiImmutable('server.hookToken')).toBe(true);
     expect(isGuiImmutable('storage.dbPath')).toBe(true);
     expect(isGuiImmutable('storage.eventRetentionDays')).toBe(false);
+  });
+
+  it('sends an edited nested office.drama object whole and the result still parses', () => {
+    const base = defaultSettings();
+    const draft = structuredClone(base);
+    draft.office.drama = { ...draft.office.drama, enabled: false, idleChatSec: 90 };
+    const patch = diffSettings(base, draft);
+    expect(patch).toEqual({ office: { drama: draft.office.drama } });
+    expect(SettingsSchema.safeParse(draft).success).toBe(true);
+    expect(applySettingsPatch(base, patch).office.drama.idleChatSec).toBe(90);
   });
 });

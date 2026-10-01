@@ -624,6 +624,14 @@ export class Character extends Phaser.GameObjects.Container {
     return { x: this.x, y: this.y - 18 };
   }
 
+  /** World-space box of the name tag while it is drawn (unscaled size, like the bubble box), else null.
+   *  The label layout treats it as an obstacle so no bubble covers a tag. */
+  get tagRect(): { left: number; right: number; top: number; bottom: number } | null {
+    if (!this.tagAllowedByLook || !this.tagAllowedByLod || this.gone || this.leaving) return null;
+    const top = this.y + this.tag.y;
+    return { left: this.x - this.tag.width / 2, right: this.x + this.tag.width / 2, top, bottom: top + this.tag.height };
+  }
+
   get isWaiting(): boolean {
     return this.status === 'waiting' || this.status === 'blocked';
   }

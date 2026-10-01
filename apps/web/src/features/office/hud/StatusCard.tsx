@@ -2,7 +2,7 @@ import type { Agent } from '@tagconn/shared';
 import { useNow, useThemedRoleLookup } from '../../../lib/hooks';
 import { elapsed, formatTokens } from '../../../lib/format';
 import { contextRatio, contextWindowFor, totalTokens } from '../../../lib/tokens';
-import { strainFor } from '../../../game/drama';
+import { isAgentOnARoll, strainFor } from '../../../game/drama';
 import { ALL_FLOORS, useOfficeStore } from '../../../stores/officeStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { Badge, Button, Checkbox, cx } from '../../../components/ui';
@@ -72,7 +72,7 @@ function Card({ agent, compact, follow, onFollowChange, onDetails, onClose }: St
   const ratio = contextRatio(usage);
   const manaText = usage ? `${formatTokens(usage.contextTokens)} / ${formatTokens(contextWindowFor(usage.model))}` : 'no data';
   const tokens = usage ? totalTokens(usage) : 0;
-  const strain = strainFor(agent, now, drama, false);
+  const strain = strainFor(agent, now, drama, isAgentOnARoll(agent.id, now, drama));
   const quest = elapsed(agent.startedAt, agent.endedAt ?? now);
 
   if (compact) {

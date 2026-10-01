@@ -137,3 +137,16 @@ describe('layoutLabels: leader lines', () => {
     expect(second.leader).toBe(true);
   });
 });
+
+describe('layoutLabels obstacles', () => {
+  it('places a bubble clear of another character\'s name tag', () => {
+    const subject: LabelSubject = { id: 'a', anchor: { x: 100, y: 100 }, box: { w: 40, h: 12 }, selected: false, waiting: false, recency: 0 };
+    // A tag sitting exactly where the plain `above` slot would draw.
+    const tag = { left: 80, right: 120, top: 80, bottom: 90 };
+    const [p] = layoutLabels([subject], { maxBubbles: 4, obstacles: [tag] });
+    expect(p!.slot).not.toBe('above');
+    expect(rectsOverlap(rectFromBox({ x: 100 + p!.dx, y: 100 + p!.dy }, subject.box), tag)).toBe(false);
+    const [free] = layoutLabels([subject], { maxBubbles: 4 });
+    expect(free!.slot).toBe('above');
+  });
+});

@@ -61,4 +61,6 @@ export interface LayoutOptions {
   maxStackLevels?: number;
   /** Box size used for a collapsed ("…" badge) placement, regardless of the subject's real box. */
   badgeSize?: Size;
+  /** World-space boxes already occupied (other characters' name tags); bubbles are placed clear of them. */
+  obstacles?: readonly { left: number; right: number; top: number; bottom: number }[];
 }

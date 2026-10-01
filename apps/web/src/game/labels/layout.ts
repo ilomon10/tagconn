@@ -15,7 +15,7 @@ const DEFAULTS = { padding: 1, gap: 6, lateralGap: 4, stackGap: 3, maxStackLevel
  *  spaced by this box's own height, so a subject can never stack back into its own earlier slot;
  *  `maxStackLevels` is generous so real crowding (see the "never overlaps" test) resolves well
  *  before it runs out — the last level is used regardless as a best-effort fallback. */
-function candidatesFor(box: { w: number; h: number }, opts: Required<Omit<LayoutOptions, 'maxBubbles'>>): Candidate[] {
+function candidatesFor(box: { w: number; h: number }, opts: Required<Omit<LayoutOptions, 'maxBubbles' | 'obstacles'>>): Candidate[] {
   const { gap, lateralGap, stackGap, maxStackLevels } = opts;
   const list: Candidate[] = [
     { dx: 0, dy: -gap, slot: 'above' },
@@ -38,8 +38,9 @@ function candidatesFor(box: { w: number; h: number }, opts: Required<Omit<Layout
  */
 export function layoutLabels(subjects: LabelSubject[], options: LayoutOptions): LabelPlacement[] {
   const opts = { ...DEFAULTS, ...options };
+  const obstacles = options.obstacles ?? [];
   const ordered = sortByPriority(subjects);
-  const placed: Rect[] = [];
+  const placed: Rect[] = [...obstacles];
   const result: LabelPlacement[] = [];
 
   ordered.forEach((subject, index) => {

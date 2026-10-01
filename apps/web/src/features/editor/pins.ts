@@ -141,13 +141,14 @@ export function hitFurnitureAt(map: GeneratedMap | null, rooms: readonly LayoutR
 /**
  * Pins for "Lock all": every pinnable generated item of the room, deduped by kind + rect, skipping
  * any that would overlap an existing or earlier pin or sit on a door apron, capped so the room never
- * exceeds `LAYOUT_LIMITS.maxPinnedPerRoom`.
+ * exceeds `LAYOUT_LIMITS.maxPinnedPerRoom`. `overflow` counts the items that would have fit but for the cap.
  */
-export function pinsForLockAll(map: GeneratedMap | null, room: LayoutRoom): PinnedFurniture[] {
-  if (!map) return [];
-  const inner = roomInterior(room);
+export function planLockAll(map: GeneratedMap | null, room: LayoutRoom): { pins: PinnedFurniture[]; overflow: number } {
   const out: PinnedFurniture[] = [];
+  if (!map) return { pins: out, overflow: 0 };
+  const inner = roomInterior(room);
   const seen = new Set<string>();
+  let overflow = 0;
   let probe: LayoutRoom = room;
   for (const f of map.furniture) {
     if (f.roomId !== room.id || f.pinned || !isPinnableItem(f)) continue;
@@ -155,10 +156,17 @@ export function pinsForLockAll(map: GeneratedMap | null, room: LayoutRoom): Pinn
     const key = `${pin.kind}:${pin.x},${pin.y},${pin.w},${pin.h}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    if ((probe.furniture?.length ?? 0) >= LAYOUT_LIMITS.maxPinnedPerRoom) break;
     if (!pinFits(probe, pin)) continue;
+    if ((probe.furniture?.length ?? 0) >= LAYOUT_LIMITS.maxPinnedPerRoom) {
+      overflow++;
+      continue;
+    }
     out.push(pin);
     probe = { ...probe, furniture: [...(probe.furniture ?? []), pin] };
   }
-  return out;
+  return { pins: out, overflow };
+}
+
+export function pinsForLockAll(map: GeneratedMap | null, room: LayoutRoom): PinnedFurniture[] {
+  return planLockAll(map, room).pins;
 }

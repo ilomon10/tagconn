@@ -149,11 +149,49 @@ export class StreakTracker {
     const newest = list?.[list.length - 1];
     if (!list || !newest) return false;
     const from = nowMs - cfg.streakWindowSec * 1000;
-    const base = list.find((s) => s.at >= from);
-    return base !== undefined && newest.count - base.count >= cfg.streakTools;
+    // Baseline = the last sample at or before the window start (the count when the window opened); the oldest when the history is shorter.
+    let base = list[0]!;
+    for (const s of list) {
+      if (s.at > from) break;
+      base = s;
+    }
+    return newest.count - base.count >= cfg.streakTools;
+  }
+
+  /** Drops agents whose newest sample is older than the longest window (they never matter again). */
+  prune(nowMs: number): void {
+    for (const [id, list] of this.samples) {
+      const tail = list[list.length - 1];
+      if (!tail || nowMs - tail.at > STREAK_KEEP_MS) this.samples.delete(id);
+    }
   }
 
   forget(agentId: string): void {
     this.samples.delete(agentId);
   }
+
+  clear(): void {
+    this.samples.clear();
+  }
+}
+
+/**
+ * One tracker shared by the director and the React HUD, so "on a roll" reads the same everywhere.
+ * Feed it with `observeAgents(state.agents, Date.now())` on every agent update (the scene does; the HUD may too:
+ * observing is idempotent for an unchanged toolCount), then ask `isAgentOnARoll(id, Date.now(), settings.office.drama)`.
+ */
+const sharedStreaks = new StreakTracker();
+
+export function observeAgents(agents: readonly Pick<Agent, 'id' | 'toolCount'>[], nowMs: number): void {
+  for (const a of agents) sharedStreaks.observe(a.id, a.toolCount, nowMs);
+  sharedStreaks.prune(nowMs);
+}
+
+export function isAgentOnARoll(agentId: string, nowMs: number, cfg: Pick<DramaSettings, 'streakTools' | 'streakWindowSec'>): boolean {
+  return sharedStreaks.isOnARoll(agentId, nowMs, cfg);
+}
+
+/** Test helper: forget every sample. */
+export function resetStreaks(): void {
+  sharedStreaks.clear();
 }

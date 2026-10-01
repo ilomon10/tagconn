@@ -3,6 +3,9 @@ import type { ReachabilityReport } from '../../game/procgen';
 import { REASON_LABEL } from './reachability';
 import { Button, Empty } from '../../components/ui';
 
+/** Rows rendered before collapsing the rest into "+M more" (a messy layout can raise hundreds of warnings). */
+const MAX_ISSUE_ROWS = 40;
+
 const roomLabel = (rooms: readonly LayoutRoom[], roomId: string) => {
   const r = rooms.find((x) => x.id === roomId);
   return r ? (r.name ?? `${r.type} (${r.id})`) : roomId;
@@ -34,6 +37,8 @@ export function IssueList({
   const errors = plain.filter((i) => i.severity === 'error');
   const warnings = plain.filter((i) => i.severity === 'warning');
 
+  const shown = [...errors, ...warnings];
+  const hidden = Math.max(0, shown.length - MAX_ISSUE_ROWS);
   const unreachableRows = reachability?.unreachableRooms ?? [];
   const unreachableSeats = reachability?.unreachableSeats ?? 0;
 
@@ -64,7 +69,7 @@ export function IssueList({
           </span>
         </li>
       )}
-      {[...errors, ...warnings].map((issue, i) => (
+      {shown.slice(0, MAX_ISSUE_ROWS).map((issue, i) => (
         <li key={`${issue.code}-${i}`}>
           <button
             type="button"
@@ -85,6 +90,7 @@ export function IssueList({
           </button>
         </li>
       ))}
+      {hidden > 0 && <li className="px-2 py-1 text-[11px] text-ink-400">+{hidden} more</li>}
     </ul>
   );
 }
