@@ -52,8 +52,10 @@ sessions started from your own terminal never needs the runner at all.
    pnpm office:runner -- --config ~/.config/tagconn/runner.json
    ```
 
-   (The `--` is needed because `office:runner` is a plain `node apps/runner/src/main.ts` with no
-   default `--config`; the flag is required.) Leave it running — the Quests tab and the
+   (The `--` is needed because `office:runner` runs `tsx apps/runner/src/main.ts` with no
+   default `--config`; the flag is required.) It logs `connected to the office server (verified)`
+   when it's ready. The first start after a `claude` update probes the CLI first, which can take
+   about a minute; later starts reuse the cached result. Leave it running — the Quests tab and the
    Receptionist only work while it's connected. `runner.json`'s path is whatever `--config-dir`
    your install used; the default is `~/.config/tagconn/runner.json`.
 

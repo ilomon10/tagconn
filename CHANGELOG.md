@@ -7,6 +7,9 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Fixed
+- `pnpm office:runner` failed at start with `ERR_MODULE_NOT_FOUND` (`packages/shared/src/hook.js`): it now runs through `tsx`. The runner also logs when it is connected, and says when it is probing a newly updated `claude` CLI (about a minute, once per version).
+
 ## [0.5.2] - 2026-10-01
 
 ### Changed
