@@ -46,6 +46,7 @@ const ROLE_TITLES: Record<string, string> = {
   devops: 'Blacksmith',
   'devops-engineer': 'Blacksmith',
   'tech-writer': 'Bard',
+  receptionist: 'Gatekeeper',
 };
 
 const GOLD = 0xe8c070;
@@ -62,6 +63,7 @@ const COSTUMES: Record<string, Costume> = {
   devops: { robe: 0x2e2a26, hat: 'none', staff: 'hammer', trim: 0x8a94a6 },
   'devops-engineer': { robe: 0x2e2a26, hat: 'none', staff: 'hammer', trim: 0x8a94a6 },
   'tech-writer': { robe: 0x2f8a82, hat: 'bard-cap', hatColor: 0x2f8a82, staff: 'lute', trim: GOLD },
+  receptionist: { robe: 0x2f6f73, cloak: 0x1f4a4d, hat: 'circlet', hatColor: GOLD, staff: 'none', trim: GOLD },
   // Unknown roles: a hood and a cloak tinted with `role.color` (no fixed `cloak` here).
   default: { hat: 'hood' },
 };

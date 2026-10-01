@@ -3,7 +3,7 @@ import { defaultSettings, type Hero } from '@tagconn/shared';
 import { useHeroStore } from '../../stores/heroStore';
 import { useOfficeStore } from '../../stores/officeStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { classifyHeroError, createHero, deleteHero, patchHero, resetHero } from './commands';
+import { classifyHeroError, createHero, deleteHero, patchHero, resetHero, saveHeroDraft } from './commands';
 
 /**
  * Demo-mode hero writes (docs/design/living-office.md section 3.4). No jsdom is configured for this
@@ -113,5 +113,36 @@ describe('classifyHeroError', () => {
     expect(classifyHeroError(new Error('at most 40 heroes per project may be stored (heroes.maxPerProject)'))).toMatchObject({ kind: 'cap', capKind: 'project' });
     expect(classifyHeroError(new Error('Hero "h-1" is bound to a live agent'))).toEqual({ kind: 'bound', message: expect.any(String) });
     expect(classifyHeroError(new Error('boom'))).toEqual({ kind: 'other', message: 'boom' });
+  });
+});
+
+describe('role move and styles (demo, M12)', () => {
+  it('moves a released hero to the lowest free slot of the new role', async () => {
+    useHeroStore.getState().upsertHero(hero());
+    useHeroStore.getState().upsertHero(hero({ id: 'h-bbbbbbbb', role: 'architect', slot: 0, name: 'Gideon' }));
+    const moved = await patchHero('h-aaaaaaaa', { role: 'architect' });
+    expect(moved).toMatchObject({ role: 'architect', slot: 1 });
+  });
+
+  it('refuses to move a bound hero', async () => {
+    useHeroStore.getState().upsertHero(hero({ boundAgentId: 'a1', boundAt: 1, releasedAt: null }));
+    await expect(patchHero('h-aaaaaaaa', { role: 'architect' })).rejects.toThrow(/bound to a live agent/);
+  });
+
+  it('replaces style overrides and clears a style with null', async () => {
+    useHeroStore.getState().upsertHero(hero());
+    await patchHero('h-aaaaaaaa', { styles: { guild: { hat: 'crown' } } });
+    const merged = await patchHero('h-aaaaaaaa', { styles: { guild: { prop: 'staff' } } });
+    expect(merged.styles).toEqual({ guild: { prop: 'staff' } });
+    const cleared = await patchHero('h-aaaaaaaa', { styles: { guild: null } });
+    expect(cleared.styles).toBeUndefined();
+  });
+
+  it('saveHeroDraft unsets a single style field in one patch', async () => {
+    const base = hero({ styles: { guild: { hat: 'crown', prop: 'staff' } } });
+    useHeroStore.getState().upsertHero(base);
+    const draft = { role: base.role, name: base.name, title: '', appearance: base.appearance, styles: { guild: { prop: 'staff' as const } } };
+    const saved = await saveHeroDraft(base, draft);
+    expect(saved.styles).toEqual({ guild: { prop: 'staff' } });
   });
 });

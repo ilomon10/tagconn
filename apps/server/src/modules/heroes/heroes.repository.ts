@@ -19,6 +19,7 @@ export class HeroesRepository {
       name: row.name,
       title: row.title ?? null,
       appearance: row.appearance,
+      styles: row.styles ?? undefined,
       customized: row.customized,
       boundAgentId: row.boundAgentId ?? null,
       boundAt: row.boundAt ?? null,
@@ -48,6 +49,7 @@ export class HeroesRepository {
     const values = {
       ...hero,
       title: hero.title ?? null,
+      styles: hero.styles && Object.keys(hero.styles).length > 0 ? hero.styles : null,
       boundAgentId: hero.boundAgentId ?? null,
       boundAt: hero.boundAt ?? null,
       releasedAt: hero.releasedAt ?? null,

@@ -1,9 +1,11 @@
 import { generateHeroAppearance, HERO_ACCESSORIES, HERO_HATS, HERO_LIMITS, HERO_PROPS, HERO_SKIN_TONES, heroSeed, type Hero } from '@tagconn/shared';
+import { SHIPPED_ROLE_TITLES } from '../../game/themes/shippedTitles';
 import { describe, expect, it } from 'vitest';
 import {
   defaultHeroFloor,
   diffHeroPatch,
   draftFromHero,
+  draftLookForStyle,
   groupHeroesByRole,
   heroStatus,
   randomizeAppearance,
@@ -145,7 +147,7 @@ describe('groupHeroesByRole', () => {
       makeHero({ id: 'h-3', role: 'developer', slot: 0, name: 'C' }),
       makeHero({ id: 'h-4', role: 'pm', slot: 0, name: 'A' }),
     ];
-    const groups = groupHeroesByRole(heroes, theme, (r) => r);
+    const groups = groupHeroesByRole(heroes, theme, (r) => SHIPPED_ROLE_TITLES[r] ?? r);
     expect(groups.map((g) => g.title)).toEqual(['Artificer', 'Guild Master']);
     expect(groups[0]!.heroes.map((h) => h.id)).toEqual(['h-3', 'h-2']);
     expect(groups[1]!.heroes.map((h) => h.id)).toEqual(['h-4', 'h-1']);
@@ -175,5 +177,59 @@ describe('defaultHeroFloor', () => {
 
   it('returns undefined when there are no floors', () => {
     expect(defaultHeroFloor({}, '*', 'created')).toBeUndefined();
+  });
+});
+
+describe('role and per-style diffs (M12)', () => {
+  it('diffs a role change', () => {
+    const hero = makeHero({ updatedAt: 5 });
+    const draft = draftFromHero(hero);
+    draft.role = 'architect';
+    expect(diffHeroPatch(hero, draft)).toEqual({ role: 'architect', baseUpdatedAt: 5 });
+  });
+
+  it('sends the full override of each changed style', () => {
+    const hero = makeHero({ updatedAt: 5, styles: { guild: { hat: 'crown' } } });
+    const draft = draftFromHero(hero);
+    expect(diffHeroPatch(hero, draft)).toBeNull();
+    draft.styles = { guild: { hat: 'crown', prop: 'staff' }, rift: { title: 'Rift Walker' } };
+    expect(diffHeroPatch(hero, draft)).toEqual({ styles: { guild: { hat: 'crown', prop: 'staff' }, rift: { title: 'Rift Walker' } }, baseUpdatedAt: 5 });
+  });
+
+  it('sends null when a style is cleared', () => {
+    const hero = makeHero({ updatedAt: 5, styles: { guild: { hat: 'crown' } } });
+    const draft = draftFromHero(hero);
+    draft.styles = {};
+    expect(diffHeroPatch(hero, draft)).toEqual({ styles: { guild: null }, baseUpdatedAt: 5 });
+  });
+
+  it('sends the remaining override when a field goes back to base', () => {
+    const hero = makeHero({ styles: { guild: { hat: 'crown', prop: 'staff' } } });
+    const draft = draftFromHero(hero);
+    draft.styles = { guild: { prop: 'staff' } };
+    expect(diffHeroPatch(hero, draft)?.styles).toEqual({ guild: { prop: 'staff' } });
+  });
+
+  it('treats a blank style title as null and trims text', () => {
+    const hero = makeHero();
+    const draft = draftFromHero(hero);
+    draft.styles = { modern: { title: '  ' }, guild: { title: ' Keeper ' } };
+    expect(diffHeroPatch(hero, draft)?.styles).toEqual({ modern: { title: null }, guild: { title: 'Keeper' } });
+  });
+
+  it('force sends every field without baseUpdatedAt', () => {
+    const hero = makeHero({ updatedAt: 9 });
+    const draft = draftFromHero(hero);
+    draft.name = 'Wendel';
+    const patch = diffHeroPatch(hero, draft, true);
+    expect(patch).toMatchObject({ name: 'Wendel', title: null, appearance: hero.appearance });
+    expect(patch).not.toHaveProperty('baseUpdatedAt');
+  });
+
+  it('draftLookForStyle layers a style override over the base', () => {
+    const hero = makeHero({ title: 'Base', styles: { rift: { hat: 'hood', title: null } } });
+    const draft = draftFromHero(hero);
+    expect(draftLookForStyle(draft, 'rift')).toEqual({ appearance: { ...hero.appearance, hat: 'hood' }, title: null });
+    expect(draftLookForStyle(draft, 'guild')).toEqual({ appearance: hero.appearance, title: 'Base' });
   });
 });

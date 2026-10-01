@@ -13,11 +13,28 @@ onto in-scene stairs.
 | `Home` | Jump to the first floor. |
 | `End` | Jump to the top *project* floor (never the Multiverse). |
 | `F` | Open **Manage floors**. |
+| `M` | Open the **Menu** (see below). |
+| `B` `L` `Q` `R` `S` | Open Board, Log, Quests, Roles, Settings as panels over the office. |
 | `H` | Open the [Heroes](#heroes-h) panel for the current floor. |
+| `P` / `D` | Open the Hall Planner / the Receptionist's desk. |
 | `V` | Turn the [screen effect](display.md#screen-effect-per-browser) on or off for this browser. |
 | `[` / `]` | Select the previous / next character on this floor (same order as the roster). The drawer opens and screen readers announce who is selected. |
-| `?` | Show every keyboard shortcut (also the **?** button in the top bar). |
-| `Esc` | Close the dialog or panel on top (Manage floors, the sessions popover, the shortcuts list, then the character drawer). |
+| `?` | Show every keyboard shortcut (also **Keyboard shortcuts** in the menu). |
+| `Esc` | Close the panel on top (a Board/Log/Quests/Roles/Settings panel, Manage floors, the sessions popover, the shortcuts list, then the character drawer). |
+
+## The top bar and menu
+
+The top bar is small on purpose: the floor picker (with floor up/down), your connection and admin
+status, and one **Menu** button. The menu lists everything else, each with its hotkey: Board, Log,
+Quests, Roles, Settings, Heroes, Hall Planner, Receptionist, Manage floors, the screen effect,
+alerts and the shortcut list. Board, Log, Quests, Roles and Settings open as panels over the office
+(the canvas stays mounted behind them), and `#board`, `#log`, `#quests`, `#roles` and `#settings`
+still deep-link to them; `Esc` closes the top panel.
+
+On a phone the panels are full-screen sheets in portrait and side sheets in landscape, the
+character drawer is a bottom sheet, and the roster is a **Roster** pill that opens a tray over the
+full-width canvas. Tablets and desktops keep centred dialogs, the right-hand drawer and, on wide
+screens, the docked roster.
 
 Hotkeys are ignored while you're typing in a text field, while a modal (Hall Planner, Heroes,
 Receptionist, ...) is open, or mid-transition.
@@ -48,8 +65,8 @@ to switch which one the Guild Master represents (`office.pmMode: single` — the
 ## Heroes (`H`)
 
 Named, persistent characters bound to a project + role, so a subagent's "actor" keeps the same name
-and look across restarts instead of spawning a fresh anonymous sprite. Open it from the **Heroes**
-button in the top bar, the `H` hotkey, or "Edit hero" in a character's detail drawer.
+and look across restarts instead of spawning a fresh anonymous sprite. Open it from **Heroes** in the
+menu, the `H` hotkey, or "Edit hero" in a character's detail drawer.
 
 - **Roster tab** — per floor: recruit a new hero for a role, then edit its name, title, skin, hair,
   outfit color, hat/costume, prop and accessory with a live preview; **Roll name** picks a new one
@@ -61,7 +78,7 @@ button in the top bar, the `H` hotkey, or "Edit hero" in a character's detail dr
 
 ## Hall Planner
 
-Opens from the **Hall Planner** button in the top bar, or "Edit floor" in Manage floors. Draw and
+Opens from **Hall Planner** in the menu (`P`), or "Edit floor" in Manage floors. Draw and
 edit a floor's room layout: rectangular rooms with a type (office, lounge, QA lab, server room,
 ...), doors, and live validation (a room the reachability checker can't reach from the stairs is
 flagged with a one-click fix). "Surprise me" generates a random layout; a live preview renders it in
@@ -103,7 +120,7 @@ specific floor with **Edit floor**.
 
 ## Notifications
 
-Click **Enable alerts** in the top bar (shown only until you grant or deny permission) to allow
+Click **Enable alerts** in the menu (shown only until you grant or deny permission) to allow
 browser notifications for agent state changes, controlled by **Settings → Notifications**:
 
 | Key | Default | Meaning |

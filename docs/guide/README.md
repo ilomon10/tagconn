@@ -89,7 +89,7 @@ If you're developing tagconn or prefer to run it from source:
    Leave this running in its own terminal. It's what actually spawns `claude -p` on your machine
    for quests and the Receptionist. See [Runner & quests](runner-and-quests.md).
 
-6. **Ask the Receptionist.** Click **Receptionist** in the top bar, start a **General** or **This
+6. **Ask the Receptionist.** Open **Receptionist** from the menu, start a **General** or **This
    project** conversation, and ask it something — "what does this repo do?" is a good start. See
    [The Receptionist](receptionist.md).
 

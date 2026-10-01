@@ -1,4 +1,4 @@
-import { type HookPayload, UUID_RE } from '@tagconn/shared';
+import { type HookPayload, parseProjectRootHeader, UUID_RE } from '@tagconn/shared';
 import type { Deps } from '../../core/di/index.js';
 import { redactPayload } from './redact.js';
 
@@ -11,6 +11,8 @@ export interface IngestOptions {
    * ignored (M8 8k, §2.6 "Hint" — a correlation hint only, never authority).
    */
   runIdHeader?: string;
+  /** Raw `x-tagconn-project-root` header (base64); validated by `parseProjectRootHeader`, else ignored. */
+  projectRootHeader?: string;
 }
 
 export class IngestService {
@@ -33,6 +35,7 @@ export class IngestService {
       sessionId: payload.session_id,
       agentId: '',
       runIdHint,
+      projectRoot: parseProjectRootHeader(opts.projectRootHeader),
       storePayload: ingest.storeToolPayloads,
     });
     return { accepted: true };

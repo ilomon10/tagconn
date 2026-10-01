@@ -14,7 +14,7 @@ export function Button({ variant = 'subtle', className, ...rest }: ButtonHTMLAtt
   return (
     <button
       type="button"
-      className={cx('inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-xs transition disabled:cursor-not-allowed disabled:opacity-40', variants[variant], className)}
+      className={cx('inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-xs transition active:scale-[0.97] coarse:min-h-11 coarse:min-w-11 coarse:justify-center disabled:cursor-not-allowed disabled:opacity-40', variants[variant], className)}
       {...rest}
     />
   );
@@ -22,7 +22,7 @@ export function Button({ variant = 'subtle', className, ...rest }: ButtonHTMLAtt
 
 /** Full width unless the caller sets its own width. */
 const width = (className?: string) => (className && /(^|\s)w-/.test(className) ? className : cx('w-full', className));
-const field = 'rounded-md border border-ink-600 bg-ink-900 px-2 py-1 text-xs text-ink-100 placeholder:text-ink-400 focus:border-cozy focus:outline-none';
+const field = 'coarse:min-h-11 coarse:text-base rounded-md border border-ink-600 bg-ink-900 px-2 py-1 text-xs text-ink-100 placeholder:text-ink-400 focus:border-cozy focus:outline-none';
 
 export const Input = ({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) => <input className={cx(field, width(className))} {...rest} />;
 export const Select = ({ className, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) => <select className={cx(field, 'pr-6', width(className))} {...rest} />;

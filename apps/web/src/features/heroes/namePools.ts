@@ -14,10 +14,21 @@ export function parsePoolText(text: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+/** True when the raw textarea `text` already parses to `names`, so it must not be overwritten from
+ *  props (that would eat a trailing space or newline the user just typed). */
+export const poolTextInSync = (text: string, names: readonly string[]): boolean => parsePoolText(text).join('\n') === names.join('\n');
+
 /** The textarea's starting text for one role's pool (own-property only — unlike `namePoolFor`, this
  *  editor shows each role's own list, not the `default` fallback, so an empty pool reads as empty). */
 export function poolText(pools: HeroNamePools, role: string): string {
   return (Object.prototype.hasOwnProperty.call(pools, role) ? pools[role] : undefined)?.join('\n') ?? '';
+}
+
+/** The map to compare/save: roles whose pool is empty are dropped, so `namePoolFor` falls back to
+ *  `default` instead of yielding no names. The editor keeps `[]` entries while a textarea is being
+ *  edited (an emptied box must not make the role vanish mid-edit); they are only dropped here. */
+export function normalizePoolsForSave(pools: HeroNamePools): HeroNamePools {
+  return Object.fromEntries(Object.entries(pools).filter(([, names]) => names.length > 0));
 }
 
 /** Role keys to render a textarea for: every known role plus any role already present in the stored

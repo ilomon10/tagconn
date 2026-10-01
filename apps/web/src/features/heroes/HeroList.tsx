@@ -20,6 +20,7 @@ export function HeroList({
   onRecruit,
   recruitBusy,
   recruitError,
+  hiddenOnMobile,
 }: {
   groups: HeroRoleGroup[];
   agents: Record<string, Pick<Agent, 'description'>>;
@@ -32,9 +33,11 @@ export function HeroList({
   onRecruit: () => void;
   recruitBusy: boolean;
   recruitError?: string | null;
+  /** Below `md` the list and the editor are stacked as two screens; hide the list while a hero is open. */
+  hiddenOnMobile?: boolean;
 }) {
   return (
-    <div className="flex h-full w-72 shrink-0 flex-col border-r border-ink-700">
+    <div className={cx(hiddenOnMobile ? 'hidden md:flex' : 'flex', 'h-full w-full shrink-0 flex-col md:w-72 md:border-r md:border-ink-700')}>
       <div className="flex items-center gap-1.5 border-b border-ink-700 p-2">
         <Select aria-label="Role to recruit" className="flex-1" value={recruitRole} onChange={(e) => onRecruitRoleChange(e.target.value)} disabled={recruitRoles.length === 0}>
           {recruitRoles.length === 0 && <option value="">(no roles)</option>}

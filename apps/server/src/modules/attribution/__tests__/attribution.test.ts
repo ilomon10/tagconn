@@ -298,4 +298,34 @@ describe('attribution export (M8 8j, S4)', () => {
     const res = await app.inject({ url: '/api/attribution/export?cwd=/tmp/never-seen-project' });
     expect(res.statusCode).toBe(404);
   });
+
+  it('exports hero styles and re-imports only known styles/keys with valid values (M12)', async () => {
+    app = await buildTestApp({ settings: { server: { hookToken: HOOK_TOKEN }, attribution: { autoImport: 'auto' } } });
+    const CWD = '/tmp/attr-styles';
+    await startSession(app, 'sess-styles', CWD);
+    await importPost(
+      app,
+      'sess-styles',
+      validProfile({
+        heroes: [
+          {
+            role: 'developer',
+            name: 'Styled Sam',
+            styles: {
+              guild: { hat: 'wizard', title: 'Keeper of Tests', bogusKey: 'x' },
+              modern: { hat: 'not-a-hat' }, // invalid value: whole style dropped
+              'made-up-style': { hat: 'none' }, // unknown style: dropped
+              rift: {}, // empty: dropped
+            },
+          },
+        ],
+      }),
+    );
+    const res = await app.inject({ url: `/api/attribution/export?cwd=${encodeURIComponent(CWD)}` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(AttributionProfileSchema.safeParse(body).success).toBe(true);
+    const sam = body.heroes.find((h: { name: string }) => h.name === 'Styled Sam');
+    expect(sam.styles).toEqual({ guild: { hat: 'wizard', title: 'Keeper of Tests' } });
+  });
 });

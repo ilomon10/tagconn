@@ -31,11 +31,12 @@ const ROOM_NAMES: Record<RoomType, string> = {
 };
 
 // Identical to `defaultRoles.ts`'s `title` field — an identity mapping, not an override.
-const ROLE_TITLES: Record<string, string> = SHIPPED_ROLE_TITLES;
+const ROLE_TITLES: Record<string, string> = { ...SHIPPED_ROLE_TITLES, receptionist: 'Receptionist' };
 
 // No costume art: an empty costume is a no-op (no hat, cloak, or prop overlay).
 const NO_COSTUME: Costume = {};
-const COSTUMES: Record<string, Costume> = { default: NO_COSTUME };
+// The Receptionist NPC (`npc:receptionist`) gets a fixed smart-casual outfit; every agent role stays plain.
+const COSTUMES: Record<string, Costume> = { default: NO_COSTUME, receptionist: { robe: 0x3f6a8f } };
 
 export const modernTheme: ThemeDefinition = {
   id: 'modern',

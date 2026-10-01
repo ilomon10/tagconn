@@ -62,35 +62,49 @@ conf="${TAGCONN_CURL_CONF:-$HOME/.config/tagconn/curl.conf}"
 
 command -v curl >/dev/null 2>&1 || exit 0
 
+# Extra request headers are collected in the positional parameters (POSIX sh has no arrays).
+set --
+
 # A UUID-shaped TAGCONN_RUN_ID becomes the x-tagconn-run-id correlation hint.
-run_id_hdr_ok=0
 case "${TAGCONN_RUN_ID:-}" in
   ????????-????-????-????-????????????)
     case "${TAGCONN_RUN_ID}" in
-      *[!0-9a-f-]*) run_id_hdr_ok=0 ;;
-      *) run_id_hdr_ok=1 ;;
+      *[!0-9a-f-]*) ;;
+      *) set -- "$@" -H "x-tagconn-run-id: ${TAGCONN_RUN_ID}" ;;
     esac
     ;;
 esac
 
-if [ "$run_id_hdr_ok" = "1" ]; then
-  printf '%s' "$body" | curl -s -o /dev/null \
-    --connect-timeout 0.3 \
-    -m 1 \
-    -K "$conf" \
-    -H 'content-type: application/json' \
-    -H "x-tagconn-run-id: ${TAGCONN_RUN_ID}" \
-    --data-binary @- \
-    >/dev/null 2>&1
-else
-  printf '%s' "$body" | curl -s -o /dev/null \
-    --connect-timeout 0.3 \
-    -m 1 \
-    -K "$conf" \
-    -H 'content-type: application/json' \
-    --data-binary @- \
-    >/dev/null 2>&1
+# M12: the project root (git toplevel of CLAUDE_PROJECT_DIR, else CLAUDE_PROJECT_DIR itself), base64 in
+# x-tagconn-project-root, so a floor is the repo and not whatever directory the agent `cd`'d into.
+# Untrusted on the server side (it validates it). git is bounded by `timeout` (0.4 s); where `timeout`
+# is missing (stock macOS) git is skipped and CLAUDE_PROJECT_DIR is used as is, so the 1 s budget holds.
+# No CLAUDE_PROJECT_DIR (or no base64) -> the header is simply omitted.
+root=""
+pdir="${CLAUDE_PROJECT_DIR:-}"
+if [ -n "$pdir" ] && [ -d "$pdir" ] && command -v base64 >/dev/null 2>&1; then
+  if command -v git >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+    root=$(timeout 0.4 git -C "$pdir" rev-parse --show-toplevel 2>/dev/null </dev/null) || root=""
+  fi
+  [ -n "$root" ] || root="$pdir"
+  case "$root" in
+    /*) [ ${#root} -le 3000 ] || root="" ;;
+    *) root="" ;;
+  esac
+  if [ -n "$root" ]; then
+    root_b64=$(printf '%s' "$root" | base64 | tr -d '\n' 2>/dev/null) || root_b64=""
+    [ -z "$root_b64" ] || set -- "$@" -H "x-tagconn-project-root: ${root_b64}"
+  fi
 fi
+
+printf '%s' "$body" | curl -s -o /dev/null \
+  --connect-timeout 0.3 \
+  -m 1 \
+  -K "$conf" \
+  -H 'content-type: application/json' \
+  "$@" \
+  --data-binary @- \
+  >/dev/null 2>&1
 
 # --------------------------------------------------------------------------
 # Attribution (best-effort, background only; never delays or fails the hook)

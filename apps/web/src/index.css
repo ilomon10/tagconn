@@ -14,10 +14,64 @@
   --font-pixel: ui-monospace, "JetBrains Mono", Menlo, monospace;
 }
 
+/* Responsive shell (M12): `dialog` = tablet/desktop (centred dialogs), `side` = phone landscape (side
+   sheets), neither = phone portrait (full-screen sheets). `coarse` = touch (>=44px targets). The first
+   two never overlap, so utility order between them does not matter. */
+@custom-variant dialog (@media (min-width: 640px) and (min-height: 501px));
+@custom-variant side (@media (max-height: 500px) and (min-width: 501px));
+@custom-variant coarse (@media (pointer: coarse));
+
 html,
 body,
 #root {
   height: 100%;
+  overflow: hidden;
+}
+
+@keyframes sheet-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+}
+@keyframes sheet-in-side {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+@keyframes sheet-in-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .anim-sheet {
+    animation: sheet-in-up 220ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  @media (min-width: 640px) and (min-height: 501px) {
+    .anim-sheet {
+      animation: sheet-in-pop 180ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+  }
+  @media (max-height: 500px) and (min-width: 501px) {
+    .anim-sheet {
+      animation: sheet-in-side 220ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+  }
+  .anim-menu {
+    transform-origin: top right;
+    animation: sheet-in-pop 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .anim-fade {
+    animation: fade-in 160ms ease-out;
+  }
 }
 
 body {

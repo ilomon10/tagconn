@@ -3,7 +3,7 @@ import { DEFAULT_LAYOUT, type OfficeLayout } from '@tagconn/shared';
 import { generateMap } from '../procgen/generate';
 import { generateRandomLayout } from '../procgen/bsp';
 import type { GeneratedMap } from '../procgen/types';
-import { pickReceptionistSpot } from './receptionistSpot';
+import { isReceptionDeskTile, pickReceptionistSpot } from './receptionistSpot';
 
 /** Every assertion a placement must satisfy (task requirements): inside the entrance room, never on
  *  a seat, a door, or the spawn tile, and deterministic (calling twice on the same map agrees). */
@@ -75,5 +75,13 @@ describe('pickReceptionistSpot', () => {
     const map = generateMap(DEFAULT_LAYOUT);
     const noEntrance: GeneratedMap = { ...map, rooms: map.rooms.filter((r) => r.type !== 'entrance') };
     expect(pickReceptionistSpot(noEntrance)).toEqual(map.spawn);
+  });
+});
+
+describe('isReceptionDeskTile', () => {
+  it('is true for the picked spot on the default floor (she sits behind the counter) and false for the spawn tile', () => {
+    const map = generateMap(DEFAULT_LAYOUT);
+    expect(isReceptionDeskTile(map, pickReceptionistSpot(map))).toBe(true);
+    expect(isReceptionDeskTile(map, map.spawn)).toBe(false);
   });
 });

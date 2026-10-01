@@ -2,7 +2,7 @@ import { useMemo, useRef, type ReactNode } from 'react';
 import { useOfficeStore } from '../../stores/officeStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useHeroPanelStore } from '../heroes/store';
-import { useNow, useRoleLookup } from '../../lib/hooks';
+import { useNow, useThemedRoleLookup } from '../../lib/hooks';
 import { clock, elapsed, formatTokens } from '../../lib/format';
 import { contextRatio, contextWindowFor } from '../../lib/tokens';
 import { useModalFocus } from '../../lib/useModalFocus';
@@ -22,15 +22,12 @@ export function AgentDrawer({
   onClose,
   follow,
   onFollowChange,
-  rootRef,
 }: {
   agentId: string;
   onClose: () => void;
   /** Whether the camera should keep this agent centered in view while it moves. */
   follow: boolean;
   onFollowChange: (follow: boolean) => void;
-  /** Reports the panel's root DOM node so the host can measure it for the camera's safe insets. */
-  rootRef?: (el: HTMLElement | null) => void;
 }) {
   const agent = useOfficeStore((s) => s.agents[agentId]);
   const events = useOfficeStore((s) => s.events);
@@ -39,7 +36,7 @@ export function AgentDrawer({
   const project = useOfficeStore((s) => (agent ? s.projects[agent.projectId] : undefined));
   const heroes = useHeroStore((s) => s.heroes);
   const openHeroEditor = useHeroPanelStore((s) => s.openHeroEditor);
-  const lookup = useRoleLookup();
+  const lookup = useThemedRoleLookup();
   const now = useNow();
   const recent = useMemo(() => events.filter((e) => e.agentId === agentId).slice(-12).reverse(), [events, agentId]);
   const myTasks = useMemo(() => Object.values(tasks).filter((t) => t.assigneeAgentId === agentId), [tasks, agentId]);
@@ -53,22 +50,21 @@ export function AgentDrawer({
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   useModalFocus(true, containerRef, { initialFocusRef: headingRef });
 
-  const role = lookup(agent?.role);
+  // Same label as the roster row: hero title, edited role title, else this agent's floor-style title.
+  const role = lookup(agent?.role, { projectId: agent?.projectId, hero });
   return (
-    // Docked to the right on wide screens; collapses to a bottom sheet on narrow ones. Either way
+    // Docked to the right on tablets, desktops and phones in landscape; a bottom sheet on a phone in portrait. Either way
     // this is a plain edge-docked panel with its own scroll — no full-screen backdrop, so the rest
     // of the canvas stays clickable and draggable.
     <aside
-      ref={(el) => {
-        containerRef.current = el;
-        rootRef?.(el);
-      }}
-      className="absolute inset-x-0 bottom-0 z-10 flex max-h-[70vh] flex-col rounded-t-xl border-t border-ink-700 bg-ink-850/95 shadow-2xl backdrop-blur sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:top-0 sm:bottom-0 sm:w-80 sm:max-h-none sm:rounded-none sm:border-l sm:border-t-0"
+      ref={containerRef}
+      data-camera-overlay
+      className="anim-sheet absolute inset-x-0 bottom-0 z-10 flex max-h-[60%] flex-col rounded-t-xl border-t border-ink-700 bg-ink-850/95 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur dialog:inset-x-auto dialog:inset-y-0 dialog:right-0 dialog:max-h-none dialog:w-80 dialog:rounded-none dialog:border-l dialog:border-t-0 dialog:pb-0 side:inset-x-auto side:inset-y-0 side:right-0 side:max-h-none side:w-[min(20rem,55%)] side:rounded-none side:border-l side:border-t-0"
     >
       <header className="flex items-center gap-2 border-b border-ink-700 px-3 py-2">
         <Dot color={role.color} />
         <h2 ref={headingRef} tabIndex={-1} className="truncate text-sm font-semibold">
-          {agent ? role.title : 'Agent left'}
+          {agent ? (hero ? `${hero.name} · ${role.themedTitle}` : role.themedTitle) : 'Agent left'}
         </h2>
         <div className="ml-auto flex items-center gap-2">
           {agent && <Checkbox checked={follow} onChange={onFollowChange} label="Follow" />}

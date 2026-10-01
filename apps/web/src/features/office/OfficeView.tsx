@@ -10,10 +10,11 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { resolveScreenFx, useDisplayPrefsStore } from '../../stores/displayPrefsStore';
 import { useReceptionistStore } from '../../stores/receptionistStore';
 import { useReceptionistUiStore } from '../receptionist/uiStore';
-import { useFloorAgents, useRoleLookup } from '../../lib/hooks';
+import { useFloorAgents, useThemedRoleLookup } from '../../lib/hooks';
+import { ROSTER_DOCK_QUERY, useMediaQuery } from '../../lib/useMediaQuery';
 import { cycleIndex, firstFloor, floorNeighbors, floorsInOrder, isModalOpen, isMultiverseFloor, isTypingTarget, neighborFloor, topProjectFloor } from '../../lib/floors';
 import { layoutForProject, useLayoutStore } from '../../stores/layoutStore';
-import { ZERO_INSETS, insetsFromOverlay } from '../../game/camera/insets';
+import { ZERO_INSETS, combineInsets, insetsFromOverlay } from '../../game/camera/insets';
 import { Roster } from './Roster';
 import { AgentDrawer } from './AgentDrawer';
 import { FloorManager } from './FloorManager';
@@ -168,9 +169,8 @@ function canNavigateFloors(game: OfficeGame | null): boolean {
 
 /**
  * The character-cap overflow banner's "Raise the limit" action (M9 8f follow-up): jump to the
- * Settings tab. `App.tsx` drives which tab shows purely off `window.location.hash` (its own
- * `hashchange` listener, no store) so navigating there from outside the tab bar is just setting the
- * hash — same tab id `TopBar.tsx`'s `TABS` uses. There's no per-section anchor to target more
+ * Settings overlay. `App.tsx` re-syncs the overlay store on every `hashchange`, so opening it from
+ * outside the menu is just setting the hash — same ids as `app/overlays.ts`. There's no per-section anchor to target more
  * precisely without touching `SettingsPanel.tsx` (out of scope here), so this best-effort-scrolls
  * to the "Office" section's heading once Settings has rendered; if that heading's text or the DOM
  * shape ever changes, it just silently stays at the top of Settings instead of failing.
@@ -201,8 +201,7 @@ async function goToFloor(game: OfficeGame | null, target: Project, ms: number, l
 export function OfficeView({ active }: { active: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
-  const drawer = useRef<HTMLElement | null>(null);
-  const [game, setGame] = useState<OfficeGame | null>(null);
+    const [game, setGame] = useState<OfficeGame | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [follow, setFollow] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -213,9 +212,12 @@ export function OfficeView({ active }: { active: boolean }) {
   const maxCharacters = useSettingsStore((s) => s.settings.office.maxCharacters);
   const connection = useOfficeStore((s) => s.connection);
   const overflow = Math.max(0, agents.length - maxCharacters);
-  const roleLookup = useRoleLookup();
+  const roleLookup = useThemedRoleLookup();
+  // Wide screens dock the roster beside the canvas; narrower ones get a tray over a full-width canvas.
+  const rosterDocked = useMediaQuery(ROSTER_DOCK_QUERY);
+  const [trayOpen, setTrayOpen] = useState(false);
   // M9 8f: what the `[`/`]` cycling hotkeys below announce to screen readers — mirrors the drawer's
-  // own header (`AgentDrawer.tsx`: hero name when bound via a "Hero" row, else the plain role title).
+  // own header (`AgentDrawer.tsx`: the bound hero's name, plus the themed title of the agent's floor).
   const [announcement, setAnnouncement] = useState('');
 
   const closePanel = () => {
@@ -355,7 +357,8 @@ export function OfficeView({ active }: { active: boolean }) {
       game?.focus(agent.id);
       const heroes = useHeroStore.getState().heroes;
       const hero = Object.values(heroes).find((h) => h.boundAgentId === agent.id);
-      const label = hero?.name ?? roleLookup(agent.role).title;
+      const title = roleLookup(agent.role, { projectId: agent.projectId, hero }).themedTitle;
+      const label = hero ? `${hero.name}, ${title}` : title;
       setAnnouncement(`${label} selected, ${idx + 1} of ${agents.length}`);
     };
     window.addEventListener('keydown', onKey);
@@ -423,30 +426,33 @@ export function OfficeView({ active }: { active: boolean }) {
     if (active) window.dispatchEvent(new Event('resize'));
   }, [active, game]);
 
-  // Report the panel's occupied edges as camera safe-insets, so the map can still be panned into
-  // the part of the canvas that's left unobscured. Re-measured on resize (including the panel
-  // collapsing to a bottom sheet on narrow screens) and cleared — with the scene animating the
-  // camera back — once the panel closes.
+  // Report the occupied edges of every floating panel over the canvas (the agent drawer, the open
+  // roster tray: anything marked `data-camera-overlay`) as camera safe-insets, so the map can still be
+  // panned into the part of the canvas left unobscured and a selected agent is centred in the visible
+  // area. The drawer is a right drawer or a bottom sheet depending on the viewport, so it is
+  // re-measured on resize; insets clear — with the scene animating the camera back — once all close.
   useEffect(() => {
     if (!game) return;
-    if (!selected) {
+    const wrapEl = wrap.current;
+    const overlays = wrapEl ? Array.from(wrapEl.querySelectorAll<HTMLElement>('[data-camera-overlay]')) : [];
+    if (!wrapEl || overlays.length === 0) {
       game.setSafeInsets(ZERO_INSETS);
       return;
     }
-    const wrapEl = wrap.current;
-    const drawerEl = drawer.current;
-    if (!wrapEl || !drawerEl) return;
-    const measure = () => game.setSafeInsets(insetsFromOverlay(wrapEl.getBoundingClientRect(), drawerEl.getBoundingClientRect()));
+    const measure = () => {
+      const box = wrapEl.getBoundingClientRect();
+      game.setSafeInsets(combineInsets(overlays.map((el) => insetsFromOverlay(box, el.getBoundingClientRect()))));
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(wrapEl);
-    ro.observe(drawerEl);
+    for (const el of overlays) ro.observe(el);
     window.addEventListener('resize', measure);
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [game, selected]);
+  }, [game, selected, trayOpen, rosterDocked]);
 
   // Esc closes the panel, unless the user is mid-typing in a text field (a checkbox like the
   // Follow toggle, or a button, has no text to lose, so Esc still closes from there).
@@ -477,6 +483,7 @@ export function OfficeView({ active }: { active: boolean }) {
   }, [game, selected]);
 
   const selectAgent = (id: string) => {
+    setTrayOpen(false);
     setSelected(id);
     setFollow(false);
     game?.focus(id);
@@ -489,7 +496,7 @@ export function OfficeView({ active }: { active: boolean }) {
         {announcement}
       </div>
       <div ref={wrap} className="relative min-w-0 flex-1 bg-ink-900">
-        <div ref={host} className="absolute inset-0" />
+        <div ref={host} className="absolute inset-0 touch-none" />
         <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-2">
           {overflow > 0 && (
             <span className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-amber-500/90 px-2.5 py-1 text-[11px] font-semibold text-ink-950 shadow">
@@ -545,13 +552,11 @@ export function OfficeView({ active }: { active: boolean }) {
             onClose={closePanel}
             follow={follow}
             onFollowChange={setFollow}
-            rootRef={(el) => {
-              drawer.current = el;
-            }}
           />
         )}
+        {!rosterDocked && <Roster variant="tray" agents={agents} selectedId={selected} onSelect={selectAgent} open={trayOpen} onOpenChange={setTrayOpen} hidePill={selected !== null} />}
       </div>
-      <Roster agents={agents} selectedId={selected} onSelect={selectAgent} />
+      {rosterDocked && <Roster agents={agents} selectedId={selected} onSelect={selectAgent} />}
       {pickerOpen && <FloorManager onClose={() => setPickerOpen(false)} />}
       {gmSessionsProjectId && (
         <GmSessionsPopover

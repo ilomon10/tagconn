@@ -105,4 +105,28 @@ describe('fixture replay: main session spawning one general-purpose subagent', (
     snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
     expect(snap.agents).toEqual([]);
   });
+
+  it('sets toolStartedAt on PreToolUse and clears it on PostToolUse/PostToolUseFailure/Stop (M12)', async () => {
+    app = await buildTestApp();
+    const states: Agent[] = [];
+    app.diContainer.cradle.bus.on('agent.upserted', (a) => states.push(a));
+    const base = { session_id: 'tool-timer', cwd: '/tmp/tool-timer' };
+    const send = (e: Record<string, unknown>) => app!.inject({ method: 'POST', url: '/api/hooks', payload: { ...base, ...e } });
+    await send({ hook_event_name: 'SessionStart' });
+    await send({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 't1' });
+    const running = states.filter((a) => a.isMain).at(-1);
+    expect(running?.currentTool).toBe('Bash');
+    expect(running?.toolStartedAt).toBeGreaterThan(0);
+    await send({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 't1' });
+    expect(states.filter((a) => a.isMain).at(-1)?.toolStartedAt).toBeUndefined();
+    await send({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 't2' });
+    await send({ hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 't2' });
+    expect(states.filter((a) => a.isMain).at(-1)?.toolStartedAt).toBeUndefined();
+    await send({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/x' }, tool_use_id: 't3' });
+    expect(states.filter((a) => a.isMain).at(-1)?.toolStartedAt).toBeGreaterThan(0);
+    await send({ hook_event_name: 'Stop' });
+    expect(states.filter((a) => a.isMain).at(-1)?.toolStartedAt).toBeUndefined();
+    const snap = (await app.inject({ url: '/api/snapshot' })).json<OfficeSnapshot>();
+    expect(snap.agents.find((a) => a.isMain)?.toolStartedAt).toBeUndefined();
+  });
 });

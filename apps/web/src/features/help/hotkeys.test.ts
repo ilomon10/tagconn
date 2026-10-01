@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { shouldOpenHelp, type KeyLike } from './hotkeys';
+import { HOTKEY_GROUPS, shouldOpenHelp, type KeyLike } from './hotkeys';
+import { MENU_HOTKEYS } from '../../app/menuHotkeys';
 
 // The test environment has no DOM (`environment: 'node'`, see `vitest.config.ts`), so `shouldOpenHelp`
 // takes an injectable `doc` — the same pattern `lib/floors.test.ts` uses for `isModalOpen`.
@@ -41,5 +42,12 @@ describe('shouldOpenHelp', () => {
     expect(shouldOpenHelp(key({ ctrlKey: true }), fakeDoc(false))).toBe(false);
     expect(shouldOpenHelp(key({ metaKey: true }), fakeDoc(false))).toBe(false);
     expect(shouldOpenHelp(key({ altKey: true }), fakeDoc(false))).toBe(false);
+  });
+});
+
+describe('HOTKEY_GROUPS', () => {
+  it('lists every menu hotkey', () => {
+    const listed = new Set(HOTKEY_GROUPS.flatMap((g) => g.entries.flatMap((e) => e.combos)));
+    for (const k of Object.values(MENU_HOTKEYS)) if (k !== MENU_HOTKEYS.floors) expect(listed.has(k)).toBe(true);
   });
 });

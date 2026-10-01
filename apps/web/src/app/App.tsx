@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { TopBar, TABS, type Tab } from './TopBar';
+import { useEffect, useState, type ReactNode } from 'react';
+import { TopBar } from './TopBar';
+import { useOverlayStore, type OverlayId } from './overlays';
 import { OfficeView } from '../features/office/OfficeView';
 import { KanbanBoard } from '../features/board/KanbanBoard';
 import { EventLog } from '../features/log/EventLog';
@@ -9,44 +10,43 @@ import { QuestBoard } from '../features/quests/QuestBoard';
 import { OfficeEditor } from '../features/editor/OfficeEditor';
 import { ReceptionistPanel } from '../features/receptionist/ReceptionistPanel';
 import { AttributionToastHost } from '../features/attribution/AttributionToastHost';
+import { Sheet } from '../components/Sheet';
 
-const tabFromHash = (): Tab => {
-  const h = window.location.hash.replace('#', '') as Tab;
-  return TABS.some((t) => t.id === h) ? h : 'office';
+const OVERLAY_VIEW: Record<OverlayId, { title: string; render: () => ReactNode; wide?: boolean }> = {
+  board: { title: 'Board', render: () => <KanbanBoard /> },
+  log: { title: 'Log', render: () => <EventLog /> },
+  quests: { title: 'Quests', render: () => <QuestBoard /> },
+  roles: { title: 'Roles', render: () => <RolesEditor /> },
+  settings: { title: 'Settings', render: () => <SettingsPanel /> },
 };
 
 export function App() {
-  const [tab, setTab] = useState<Tab>(tabFromHash);
-  // The Hall Planner (M7 office editor) is a full-screen modal opened from the top bar
+  const overlay = useOverlayStore((s) => s.open);
+  const closeOverlay = useOverlayStore((s) => s.close);
+  // The Hall Planner (M7 office editor) is a full-screen modal opened from the menu
   // (docs/design/guild-hall.md section 5); it used to float over the canvas and covered the roster.
   const [editorOpen, setEditorOpen] = useState(false);
 
+  // `#board` etc. still deep-link: any hash change (including `location.hash = 'settings'`) re-syncs.
   useEffect(() => {
-    const onHash = () => setTab(tabFromHash());
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
+    const sync = () => useOverlayStore.getState().syncFromHash();
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
   }, []);
 
-  const select = (t: Tab) => {
-    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${t}`);
-    setTab(t);
-  };
-
+  const view = overlay ? OVERLAY_VIEW[overlay] : null;
   return (
-    <div className="flex h-full min-w-[1000px] flex-col">
-      <TopBar tab={tab} onTab={select} onOpenPlanner={() => setEditorOpen(true)} />
+    <div className="flex h-full flex-col">
+      <TopBar onOpenPlanner={() => setEditorOpen(true)} />
+      {/* The office is always mounted and visible; Board/Log/Quests/Roles/Settings open over it as sheets. */}
       <main className="relative min-h-0 flex-1">
-        {/* The office stays mounted so the Phaser game keeps its state while other tabs are open. */}
-        {/* Hidden with visibility (not display:none) so the WebGL canvas never resizes to 0×0. */}
-        <div className={tab === 'office' ? 'h-full' : 'invisible pointer-events-none absolute inset-0'} aria-hidden={tab !== 'office'}>
-          <OfficeView active={tab === 'office'} />
-        </div>
-        {tab === 'board' && <KanbanBoard />}
-        {tab === 'log' && <EventLog />}
-        {tab === 'roles' && <RolesEditor />}
-        {tab === 'quests' && <QuestBoard />}
-        {tab === 'settings' && <SettingsPanel />}
+        <OfficeView active />
       </main>
+      {overlay && view && (
+        <Sheet key={overlay} id={overlay} title={view.title} onClose={closeOverlay} wide={view.wide}>
+          {view.render()}
+        </Sheet>
+      )}
       {editorOpen && <OfficeEditor onClose={() => setEditorOpen(false)} />}
       <ReceptionistPanel />
       <AttributionToastHost />

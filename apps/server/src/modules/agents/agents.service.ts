@@ -87,7 +87,7 @@ export class AgentsService {
         Object.assign(a, { status: 'active', activity: 'idle', zone: this.roleZone(a), bubble: 'Session started', endedAt: undefined });
         break;
       case 'UserPromptSubmit':
-        Object.assign(a, { status: 'active', activity: 'thinking', zone: this.roleZone(a), bubble: 'Thinking', currentTool: undefined });
+        Object.assign(a, { status: 'active', activity: 'thinking', zone: this.roleZone(a), bubble: 'Thinking', currentTool: undefined, toolStartedAt: undefined });
         break;
       case 'SubagentStart':
         this.linkStart(ctx, a);
@@ -95,7 +95,7 @@ export class AgentsService {
         break;
       case 'PreToolUse': {
         const m = this.deps.activityService.map(toolName, input, this.roleZone(a));
-        Object.assign(a, { status: 'active', activity: m.activity, zone: m.zone, bubble: m.bubble, currentTool: toolName || undefined });
+        Object.assign(a, { status: 'active', activity: m.activity, zone: m.zone, bubble: m.bubble, currentTool: toolName || undefined, toolStartedAt: ts });
         a.toolCount += 1;
         if (AGENT_TOOLS.has(toolName) && p.tool_use_id) {
           this.queuePending(ctx.sessionId, {
@@ -110,10 +110,11 @@ export class AgentsService {
         a.status = 'active';
         if (a.activity === 'waiting' || a.activity === 'idle' || a.activity === 'done') a.activity = 'thinking';
         a.currentTool = undefined;
+        a.toolStartedAt = undefined;
         if (AGENT_TOOLS.has(toolName)) this.linkAgentCall(ctx, str(obj(p.tool_response).agentId), str(input.description));
         break;
       case 'PostToolUseFailure':
-        Object.assign(a, { status: 'active', bubble: `Error: ${toolName || 'tool'}`, currentTool: undefined });
+        Object.assign(a, { status: 'active', bubble: `Error: ${toolName || 'tool'}`, currentTool: undefined, toolStartedAt: undefined });
         if (AGENT_TOOLS.has(toolName) && p.tool_use_id) this.dropPending(ctx.sessionId, p.tool_use_id);
         break;
       case 'Notification':
@@ -131,7 +132,7 @@ export class AgentsService {
           running > 0
             ? { status: 'waiting', activity: 'delegating', bubble: `Waiting on ${running} agent${running > 1 ? 's' : ''}` }
             : { status: 'waiting', activity: 'waiting', bubble: 'Waiting for you' },
-          { zone: this.roleZone(a), currentTool: undefined },
+          { zone: this.roleZone(a), currentTool: undefined, toolStartedAt: undefined },
         );
         break;
       }
@@ -185,7 +186,7 @@ export class AgentsService {
   }
 
   private finish(a: AgentRecord, ts: number, bubble: string): void {
-    Object.assign(a, { status: 'done', activity: 'done', zone: 'entrance', bubble, currentTool: undefined, endedAt: ts });
+    Object.assign(a, { status: 'done', activity: 'done', zone: 'entrance', bubble, currentTool: undefined, toolStartedAt: undefined, endedAt: ts });
     this.scheduleRemoval(a);
   }
 
@@ -327,7 +328,7 @@ export class AgentsService {
         // staleAfterSec/pmIdleLeaveSec below (and for sessions' own "no live agents" check) — this
         // transition itself isn't one, and its own `ne(activity, 'idle')` filter already keeps it from
         // re-matching on the next tick without needing a fresh timestamp.
-        this.save({ ...a, activity: 'idle', zone: 'lounge', bubble: undefined, currentTool: undefined });
+        this.save({ ...a, activity: 'idle', zone: 'lounge', bubble: undefined, currentTool: undefined, toolStartedAt: undefined });
       }
       // Lost SubagentStop: no shared Agent field for "why it ended" without touching packages/shared's
       // domain.ts (out of scope here), so the reason is surfaced via the existing `bubble` text plus

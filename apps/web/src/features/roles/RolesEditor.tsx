@@ -42,7 +42,7 @@ function RoleList({ roles, current, onPick, onNew }: { roles: Role[]; current?: 
   return (
     <Panel
       title="Roles"
-      className="flex min-h-0 w-64 shrink-0 flex-col"
+      className="flex max-h-44 min-h-0 w-full shrink-0 flex-col md:max-h-none md:w-64"
       actions={
         <Button variant="primary" onClick={onNew}>
           + New
@@ -135,7 +135,7 @@ export function RolesEditor() {
 
   const r = draft?.role;
   return (
-    <div className="flex h-full min-h-0 gap-4 p-4">
+    <div className="flex h-full min-h-0 flex-col gap-3 p-3 md:flex-row md:gap-4 md:p-4">
       <RoleList roles={roles} current={draft?.isNew ? undefined : r?.name} onPick={(x) => (setDraft(toDraft(x)), setErrors([]))} onNew={() => setDraft(toDraft(blankRole(), true))} />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto">

@@ -3,16 +3,25 @@ import {
   HERO_HAIR_COLORS,
   HERO_HAIR_STYLE_COUNT,
   HERO_HATS,
+  HERO_LOOK_STYLES,
   HERO_PROPS,
   HERO_SKIN_TONES,
+  isHeroReleased,
   type Hero,
   type HeroAccessory,
+  type HeroAppearance,
   type HeroHat,
+  type HeroLookStyle,
   type HeroProp,
+  type HeroStyleOverride,
+  type OfficeStyle,
 } from '@tagconn/shared';
-import type { HeroDraft } from './formState';
-import { validateHeroName, validateHeroTitle } from './formState';
+import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { draftLookForStyle, validateHeroName, validateHeroTitle, withStyleOverride, type HeroDraft } from './formState';
 import { HeroPreview } from './HeroPreview';
+import { titleFor } from '../../game/lookResolver';
+import { getTheme } from '../../game/themes';
+import { hexToNumber } from '../../game/textures';
 import { Button, Field, Input, Select, cx } from '../../components/ui';
 
 const HAT_LABELS: Record<HeroHat, string> = {
@@ -27,6 +36,23 @@ const HAT_LABELS: Record<HeroHat, string> = {
 };
 const PROP_LABELS: Record<HeroProp, string> = { auto: 'Auto (theme)', none: 'None', staff: 'Staff', wand: 'Wand', hammer: 'Hammer', quill: 'Quill', lute: 'Lute', shield: 'Shield' };
 const ACCESSORY_LABELS: Record<HeroAccessory, string> = { auto: 'Auto (theme)', none: 'None', goggles: 'Goggles', cloak: 'Cloak' };
+
+/** One appearance field; on a style tab (`useBase` not null) it gets a "Use base" toggle and is disabled while on. */
+function AppField({ label, useBase, onUseBase, children }: { label: string; useBase: boolean | null; onUseBase: (on: boolean) => void; children: ReactNode }) {
+  return (
+    <Field label={label}>
+      {useBase !== null && (
+        <label className="mb-1 flex items-center gap-2 text-[11px] text-ink-300">
+          <input type="checkbox" className="size-3.5 accent-[#f5c07a]" checked={useBase} onChange={(e) => onUseBase(e.target.checked)} />
+          Use base
+        </label>
+      )}
+      <fieldset disabled={useBase === true} className={cx('m-0 min-w-0 border-0 p-0', useBase && 'opacity-50')}>
+        {children}
+      </fieldset>
+    </Field>
+  );
+}
 
 function SwatchRow({ colors, value, onChange, label }: { colors: readonly string[]; value: string; onChange: (v: string) => void; label: string }) {
   return (
@@ -67,14 +93,22 @@ function NullableColorField({ label, colors, value, fallback, onChange }: { labe
   );
 }
 
+type EditorTab = 'base' | HeroLookStyle;
+const TABS: readonly { id: EditorTab; label: string }[] = [
+  { id: 'base', label: 'Base' },
+  ...HERO_LOOK_STYLES.map((id) => ({ id, label: id.charAt(0).toUpperCase() + id.slice(1) })),
+];
+
 export interface HeroEditorProps {
   hero: Hero;
   draft: HeroDraft;
   onDraftChange: (next: HeroDraft) => void;
-  /** Themed title for this hero's role — the title field's placeholder and the panel heading. */
-  themedTitle: string;
-  roleColorHex: string;
-  roleColorNumber: number;
+  /** Role colour and (un-themed) title, for any role (the draft's role can differ from the hero's). */
+  roleInfo: (role: string) => { color: string; title: string };
+  /** The floor's current office style: the Base tab's preview and title placeholder use its theme. */
+  officeStyle: OfficeStyle;
+  /** Roles the hero may move to (enabled roles plus its own current one). */
+  roleOptions: string[];
   dirty: boolean;
   busy: boolean;
   error?: string | null;
@@ -83,103 +117,213 @@ export interface HeroEditorProps {
   onDelete: () => void;
   onRandomize: (includeCostume: boolean) => void;
   onRollName: () => void;
+  /** Below `md` the roster is hidden while a hero is open; this goes back to it. */
+  onBack?: () => void;
   /** False while the hero is bound to a live agent (docs/design/living-office.md section 3.4: "Delete
    *  ... disabled while on a quest, with a tooltip explaining why"). */
   canDelete: boolean;
 }
 
 /**
- * The hero editor's edit pane (docs/design/living-office.md section 3.4): name, title, and every
- * `HeroAppearance` field, with a live two-style preview. All fields are plain labelled form
- * controls, so the whole pane is keyboard-operable with no bespoke key handling beyond Ctrl/Cmd+S
- * (owned by `HeroPanel`, which also owns save/reset/delete/conflict handling and the draft state).
+ * The hero editor's edit pane (docs/design/living-office.md section 3.4): role, name, title, and every
+ * `HeroAppearance` field, with a live preview. M12 adds per-style tabs (Base, Modern, Guild, Rift):
+ * a style tab edits only that style's overrides, each field either "Use base" or an explicit value.
+ * Fields are plain labelled controls; the tab strip is a roving-tabindex tablist (arrow keys). Ctrl/Cmd+S
+ * is owned by `HeroPanel`, which also owns save/reset/delete/conflict handling and the draft state.
  */
-export function HeroEditor({ hero, draft, onDraftChange, themedTitle, roleColorHex, roleColorNumber, dirty, busy, error, onSave, onReset, onDelete, onRandomize, onRollName, canDelete }: HeroEditorProps) {
+export function HeroEditor({ hero, draft, onDraftChange, roleInfo, officeStyle, roleOptions, dirty, busy, error, onSave, onReset, onDelete, onRandomize, onRollName, onBack, canDelete }: HeroEditorProps) {
+  const [tab, setTab] = useState<EditorTab>('base');
+  const style: HeroLookStyle | null = tab === 'base' ? null : tab;
+  const override: HeroStyleOverride = style ? (draft.styles[style] ?? {}) : {};
+
+  const bound = !isHeroReleased(hero);
+  const role = roleInfo(draft.role);
+  const roleColorHex = role.color;
+  const previewStyle: HeroLookStyle = style ?? officeStyle;
+  const placeholderTitle = titleFor(getTheme(previewStyle), draft.role, role.title);
+  const look = style ? draftLookForStyle(draft, style).appearance : draft.appearance;
+
   const nameError = validateHeroName(draft.name);
   const titleError = validateHeroTitle(draft.title);
-  const canSave = dirty && !nameError && !titleError && !busy;
-  const setAppearance = (patch: Partial<HeroDraft['appearance']>) => onDraftChange({ ...draft, appearance: { ...draft.appearance, ...patch } });
+  const styleTitleErrors = HERO_LOOK_STYLES.map((s) => {
+    const t = draft.styles[s]?.title;
+    return typeof t === 'string' ? validateHeroTitle(t) : null;
+  });
+  const styleTitleError = style ? styleTitleErrors[HERO_LOOK_STYLES.indexOf(style)] : null;
+  const canSave = dirty && !nameError && !titleError && !styleTitleErrors.some(Boolean) && !busy;
+
+  const setOverride = (next: HeroStyleOverride) => style && onDraftChange({ ...draft, styles: withStyleOverride(draft.styles, style, next) });
+  const setAppearance = (patch: Partial<HeroAppearance>) => (style ? setOverride({ ...override, ...patch }) : onDraftChange({ ...draft, appearance: { ...draft.appearance, ...patch } }));
+  const unsetField = (key: keyof HeroStyleOverride) => {
+    const { [key]: _drop, ...rest } = override;
+    setOverride(rest);
+  };
+
+  /** Props of the "Use base" toggle for appearance field `k` (null on the Base tab). */
+  const baseToggle = (k: keyof HeroAppearance) => ({
+    useBase: style === null ? null : override[k] === undefined,
+    onUseBase: (on: boolean) => (on ? unsetField(k) : setOverride({ ...override, [k]: draft.appearance[k] })),
+  });
+
+  const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const i = TABS.findIndex((t) => t.id === tab);
+    const next = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i - 1 + TABS.length) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    setTab(TABS[next]!.id);
+    document.getElementById(`hero-tab-${TABS[next]!.id}`)?.focus();
+  };
+
+  const roleSelectOptions = roleOptions.includes(draft.role) ? roleOptions : [...roleOptions, draft.role];
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-y-auto p-4">
-      <HeroPreview appearance={draft.appearance} role={hero.role} roleColor={roleColorNumber} />
-
-      <div className="mt-4 grid grid-cols-2 gap-4">
-        <Field label="Name" hint={nameError ?? undefined}>
-          <div className="flex gap-1.5">
-            <Input value={draft.name} onChange={(e) => onDraftChange({ ...draft, name: e.target.value })} maxLength={60} aria-invalid={!!nameError} />
-            <Button variant="ghost" onClick={onRollName} title="Roll the next unused pool name" aria-label="Roll a new name">
-              🎲
-            </Button>
-          </div>
-        </Field>
-        <Field label="Title" hint={titleError ?? `Placeholder: ${themedTitle}`}>
-          <Input value={draft.title} placeholder={themedTitle} onChange={(e) => onDraftChange({ ...draft, title: e.target.value })} maxLength={80} aria-invalid={!!titleError} />
-        </Field>
+      {onBack && (
+        <Button variant="ghost" className="mb-3 self-start md:hidden" onClick={onBack}>
+          ← Heroes
+        </Button>
+      )}
+      <div className="flex justify-center">
+        <HeroPreview appearance={look} role={draft.role} roleColor={hexToNumber(roleColorHex)} style={previewStyle} />
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-4">
-        <Field label="Skin">
-          <SwatchRow colors={HERO_SKIN_TONES} value={draft.appearance.skin} onChange={(skin) => setAppearance({ skin })} label="Skin" />
-        </Field>
-        <Field label="Hair style">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" aria-label="Previous hair style" onClick={() => setAppearance({ hairStyle: (draft.appearance.hairStyle - 1 + HERO_HAIR_STYLE_COUNT) % HERO_HAIR_STYLE_COUNT })}>
-              ◀
-            </Button>
-            <span className="w-16 text-center text-xs text-ink-300">Style {draft.appearance.hairStyle + 1}</span>
-            <Button variant="ghost" aria-label="Next hair style" onClick={() => setAppearance({ hairStyle: (draft.appearance.hairStyle + 1) % HERO_HAIR_STYLE_COUNT })}>
-              ▶
-            </Button>
+      <div role="tablist" aria-label="Look style" className="mt-4 flex gap-0.5 self-start rounded-lg bg-ink-850 p-0.5">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            id={`hero-tab-${t.id}`}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            aria-controls="hero-tabpanel"
+            tabIndex={tab === t.id ? 0 : -1}
+            onClick={() => setTab(t.id)}
+            onKeyDown={onTabKeyDown}
+            className={cx('rounded-md px-3 py-1 text-xs', tab === t.id ? 'bg-ink-600 text-ink-100' : 'text-ink-400 hover:text-ink-100')}
+          >
+            {t.label}
+            {t.id !== 'base' && draft.styles[t.id] && (
+              <span aria-label="has overrides" className="ml-1 text-cozy">
+                ●
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <div id="hero-tabpanel" role="tabpanel" aria-labelledby={`hero-tab-${tab}`}>
+        {style === null ? (
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Role" hint={bound ? 'Release this hero to change its role' : undefined}>
+              <Select aria-label="Role" value={draft.role} disabled={bound || busy} onChange={(e) => onDraftChange({ ...draft, role: e.target.value })}>
+                {roleSelectOptions.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                    {r === hero.role && !roleOptions.includes(r) ? ' (disabled role)' : ''}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <div />
+            <Field label="Name" hint={nameError ?? undefined}>
+              <div className="flex gap-1.5">
+                <Input value={draft.name} onChange={(e) => onDraftChange({ ...draft, name: e.target.value })} maxLength={60} aria-invalid={!!nameError} />
+                <Button variant="ghost" onClick={onRollName} title="Roll the next unused pool name" aria-label="Roll a new name">
+                  🎲
+                </Button>
+              </div>
+            </Field>
+            <Field label="Title" hint={titleError ?? `Placeholder: ${placeholderTitle}`}>
+              <Input value={draft.title} placeholder={placeholderTitle} onChange={(e) => onDraftChange({ ...draft, title: e.target.value })} maxLength={80} aria-invalid={!!titleError} />
+            </Field>
           </div>
-        </Field>
-        <Field label="Hair colour">
-          <SwatchRow colors={HERO_HAIR_COLORS} value={draft.appearance.hairColor} onChange={(hairColor) => setAppearance({ hairColor })} label="Hair colour" />
-        </Field>
-        <Field label="Outfit colour">
-          <NullableColorField label="(role colour)" colors={HERO_HAIR_COLORS} value={draft.appearance.outfitColor} fallback={roleColorHex} onChange={(outfitColor) => setAppearance({ outfitColor })} />
-        </Field>
-        <Field label="Hat">
-          <Select value={draft.appearance.hat} onChange={(e) => setAppearance({ hat: e.target.value as HeroHat })}>
-            {HERO_HATS.map((h) => (
-              <option key={h} value={h}>
-                {HAT_LABELS[h]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Hat colour">
-          <NullableColorField
-            label="(outfit colour)"
-            colors={HERO_HAIR_COLORS}
-            value={draft.appearance.hatColor}
-            fallback={draft.appearance.outfitColor ?? roleColorHex}
-            onChange={(hatColor) => setAppearance({ hatColor })}
-          />
-        </Field>
-        <Field label="Prop">
-          <Select value={draft.appearance.prop} onChange={(e) => setAppearance({ prop: e.target.value as HeroProp })}>
-            {HERO_PROPS.map((p) => (
-              <option key={p} value={p}>
-                {PROP_LABELS[p]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Accessory">
-          <Select value={draft.appearance.accessory} onChange={(e) => setAppearance({ accessory: e.target.value as HeroAccessory })}>
-            {HERO_ACCESSORIES.map((a) => (
-              <option key={a} value={a}>
-                {ACCESSORY_LABELS[a]}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        {draft.appearance.accessory === 'cloak' && (
-          <Field label="Accessory colour">
-            <NullableColorField label="(role colour)" colors={HERO_HAIR_COLORS} value={draft.appearance.accessoryColor} fallback={roleColorHex} onChange={(accessoryColor) => setAppearance({ accessoryColor })} />
-          </Field>
+        ) : (
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Title" hint={styleTitleError ?? (override.title === undefined ? undefined : `Placeholder: ${placeholderTitle}`)}>
+              <label className="mb-1 flex items-center gap-2 text-[11px] text-ink-300">
+                <input
+                  type="checkbox"
+                  className="size-3.5 accent-[#f5c07a]"
+                  checked={override.title === undefined}
+                  onChange={(e) => (e.target.checked ? unsetField('title') : setOverride({ ...override, title: draft.title.trim() === '' ? null : draft.title.trim() }))}
+                />
+                Use base
+              </label>
+              <Input
+                value={override.title ?? ''}
+                placeholder={placeholderTitle}
+                disabled={override.title === undefined}
+                maxLength={80}
+                aria-label={`${TABS.find((t) => t.id === tab)?.label} title`}
+                aria-invalid={!!styleTitleError}
+                onChange={(e) => setOverride({ ...override, title: e.target.value })}
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button variant="subtle" disabled={busy || !draft.styles[style]} onClick={() => onDraftChange({ ...draft, styles: withStyleOverride(draft.styles, style, undefined) })} title="Remove every override of this style (applied on Save)">
+                Clear style overrides
+              </Button>
+            </div>
+          </div>
         )}
+
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <AppField label="Skin" {...baseToggle('skin')}>
+            <SwatchRow colors={HERO_SKIN_TONES} value={look.skin} onChange={(skin) => setAppearance({ skin })} label="Skin" />
+          </AppField>
+          <AppField label="Hair style" {...baseToggle('hairStyle')}>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" aria-label="Previous hair style" onClick={() => setAppearance({ hairStyle: (look.hairStyle - 1 + HERO_HAIR_STYLE_COUNT) % HERO_HAIR_STYLE_COUNT })}>
+                ◀
+              </Button>
+              <span className="w-16 text-center text-xs text-ink-300">Style {look.hairStyle + 1}</span>
+              <Button variant="ghost" aria-label="Next hair style" onClick={() => setAppearance({ hairStyle: (look.hairStyle + 1) % HERO_HAIR_STYLE_COUNT })}>
+                ▶
+              </Button>
+            </div>
+          </AppField>
+          <AppField label="Hair colour" {...baseToggle('hairColor')}>
+            <SwatchRow colors={HERO_HAIR_COLORS} value={look.hairColor} onChange={(hairColor) => setAppearance({ hairColor })} label="Hair colour" />
+          </AppField>
+          <AppField label="Outfit colour" {...baseToggle('outfitColor')}>
+            <NullableColorField label="(role colour)" colors={HERO_HAIR_COLORS} value={look.outfitColor} fallback={roleColorHex} onChange={(outfitColor) => setAppearance({ outfitColor })} />
+          </AppField>
+          <AppField label="Hat" {...baseToggle('hat')}>
+            <Select aria-label="Hat" value={look.hat} onChange={(e) => setAppearance({ hat: e.target.value as HeroHat })}>
+              {HERO_HATS.map((h) => (
+                <option key={h} value={h}>
+                  {HAT_LABELS[h]}
+                </option>
+              ))}
+            </Select>
+          </AppField>
+          <AppField label="Hat colour" {...baseToggle('hatColor')}>
+            <NullableColorField label="(outfit colour)" colors={HERO_HAIR_COLORS} value={look.hatColor} fallback={look.outfitColor ?? roleColorHex} onChange={(hatColor) => setAppearance({ hatColor })} />
+          </AppField>
+          <AppField label="Prop" {...baseToggle('prop')}>
+            <Select aria-label="Prop" value={look.prop} onChange={(e) => setAppearance({ prop: e.target.value as HeroProp })}>
+              {HERO_PROPS.map((p) => (
+                <option key={p} value={p}>
+                  {PROP_LABELS[p]}
+                </option>
+              ))}
+            </Select>
+          </AppField>
+          <AppField label="Accessory" {...baseToggle('accessory')}>
+            <Select aria-label="Accessory" value={look.accessory} onChange={(e) => setAppearance({ accessory: e.target.value as HeroAccessory })}>
+              {HERO_ACCESSORIES.map((a) => (
+                <option key={a} value={a}>
+                  {ACCESSORY_LABELS[a]}
+                </option>
+              ))}
+            </Select>
+          </AppField>
+          {(look.accessory === 'cloak' || (style !== null && override.accessoryColor !== undefined)) && (
+            <AppField label="Accessory colour" {...baseToggle('accessoryColor')}>
+              <NullableColorField label="(role colour)" colors={HERO_HAIR_COLORS} value={look.accessoryColor} fallback={roleColorHex} onChange={(accessoryColor) => setAppearance({ accessoryColor })} />
+            </AppField>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -191,7 +335,7 @@ export function HeroEditor({ hero, draft, onDraftChange, themedTitle, roleColorH
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-ink-700 pt-3">
         <Button
           onClick={(e) => onRandomize(e.shiftKey)}
-          title="Randomize skin/hair/outfit. Hold Shift to also reroll hat/prop/accessory."
+          title="Randomize the base skin/hair. Hold Shift to also reroll hat/prop/accessory."
         >
           🎲 Randomize
         </Button>

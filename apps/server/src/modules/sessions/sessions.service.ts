@@ -34,7 +34,7 @@ export class SessionsService {
     const repo = this.deps.sessionsRepository;
     const prev = repo.get(ctx.sessionId);
     const next: Session = prev ? { ...prev } : { id: ctx.sessionId, projectId: ctx.projectId, status: 'active', startedAt: ts };
-    next.projectId = ctx.projectId;
+    // The session's project is pinned by projects.onHook at its first event; never re-pointed by a later cwd.
     if (p.permission_mode) next.permissionMode = p.permission_mode;
     if (!prev) next.origin = 'cli';
     this.linkRun(ctx, next);

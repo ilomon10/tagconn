@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import type { Project } from '@tagconn/shared';
+import { nearestAncestor } from '../../core/db/index.js';
 import type { Deps } from '../../core/di/index.js';
 import type { HookContext } from '../../core/event-bus/index.js';
 import { HttpError, notFound } from '../../core/http/index.js';
@@ -27,16 +28,33 @@ export class ProjectsService {
     return this.deps.projectsRepository.list();
   }
 
-  /** Resolves (and creates/touches) the project for a hook; sets ctx.projectId. */
+  /**
+   * Resolves (and creates/touches) the project for a hook; sets ctx.projectId. A session is pinned to
+   * the project it first landed in, whatever cwd later events carry (the agent may `cd` into a
+   * subdirectory). A new session's root is the hook's validated project-root header, else its cwd; a
+   * root strictly inside an existing project's cwd belongs to that (nearest) ancestor project.
+   */
   onHook(ctx: HookContext): void {
     const repo = this.deps.projectsRepository;
-    const cwd = ctx.payload.cwd;
-    const id = cwd ? projectIdFor(cwd) : (repo.projectIdOfSession(ctx.sessionId) ?? projectIdFor(UNKNOWN_CWD));
+    const pinned = repo.projectIdOfSession(ctx.sessionId);
+    const root = ctx.projectRoot ?? ctx.payload.cwd;
+    let id: string;
+    let path = root ?? UNKNOWN_CWD;
+    if (pinned) {
+      id = pinned;
+    } else {
+      const ancestor = root ? nearestAncestor(root, repo.list()) : undefined;
+      if (ancestor) {
+        id = ancestor.id;
+        path = ancestor.cwd;
+      } else {
+        id = projectIdFor(path);
+      }
+    }
     ctx.projectId = id;
 
     const existing = repo.get(id);
     if (!existing) {
-      const path = cwd ?? UNKNOWN_CWD;
       const project: Project = { id, cwd: path, name: basename(path) || path, archived: false, createdAt: ctx.ts, lastActivityAt: ctx.ts };
       repo.upsert(project);
       this.deps.bus.emit('project.upserted', project);

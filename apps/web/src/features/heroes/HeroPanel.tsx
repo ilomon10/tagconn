@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { isHeroReleased, namePoolFor, pickHeroName, type Hero, type HeroNamePools, type HeroPatch } from '@tagconn/shared';
+import { isHeroReleased, namePoolFor, pickHeroName, type Hero, type HeroNamePools } from '@tagconn/shared';
 import { useOfficeStore } from '../../stores/officeStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -7,12 +7,10 @@ import { useRoleLookup } from '../../lib/hooks';
 import { updateSettings } from '../../lib/commands';
 import { floorsInOrder, isMultiverseFloor, isTypingTarget } from '../../lib/floors';
 import { getTheme } from '../../game/themes';
-import { resolveTitle } from '../../game/lookResolver';
-import { hexToNumber } from '../../game/textures';
 import { useHeroPanelStore, type HeroPanelTab } from './store';
-import { classifyHeroError, createHero, deleteHero, patchHero, resetHero } from './commands';
+import { classifyHeroError, createHero, deleteHero, resetHero, saveHeroDraft } from './commands';
 import { defaultHeroFloor, diffHeroPatch, draftFromHero, groupHeroesByRole, randomizeAppearance, type HeroDraft } from './formState';
-import { rolesForNamePools, validateNamePools } from './namePools';
+import { normalizePoolsForSave, rolesForNamePools, validateNamePools } from './namePools';
 import { HeroList } from './HeroList';
 import { HeroEditor } from './HeroEditor';
 import { NamePoolEditor } from './NamePoolEditor';
@@ -49,6 +47,8 @@ export function HeroPanel() {
   const groups = useMemo(() => groupHeroesByRole(heroesForFloor, theme, (r) => roleLookup(r).title), [heroesForFloor, theme, roleLookup]);
   const recruitRoles = useMemo(() => [...new Set(roles.filter((r) => r.enabled).map((r) => r.name))].sort(), [roles]);
 
+  const roleOptions = useMemo(() => (editingHero && !recruitRoles.includes(editingHero.role) ? [...recruitRoles, editingHero.role] : recruitRoles), [recruitRoles, editingHero]);
+
   const [draft, setDraft] = useState<HeroDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +63,7 @@ export function HeroPanel() {
   const [poolsMessage, setPoolsMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
   const dirty = !!(editingHero && draft && diffHeroPatch(editingHero, draft));
-  const poolsDirty = JSON.stringify(poolsDraft) !== JSON.stringify(poolsBase);
+  const poolsDirty = JSON.stringify(normalizePoolsForSave(poolsDraft)) !== JSON.stringify(normalizePoolsForSave(poolsBase));
 
   // Reset the edit-pane draft whenever the edited hero changes (a different hero, or none).
   useEffect(() => {
@@ -105,7 +105,7 @@ export function HeroPanel() {
     if (dirty && !window.confirm('Discard unsaved changes to this hero?')) return;
     setProjectIdRaw(id);
   };
-  const selectHero = (id: string) => {
+  const selectHero = (id: string | null) => {
     if (dirty && !window.confirm('Discard unsaved changes to this hero?')) return;
     setEditingHeroIdRaw(id);
   };
@@ -123,7 +123,7 @@ export function HeroPanel() {
     setError(null);
     setConflict(null);
     try {
-      const saved = await patchHero(editingHero.id, patch);
+      const saved = await saveHeroDraft(editingHero, draft);
       setDraft(draftFromHero(saved));
     } catch (err) {
       const failure = classifyHeroError(err);
@@ -149,8 +149,7 @@ export function HeroPanel() {
     setBusy(true);
     setError(null);
     try {
-      const patch: HeroPatch = { name: draft.name.trim(), title: draft.title.trim() === '' ? null : draft.title.trim(), appearance: draft.appearance };
-      const saved = await patchHero(editingHero.id, patch);
+      const saved = await saveHeroDraft(editingHero, draft, true);
       setDraft(draftFromHero(saved));
     } catch (err) {
       setError(classifyHeroError(err).message);
@@ -225,7 +224,7 @@ export function HeroPanel() {
     setPoolsBusy(true);
     setPoolsMessage(null);
     try {
-      const next = await updateSettings({ heroes: { namePools: poolsDraft } });
+      const next = await updateSettings({ heroes: { namePools: normalizePoolsForSave(poolsDraft) } });
       setPoolsBase(next.heroes.namePools);
       setPoolsDraft(next.heroes.namePools);
       setPoolsMessage({ tone: 'ok', text: 'Name pools saved.' });
@@ -261,7 +260,7 @@ export function HeroPanel() {
     <div className="fixed inset-0 z-50 flex flex-col bg-ink-950" data-modal="heroes" role="dialog" aria-modal="true" aria-label="Heroes" onKeyDownCapture={onKeyDownCapture}>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-ink-700 bg-ink-900 px-3">
         <span className="font-pixel text-xs font-semibold text-ink-100">Heroes</span>
-        <Select aria-label="Floor" className="w-56" value={projectId ?? ''} onChange={(e) => changeFloor(e.target.value)} disabled={floorList.length === 0}>
+        <Select aria-label="Floor" className="w-36 sm:w-56" value={projectId ?? ''} onChange={(e) => changeFloor(e.target.value)} disabled={floorList.length === 0}>
           {floorList.length === 0 && <option value="">(no floors)</option>}
           {floorList.map((p) => (
             <option key={p.id} value={p.id}>
@@ -307,8 +306,9 @@ export function HeroPanel() {
           !projectId ? (
             <div className="grid h-full place-items-center text-xs text-ink-400">No floors yet — heroes need a floor to belong to.</div>
           ) : (
-            <div className="flex h-full">
+            <div className="flex h-full flex-col md:flex-row">
               <HeroList
+                hiddenOnMobile={!!(editingHero && draft)}
                 groups={groups}
                 agents={agents}
                 selectedId={editingHeroId}
@@ -323,12 +323,14 @@ export function HeroPanel() {
               />
               {editingHero && draft ? (
                 <HeroEditor
+                  key={editingHero.id}
                   hero={editingHero}
                   draft={draft}
                   onDraftChange={setDraft}
-                  themedTitle={resolveTitle(theme, editingHero.role, roleLookup(editingHero.role).title)}
-                  roleColorHex={roleLookup(editingHero.role).color}
-                  roleColorNumber={hexToNumber(roleLookup(editingHero.role).color)}
+                  roleInfo={roleLookup}
+                  officeStyle={settings.office.style}
+                  roleOptions={roleOptions}
+                  onBack={() => selectHero(null)}
                   dirty={dirty}
                   busy={busy}
                   error={error}
@@ -340,7 +342,7 @@ export function HeroPanel() {
                   canDelete={isHeroReleased(editingHero)}
                 />
               ) : (
-                <div className="flex flex-1 items-center justify-center text-xs text-ink-400">Select a hero to edit, or recruit one.</div>
+                <div className="hidden flex-1 items-center justify-center text-xs text-ink-400 md:flex">Select a hero to edit, or recruit one.</div>
               )}
             </div>
           )

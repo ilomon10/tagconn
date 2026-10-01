@@ -137,7 +137,7 @@ export function NewQuestForm({ onClose, onCreated, initialFloor }: { onClose: ()
             </Field>
           </div>
 
-          <Field label="Hero (optional)" hint="Hand this quest to a named character instead of the anonymous Guild Master.">
+          <Field label="Hero (optional)" hint="Hand this quest to a named character instead of the floor's lead (Project Manager / Guild Master).">
             <Select value={heroId} onChange={(e) => setHeroId(e.target.value)} disabled={heroOptions.length === 0}>
               <option value="">No hero</option>
               {heroOptions.map((h) => (

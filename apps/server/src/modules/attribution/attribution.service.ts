@@ -9,6 +9,9 @@ import {
   hasLayoutErrors,
   HeroAppearanceSchema,
   type HeroCreate,
+  HERO_LOOK_STYLES,
+  HeroStyleOverrideSchema,
+  type HeroStyles,
   type OfficeLayout,
   type OfficeLayoutInput,
   type PendingProfileImport,
@@ -42,6 +45,7 @@ type AttributionDeps = Deps<
 
 /** Keys `HeroAppearanceSchema` actually accepts; every other key in a hero's `look` is dropped. */
 const KNOWN_APPEARANCE_KEYS = new Set(Object.keys(HeroAppearanceSchema.shape));
+const KNOWN_STYLE_KEYS = new Set([...KNOWN_APPEARANCE_KEYS, 'title']);
 
 const slugify = (s: string) =>
   s
@@ -171,7 +175,13 @@ export class AttributionService {
       savedAt: new Date(now).toISOString(),
       floor: { name: project.name, style: layout?.style },
       layout: layout ? this.toProfileLayout(layout) : undefined,
-      heroes: heroes.map((h) => ({ role: h.role, name: h.name, ...(h.title ? { title: h.title } : {}), look: this.toProfileLook(h.appearance) })),
+      heroes: heroes.map((h) => ({
+        role: h.role,
+        name: h.name,
+        ...(h.title ? { title: h.title } : {}),
+        look: this.toProfileLook(h.appearance),
+        ...(h.styles && Object.keys(h.styles).length > 0 ? { styles: this.toProfileStyles(h.styles) } : {}),
+      })),
     };
   }
 
@@ -181,6 +191,17 @@ export class AttributionService {
     const out: Record<string, string | number | boolean> = {};
     for (const [k, v] of Object.entries(appearance)) {
       if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[k] = v;
+    }
+    return out;
+  }
+
+  /** Per-style overrides as profile records (style -> look keys plus `title`); null stays null (= theme default). */
+  private toProfileStyles(styles: HeroStyles): Record<string, Record<string, string | number | boolean | null>> {
+    const out: Record<string, Record<string, string | number | boolean | null>> = {};
+    for (const [style, o] of Object.entries(styles)) {
+      const rec: Record<string, string | number | boolean | null> = {};
+      for (const [k, v] of Object.entries(o)) if (v !== undefined) rec[k] = v as string | number | boolean | null;
+      if (Object.keys(rec).length > 0) out[style] = rec;
     }
     return out;
   }
@@ -224,7 +245,7 @@ export class AttributionService {
 
     for (const hero of profile.heroes) {
       if (!this.deps.rolesService.get(hero.role)) continue; // unknown role: never auto-created (M8 SC1)
-      const input: HeroCreate = { projectId, role: hero.role, name: hero.name, title: hero.title, appearance: this.filterLook(hero.look) };
+      const input: HeroCreate = { projectId, role: hero.role, name: hero.name, title: hero.title, appearance: this.filterLook(hero.look), styles: this.filterStyles(hero.styles) };
       try {
         this.deps.heroesService.create(input);
       } catch (err) {
@@ -239,6 +260,21 @@ export class AttributionService {
     const out: Record<string, string | number | boolean> = {};
     for (const [k, v] of Object.entries(look)) if (KNOWN_APPEARANCE_KEYS.has(k)) out[k] = v;
     return out as HeroCreate['appearance'];
+  }
+
+  /** Keeps only known styles with schema-valid overrides (unknown styles/keys and invalid values are dropped). */
+  private filterStyles(styles: Record<string, Record<string, string | number | boolean | null>> | undefined): HeroStyles | undefined {
+    if (!styles) return undefined;
+    const out: Record<string, unknown> = {};
+    for (const style of HERO_LOOK_STYLES) {
+      const raw = Object.hasOwn(styles, style) ? styles[style] : undefined;
+      if (!raw) continue;
+      const known: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(raw)) if (KNOWN_STYLE_KEYS.has(k)) known[k] = v;
+      const parsed = HeroStyleOverrideSchema.safeParse(known);
+      if (parsed.success && Object.keys(parsed.data).length > 0) out[style] = parsed.data;
+    }
+    return Object.keys(out).length > 0 ? (out as HeroStyles) : undefined;
   }
 
   private freshLayoutId(name: string): string {

@@ -5,6 +5,7 @@ import {
   MULTIVERSE_THEME_ID,
   type Agent,
   type Hero,
+  heroLookForStyle,
   type MultiversePlan,
   type MultiverseRealm,
   type OfficeLayout,
@@ -19,10 +20,9 @@ import type { GeneratedMap, Point, Rect, StairsSpot } from '../procgen/types';
 import { PathFinder } from '../pathfinding';
 import { SeatAllocator, type SeatScope } from '../seats';
 import { Character } from '../actors/Character';
-import { spawnReceptionist, type ReceptionistNpcHandle } from '../npc/receptionist';
-import { pickReceptionistSpot } from '../npc/receptionistSpot';
+import { pickReceptionistSpot, isReceptionDeskTile } from '../npc/receptionistSpot';
 import { generateTextures } from '../textures';
-import { resolveCostume, resolveTitle } from '../lookResolver';
+import { resolveCostume, titleFor } from '../lookResolver';
 import { resolveHeroCostume } from '../heroLook';
 import { resolveCast, type ActorKey, type Cast, type CastMember } from '../cast';
 import { nextLifecycle, type ActorLifecycleState, type LifecycleFrame } from '../actorLifecycle';
@@ -36,8 +36,10 @@ import {
   type ThemeDefinition,
   type ThemeRegion,
 } from '../themes';
-import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, type SafeInsets } from '../camera/insets';
+import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, safeViewportRect, type SafeInsets } from '../camera/insets';
 import { fixedPositionForScreenPoint, zoomCameraAboutPoint } from '../camera/zoom';
+import { beaconScale, edgeArrowPlacement, worldToScreen } from '../camera/beacon';
+import { pinchDistance, pinchMidpoint } from '../camera/pinch';
 import { isDragMove } from '../camera/drag';
 import { hitScaleFor } from '../camera/hitsize';
 import { ReducedMotionWatcher } from '../camera/reducedMotion';
@@ -47,6 +49,15 @@ import { PostFxController } from '../postfx/PostFxController';
 /** M8 8e: how often the bubble/label layout (`game/labels`) is recomputed — a throttle, not every
  *  frame, since it's a many-subject greedy placement and labels don't need to react per-pixel. */
 const LABEL_REFRESH_MS = 120;
+
+/** The Receptionist is a real `Character` but lives outside the cast reconcile map (`characters`). */
+const RECEPTIONIST_KEY: ActorKey = 'npc:receptionist';
+/** Feet offset inside the desk tile, and where the desk-front strip starts, so she reads as seated behind the counter. */
+const RECEPTIONIST_DESK_FEET_DY = 10;
+const RECEPTIONIST_DESK_FRONT_DY = 6;
+/** Screen-px margin the off-screen selection arrow keeps from the safe viewport's edge, and its click radius. */
+const EDGE_ARROW_MARGIN = 26;
+const EDGE_ARROW_HIT = 20;
 
 /** A neighboring floor reachable by the stairs, with its display label pre-formatted by the theme. */
 export interface OfficeFloorNeighbor {
@@ -249,10 +260,21 @@ export class OfficeScene extends Phaser.Scene {
   private postFx!: PostFxController;
   private tooltip!: Phaser.GameObjects.Text;
   private characters = new Map<ActorKey, Character>();
-  /** W3b: one fixed NPC per floor (the Nexus's own plaza is an `'entrance'`-type room too, so it gets
-   *  one the same way) — never part of `characters`/the cast, just a static clickable prop. */
-  private receptionistNpc: ReceptionistNpcHandle | null = null;
+  /** W3b/M12: one fixed NPC per floor (the Nexus's own plaza is an `'entrance'`-type room too, so it gets
+   *  one the same way) — a themed `Character`, but never part of `characters`/the cast (the reconcile
+   *  would destroy it); the scene loop drives its update/hit scale/label scale itself. */
+  private receptionist: Character | null = null;
+  /** The theme's own desk art, re-cut from the base texture and painted over her legs. */
+  private receptionistDeskFront: Phaser.GameObjects.Image | null = null;
   private receptionistBusy = false;
+  /** M12 selection beacon: the screen-space arrow shown while the selected character is off-screen,
+   *  and the screen-space rects a click on it counts in (see `handleEdgeArrowClick`). */
+  private edgeArrow?: { box: Phaser.GameObjects.Container; chevron: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text; color: number };
+  private edgeArrowHits: Array<{ x: number; y: number; w: number; h: number }> = [];
+  /** Two-finger pinch in flight (start distance and the `userZoom` it started from), and the guard that
+   *  keeps a pinch (and the finger lifted after it) from reading as a click or a pan. */
+  private pinch: { dist: number; userZoom: number } | null = null;
+  private pinchGuard = false;
   private night!: Phaser.GameObjects.Rectangle;
   private state?: OfficeState;
   /** `layout.id + updatedAt` (+ the Multiverse plan's own key) — a full geometry rebuild only
@@ -342,7 +364,8 @@ export class OfficeScene extends Phaser.Scene {
       window.removeEventListener('blur', this.endDragOnBlur);
       this.reducedMotion.destroy();
       this.postFx.destroy();
-      this.receptionistNpc?.destroy();
+      this.receptionist?.destroyAll();
+      this.receptionistDeskFront?.destroy();
     });
     this.onReady?.(this);
   }
@@ -403,22 +426,60 @@ export class OfficeScene extends Phaser.Scene {
     this.rebuildReceptionist();
   }
 
-  /** W3b: (re)spawns the floor's Receptionist NPC at `pickReceptionistSpot`'s tile — on a full
-   *  rebuild (new map, so a new spot) and on a reskin too (same spot, but a re-tinted desk/outfit to
-   *  match the new theme; `spawnReceptionist` has no in-place restyle, so this just respawns it). */
+  /** W3b/M12: (re)creates the floor's Receptionist at `pickReceptionistSpot`'s tile — on a full
+   *  rebuild (new map, so a new spot) and on a reskin too (same spot, but the theme's title, costume
+   *  and desk art changed). Behind the reception desk she sits with her feet inside the desk tile, and
+   *  the desk's lower part is re-cut from the base texture and drawn in front of her (the desk itself
+   *  is baked into the base texture, so nothing else can paint over a character). */
   private rebuildReceptionist() {
-    this.receptionistNpc?.destroy();
+    this.receptionist?.destroyAll();
+    this.receptionistDeskFront?.destroy();
+    this.receptionistDeskFront = null;
     const spot = pickReceptionistSpot(this.map);
     const T = this.map.tileSize;
-    const handle = spawnReceptionist(this, {
-      x: spot.x * T + T / 2,
-      y: spot.y * T + T - 2,
-      style: { accent: this.theme.palette.floorAccent.entrance, outfit: this.theme.palette.wallEdge },
-      onClick: () => this.events.emit('receptionistClick'),
+    const c = new Character(this, RECEPTIONIST_KEY, 0, 0);
+    const behindDesk = isReceptionDeskTile(this.map, spot);
+    c.setPosition(spot.x * T + T / 2, spot.y * T + (behindDesk ? RECEPTIONIST_DESK_FEET_DY : T - 2));
+    c.setSeated(behindDesk);
+    c.setHitScale(this.currentHitScale);
+    c.on('pointerup', () => {
+      if (this.drag?.moved || this.pinchGuard) return;
+      this.events.emit('receptionistClick');
     });
-    handle.setBusy(this.receptionistBusy);
-    handle.setVisible(this.state?.settings.receptionist.enabled ?? true);
-    this.receptionistNpc = handle;
+    c.on('pointerover', () => this.setHovered(RECEPTIONIST_KEY));
+    c.on('pointerout', () => this.setHovered(null));
+    this.receptionist = c;
+    if (behindDesk) {
+      const tex = this.textures.get(THEME_BASE_TEXTURE);
+      const frame = 'receptionist-desk-front';
+      if (tex.has(frame)) tex.remove(frame);
+      tex.add(frame, 0, spot.x * T, spot.y * T + RECEPTIONIST_DESK_FRONT_DY, T, T - RECEPTIONIST_DESK_FRONT_DY);
+      this.receptionistDeskFront = this.add
+        .image(spot.x * T, spot.y * T + RECEPTIONIST_DESK_FRONT_DY, THEME_BASE_TEXTURE, frame)
+        .setOrigin(0)
+        .setDepth(c.y + 1);
+    }
+    this.applyReceptionistLook();
+  }
+
+  /** Themed title/costume, fixed pleasant appearance, and the idle/busy pose; also the enabled flag. */
+  private applyReceptionistLook() {
+    const c = this.receptionist;
+    if (!c) return;
+    const color = 0xf3c94d;
+    c.setLook({ color, title: titleFor(this.theme, 'receptionist', undefined), sprite: 2 }, true);
+    c.setCostume(resolveCostume(this.theme, 'receptionist'), color);
+    c.setAppearance({ skin: 0xe3ab7c, hair: 0x3b2a20, hairStyle: 2 });
+    // Reading at the desk when idle; the "thinking" pose (dots, hand to chin) while a turn is in flight.
+    c.setActivity(this.receptionistBusy ? 'thinking' : 'reading', 'active');
+    const enabled = this.state?.settings.receptionist.enabled ?? true;
+    c.setShown(enabled);
+    this.receptionistDeskFront?.setVisible(enabled);
+  }
+
+  /** Any actor the scene draws by key: a cast member, or the Receptionist. */
+  private actorFor(key: ActorKey): Character | undefined {
+    return key === RECEPTIONIST_KEY ? (this.receptionist ?? undefined) : this.characters.get(key);
   }
 
   private renderVisuals() {
@@ -566,7 +627,7 @@ export class OfficeScene extends Phaser.Scene {
       zone.on('pointerover', () => this.hoverStairs(spot, ring));
       zone.on('pointerout', () => this.unhoverStairs(ring));
       zone.on('pointerup', () => {
-        if (!this.inputLocked) {
+        if (!this.inputLocked && !this.pinchGuard) {
           this.hideTooltip();
           this.events.emit('stairs', spot.dir);
         }
@@ -633,7 +694,7 @@ export class OfficeScene extends Phaser.Scene {
         this.hideTooltip();
       });
       zone.on('pointerup', () => {
-        if (this.inputLocked || this.drag?.moved) return;
+        if (this.inputLocked || this.drag?.moved || this.pinchGuard) return;
         this.hideTooltip();
         this.events.emit('realmClick', realm.overflow ? null : (realm.projectIds[0] ?? null));
       });
@@ -731,11 +792,19 @@ export class OfficeScene extends Phaser.Scene {
   private setupCamera() {
     const cam = this.cameras.main;
     this.fitCamera();
+    // M12: two touch pointers for pinch zoom (Phaser starts with the mouse/first touch pointer only).
+    if (!this.input.pointer2) this.input.addPointer(1);
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (this.inputLocked) return;
       this.drag = { x: p.x, y: p.y, sx: cam.scrollX, sy: cam.scrollY, moved: false };
+      this.maybeStartPinch();
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (this.pinch) {
+        this.updatePinch();
+        return;
+      }
+      if (this.pinchGuard) return; // the finger left over after a pinch must not pan from a stale origin
       if (!this.drag || !p.isDown) return;
       const dx = p.x - this.drag.x;
       const dy = p.y - this.drag.y;
@@ -746,26 +815,55 @@ export class OfficeScene extends Phaser.Scene {
       cam.setScroll(this.drag.sx - dx / cam.zoom, this.drag.sy - dy / cam.zoom);
       this.clampCamera();
     });
-    this.input.on('pointerup', (_p: Phaser.Input.Pointer, hitObjects: Phaser.GameObjects.GameObject[]) => {
+    this.input.on('pointerup', (p: Phaser.Input.Pointer, hitObjects: Phaser.GameObjects.GameObject[]) => {
       // A plain click (no drag) that hit nothing dismisses the panel; a click on a Character or a
       // realm zone is handled by its own listener (see attachCharacterHandlers/buildRealmZones),
       // which runs before this one.
-      const wasEmptyClick = !!this.drag && !this.drag.moved && hitObjects.length === 0;
+      const plainClick = !this.pinchGuard && !!this.drag && !this.drag.moved;
+      const wasEmptyClick = plainClick && hitObjects.length === 0;
       this.drag = null;
+      this.pinch = null;
+      if (!this.input.pointer1.isDown && !this.input.pointer2.isDown) this.pinchGuard = false;
+      if (plainClick && this.handleEdgeArrowClick(p)) return;
       if (wasEmptyClick) this.events.emit('emptyClick');
     });
     this.input.on('wheel', (p: Phaser.Input.Pointer, _objs: unknown, _dx: number, dy: number) => {
       if (this.inputLocked) return;
-      const oldZoom = cam.zoom;
-      this.userZoom = Phaser.Math.Clamp(this.userZoom * (dy > 0 ? 0.88 : 1.12), 0.4, 6);
-      const newZoom = this.targetZoom();
-      cam.setZoom(newZoom);
-      const { scrollX, scrollY } = zoomCameraAboutPoint({ pointerX: p.x, pointerY: p.y, scrollX: cam.scrollX, scrollY: cam.scrollY, oldZoom, newZoom, camWidth: cam.width, camHeight: cam.height });
-      cam.setScroll(scrollX, scrollY);
-      this.panned = true;
-      this.clampCamera();
+      this.zoomAboutScreenPoint(this.userZoom * (dy > 0 ? 0.88 : 1.12), p.x, p.y);
       if (this.tooltip.visible) this.placeTooltip(p);
     });
+  }
+
+  /** Clamps `userZoom` (0.4..6) and zooms the camera about a screen point, so that point stays put. */
+  private zoomAboutScreenPoint(userZoom: number, screenX: number, screenY: number) {
+    const cam = this.cameras.main;
+    const oldZoom = cam.zoom;
+    this.userZoom = Phaser.Math.Clamp(userZoom, 0.4, 6);
+    const newZoom = this.targetZoom();
+    cam.setZoom(newZoom);
+    const { scrollX, scrollY } = zoomCameraAboutPoint({ pointerX: screenX, pointerY: screenY, scrollX: cam.scrollX, scrollY: cam.scrollY, oldZoom, newZoom, camWidth: cam.width, camHeight: cam.height });
+    cam.setScroll(scrollX, scrollY);
+    this.panned = true;
+    this.clampCamera();
+  }
+
+  /** M12: the second finger went down while the first is still down: start a pinch, and from here on
+   *  nothing in this gesture may pan or click-select (`pinchGuard` lasts until every finger is up). */
+  private maybeStartPinch() {
+    const { pointer1, pointer2 } = this.input;
+    if (!pointer1.isDown || !pointer2.isDown) return;
+    this.pinchGuard = true;
+    this.cancelFollow();
+    this.hideTooltip();
+    if (this.drag) this.drag.moved = true;
+    this.pinch = { dist: Math.max(1, pinchDistance(pointer1, pointer2)), userZoom: this.userZoom };
+  }
+
+  private updatePinch() {
+    const { pointer1, pointer2 } = this.input;
+    if (!this.pinch || this.inputLocked || !pointer1.isDown || !pointer2.isDown) return;
+    const mid = pinchMidpoint(pointer1, pointer2);
+    this.zoomAboutScreenPoint(this.pinch.userZoom * (pinchDistance(pointer1, pointer2) / this.pinch.dist), mid.x, mid.y);
   }
 
   private targetZoom() {
@@ -910,7 +1008,7 @@ export class OfficeScene extends Phaser.Scene {
     if (prevZoom !== office.zoom) this.fitCamera();
     this.applyLighting();
     this.postFx.applySettings(office.shaders, effectiveStyle, prefersReducedMotion(), state.screenFx);
-    this.receptionistNpc?.setVisible(state.settings.receptionist.enabled);
+    this.applyReceptionistLook();
 
     const instant = this.floorKey !== state.floorKey;
     if (instant) {
@@ -921,6 +1019,8 @@ export class OfficeScene extends Phaser.Scene {
     }
 
     this.updateCast(state, rebuild || instant);
+    const beacon = office.selectionBeacon ?? true;
+    for (const c of this.characters.values()) c.setBeaconEnabled(beacon);
     this.applyFocusDim();
     this.refreshLabels();
   }
@@ -957,6 +1057,7 @@ export class OfficeScene extends Phaser.Scene {
       let c = existing;
       const realmIdx = member ? realmIndexByKey.get(key) : (c?.realmIndex ?? undefined);
       const scope = realmIdx !== undefined ? this.realmScopes.get(realmIdx) : undefined;
+      const restTheme = (realmIdx !== undefined ? realmThemeByIndex.get(realmIdx) : undefined) ?? this.theme;
 
       if (member) {
         if (!c) {
@@ -989,8 +1090,7 @@ export class OfficeScene extends Phaser.Scene {
               this.walk(c, seat, seat.seated);
             }
           }
-          const memberTheme = (realmIdx !== undefined ? realmThemeByIndex.get(realmIdx) : undefined) ?? this.theme;
-          this.applyMemberLook(c, member, state, memberTheme, ambientForCharacters);
+          this.applyMemberLook(c, member, state, restTheme, ambientForCharacters);
           if (member.kind === 'guild-master') {
             const projectId = key.slice('gm:'.length);
             c.setSessionsChip(member.sessionsChip ? { count: member.sessionsChip.count, attention: member.sessionsChip.attention } : null, () =>
@@ -1002,14 +1102,14 @@ export class OfficeScene extends Phaser.Scene {
         } else if (next.state === 'resting') {
           // Present in the cast but its agent finished (`done`): a hero/GM actor heads to the lounge
           // instead of vanishing (section 4.2's "done agent's hero actor goes to the lounge").
-          this.enterResting(c, key, scope, heroById);
+          this.enterResting(c, key, scope, heroById, restTheme, state.roles);
         }
         // else: 'leaving' — already fading from before it reappeared in the cast (as `done`); let
         // the fade finish rather than restart resting (`boundAgentId`/`heroId` above are already
         // current for whenever it's next rebound).
       } else if (c) {
         if (next.state === 'resting') {
-          this.enterResting(c, key, scope, heroById);
+          this.enterResting(c, key, scope, heroById, restTheme, state.roles);
         } else if (next.state === 'leaving' && !c.leaving) {
           this.seats.release(key);
           const target = scope?.gate ?? this.map.spawn;
@@ -1095,7 +1195,7 @@ export class OfficeScene extends Phaser.Scene {
    *  resting/on-quest switch needs no re-registration. */
   private attachCharacterHandlers(c: Character) {
     c.on('pointerup', () => {
-      if (this.drag?.moved) return;
+      if (this.drag?.moved || this.pinchGuard) return;
       if (c.lifecycleFrame.state === 'quest' && c.boundAgentId) this.events.emit('agentClick', c.boundAgentId);
       else if (c.heroId) this.events.emit('heroClick', c.heroId);
     });
@@ -1106,7 +1206,7 @@ export class OfficeScene extends Phaser.Scene {
   /** Section 4.2: a resting actor walks to (and idles at) a lounge seat in its own realm, drawn at
    *  0.85 alpha with a dimmed "Resting · <name>" tag — entered either because its key left the cast,
    *  or because its bound agent finished while it's a persistent (hero/GM) actor. */
-  private enterResting(c: Character, key: ActorKey, scope: SeatScope | undefined, heroById: ReadonlyMap<string, Hero>) {
+  private enterResting(c: Character, key: ActorKey, scope: SeatScope | undefined, heroById: ReadonlyMap<string, Hero>, theme: ThemeDefinition, roles: readonly Role[]) {
     if (c.leaving) c.cancelLeave();
     const alreadyResting = c.lifecycleFrame.state === 'resting';
     c.setResting(true);
@@ -1114,7 +1214,8 @@ export class OfficeScene extends Phaser.Scene {
       this.seats.release(key);
       const seat = this.seats.assign(key, 'lounge', scope);
       this.walk(c, seat, seat.seated);
-      const name = (c.heroId && heroById.get(c.heroId)?.name) || (c.kind === 'guild-master' ? 'Guild Master' : 'Someone');
+      const pmTitle = titleFor(theme, 'pm', roles.find((r) => r.name === 'pm')?.title);
+      const name = (c.heroId && heroById.get(c.heroId)?.name) || (c.kind === 'guild-master' ? pmTitle : 'Someone');
       c.setLook({ color: 0x8e8e9e, title: 'Resting', description: name, sprite: 0 }, true);
       c.setActivity('idle', 'active');
     }
@@ -1151,14 +1252,17 @@ export class OfficeScene extends Phaser.Scene {
     const agent = member.agent;
     const role = state.roles.find((r) => r.name === agent.role);
     const color = parseColor(role?.color);
-    const themedTitle = resolveTitle(theme, agent.role, role?.title ?? (agent.isMain ? 'PM' : agent.role));
     const hero = member.hero;
-    const title = hero ? `${hero.name} · ${hero.title ?? themedTitle}` : themedTitle;
+    // M12: the hero's per-style look/title for the style this actor is drawn in (the realm's theme on
+    // the Multiverse, else the floor's).
+    const heroLook = hero ? heroLookForStyle(hero, theme.id) : null;
+    const themedTitle = titleFor(theme, agent.role, role?.title, heroLook?.title);
+    const title = hero ? `${hero.name} · ${themedTitle}` : themedTitle;
     c.setLook({ color, title, description: agent.isMain ? undefined : agent.description, sprite: role?.sprite ?? 0 }, true);
 
     const themeCostume = resolveCostume(theme, agent.role);
-    if (hero) {
-      const resolved = resolveHeroCostume(themeCostume, hero.appearance, color);
+    if (heroLook) {
+      const resolved = resolveHeroCostume(themeCostume, heroLook.appearance, color);
       c.setCostume(resolved.costume, color);
       c.setAppearance({ skin: resolved.skin, hair: resolved.hair, hairStyle: resolved.hairStyle });
     } else {
@@ -1194,7 +1298,7 @@ export class OfficeScene extends Phaser.Scene {
    *  — web-only state, not part of `OfficeState`) onto the NPC's "thinking" look. */
   setReceptionistBusy(busy: boolean) {
     this.receptionistBusy = busy;
-    this.receptionistNpc?.setBusy(busy);
+    this.applyReceptionistLook();
   }
 
   private syncSelectedKey() {
@@ -1209,9 +1313,9 @@ export class OfficeScene extends Phaser.Scene {
 
   private setHovered(key: ActorKey | null) {
     if (this.hoveredKey === key) return;
-    if (this.hoveredKey) this.characters.get(this.hoveredKey)?.setHovered(false);
+    if (this.hoveredKey) this.actorFor(this.hoveredKey)?.setHovered(false);
     this.hoveredKey = key;
-    if (key) this.characters.get(key)?.setHovered(true);
+    if (key) this.actorFor(key)?.setHovered(true);
     this.refreshLabels();
   }
 
@@ -1220,6 +1324,7 @@ export class OfficeScene extends Phaser.Scene {
     const dim = this.state?.settings.office.focusDim ?? 0.35;
     const alpha = this.selectedKey ? 1 - dim : 1;
     for (const [key, c] of this.characters) c.setDim(key === this.selectedKey ? 1 : alpha);
+    this.receptionist?.setDim(alpha);
   }
 
   /**
@@ -1236,7 +1341,9 @@ export class OfficeScene extends Phaser.Scene {
     const zoom = this.cameras.main.zoom;
     const scale = counterScale(zoom);
     const subjects: LabelSubject[] = [];
-    for (const [key, c] of this.characters) {
+    const actors: Array<[ActorKey, Character]> = [...this.characters];
+    if (this.receptionist) actors.push([RECEPTIONIST_KEY, this.receptionist]);
+    for (const [key, c] of actors) {
       if (c.leaving) continue;
       c.setLabelScale(scale);
       const waiting = c.isWaiting;
@@ -1255,8 +1362,92 @@ export class OfficeScene extends Phaser.Scene {
       });
     }
     for (const p of layoutLabels(subjects, { maxBubbles: office.maxBubbles })) {
-      this.characters.get(p.id as ActorKey)?.setLabelPlacement(p.dx, p.dy, p.leader, p.collapsed);
+      this.actorFor(p.id as ActorKey)?.setLabelPlacement(p.dx, p.dy, p.leader, p.collapsed);
     }
+  }
+
+  // ---------------------------------------------------------------- M12: selection beacon
+
+  /**
+   * Per frame: keeps the selected character's beacon (arrow + ring, `Character.setBeaconScale`) at a
+   * constant on-screen size, and shows the screen-space edge arrow (with the name) while that
+   * character is outside the safe viewport rect. All gated on `office.selectionBeacon`.
+   */
+  private updateBeacon(zoom: number) {
+    const on = this.state?.settings.office.selectionBeacon ?? true;
+    const c = on && this.selectedKey ? this.characters.get(this.selectedKey) : undefined;
+    if (!c || c.leaving || c.gone) {
+      this.hideEdgeArrow();
+      return;
+    }
+    c.setBeaconScale(beaconScale(zoom));
+    const cam = this.cameras.main;
+    const at = worldToScreen({ scrollX: cam.scrollX, scrollY: cam.scrollY, zoom, camWidth: cam.width, camHeight: cam.height }, c.x, c.y - 8);
+    const e = edgeArrowPlacement(at.x, at.y, safeViewportRect(cam.width, cam.height, this.insets), EDGE_ARROW_MARGIN);
+    if (!e.offscreen) {
+      this.hideEdgeArrow();
+      return;
+    }
+    const arrow = this.ensureEdgeArrow();
+    if (arrow.color !== c.accent) {
+      arrow.color = c.accent;
+      this.paintEdgeChevron(arrow.chevron, c.accent);
+    }
+    if (arrow.label.text !== c.tagText) arrow.label.setText(c.tagText);
+    arrow.chevron.setRotation(e.angle);
+    // Label sits on the inner side of the arrow (right-edge arrows put it to the left, etc).
+    const safe = safeViewportRect(cam.width, cam.height, this.insets);
+    const rightHalf = e.x > safe.x + safe.w / 2;
+    arrow.label.setOrigin(rightHalf ? 1 : 0, 0.5).setPosition(rightHalf ? -18 : 18, 0);
+    const pos = fixedPositionForScreenPoint({ screenX: e.x, screenY: e.y, zoom, camWidth: cam.width, camHeight: cam.height });
+    arrow.box.setPosition(pos.x, pos.y).setScale(1 / zoom).setVisible(true);
+    const lw = arrow.label.width;
+    this.edgeArrowHits = [
+      { x: e.x - EDGE_ARROW_HIT, y: e.y - EDGE_ARROW_HIT, w: EDGE_ARROW_HIT * 2, h: EDGE_ARROW_HIT * 2 },
+      { x: rightHalf ? e.x - 18 - lw : e.x + 18, y: e.y - arrow.label.height / 2, w: lw, h: arrow.label.height },
+    ];
+  }
+
+  private ensureEdgeArrow() {
+    if (this.edgeArrow) return this.edgeArrow;
+    const chevron = this.add.graphics();
+    const label = this.add
+      .text(0, 0, '', {
+        fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+        fontSize: '11px',
+        color: '#1c1430',
+        backgroundColor: '#f3e9d2',
+        padding: { x: 5, y: 2 },
+        resolution: 2,
+      })
+      .setOrigin(1, 0.5);
+    const box = this.add.container(0, 0, [chevron, label]).setScrollFactor(0).setDepth(200_001).setVisible(false);
+    this.edgeArrow = { box, chevron, label, color: -1 };
+    return this.edgeArrow;
+  }
+
+  /** A pixel-ish right-pointing arrow (rotated to face the selected character) with a dark outline. */
+  private paintEdgeChevron(g: Phaser.GameObjects.Graphics, color: number) {
+    g.clear();
+    g.fillStyle(0x15121e, 0.95);
+    g.fillTriangle(13, 0, -8, -12, -8, 12);
+    g.fillStyle(color, 1);
+    g.fillTriangle(9, 0, -4, -8, -4, 8);
+  }
+
+  private hideEdgeArrow() {
+    this.edgeArrow?.box.setVisible(false);
+    this.edgeArrowHits = [];
+  }
+
+  /** A plain click on the off-screen arrow (or its name) focuses the selected agent through the same
+   *  pan path the roster uses. Hit-tested in screen space here rather than via Phaser input, because a
+   *  scroll-factor-0 object under a zoomed camera is awkward to hit-test. */
+  private handleEdgeArrowClick(p: Phaser.Input.Pointer): boolean {
+    if (!this.selectedAgentId || this.edgeArrowHits.length === 0) return false;
+    if (!this.edgeArrowHits.some((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h)) return false;
+    this.focusAgent(this.selectedAgentId);
+    return true;
   }
 
   /** Smoothly pan (or jump, under reduced motion) so the agent's actor is centered in the safe rect. */
@@ -1304,6 +1495,11 @@ export class OfficeScene extends Phaser.Scene {
         this.characters.delete(key);
       }
     }
+    if (this.receptionist) {
+      if (hitZoomChanged) this.receptionist.setHitScale(this.currentHitScale);
+      this.receptionist.update(time, delta, speed);
+    }
+    this.updateBeacon(zoom);
     // M9 8f deferred: under reduced motion, snap to the follow target every frame instead of
     // lerping toward it — `reducedMotion.value` is a cached read, not a per-frame `matchMedia` call.
     if (this.followId) this.recenterFollow(this.reducedMotion.value);

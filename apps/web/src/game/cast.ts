@@ -35,8 +35,9 @@ import { MAIN_ROLE, type Agent, type Hero, type Session, type Settings } from '@
 export const HERO_BIND_GRACE_MS = 750;
 
 /** `hero:<hero id>` when the actor is bound to a named hero, `agent:<agent id>` when anonymous, or
- *  `gm:<project id>` for the single floor-wide Guild Master actor (section 5). */
-export type ActorKey = `hero:${string}` | `agent:${string}` | `gm:${string}`;
+ *  `gm:<project id>` for the single floor-wide Guild Master actor (section 5). `npc:<name>` (the
+ *  Receptionist) is drawn by the scene itself and is never part of a `Cast`. */
+export type ActorKey = `hero:${string}` | `agent:${string}` | `gm:${string}` | `npc:${string}`;
 
 export interface CastMember {
   key: ActorKey;

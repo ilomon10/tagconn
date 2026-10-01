@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
 import type { Agent } from '@tagconn/shared';
-import { useNow, useThemedRoleLookup } from '../../lib/hooks';
+import { useBoundHero, useNow, useThemedRoleLookup } from '../../lib/hooks';
 import { elapsed, formatTokens } from '../../lib/format';
 import { contextRatio, totalTokens } from '../../lib/tokens';
 import { resolveCast } from '../../game/cast';
-import { Badge, Checkbox, Dot, Empty, cx } from '../../components/ui';
+import { Badge, Button, Checkbox, Dot, Empty, cx } from '../../components/ui';
 import { ALL_FLOORS, useOfficeStore } from '../../stores/officeStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -57,7 +57,10 @@ function useHiddenAgentIds(agents: Agent[], now: number): ReadonlySet<string> {
 
 function RosterItem({ agent, selected, onSelect, now, offCanvas }: { agent: Agent; selected: boolean; onSelect: () => void; now: number; offCanvas: boolean }) {
   const lookup = useThemedRoleLookup();
-  const role = lookup(agent.role);
+  const hero = useBoundHero(agent.id);
+  // Same title the character's name tag and the drawer header show: hero title, edited role title,
+  // else the title of the style of THIS agent's floor (the Multiverse mixes floors).
+  const role = lookup(agent.role, { projectId: agent.projectId, hero });
   const project = useOfficeStore((s) => s.projects[agent.projectId]?.name);
   const multiFloor = useOfficeStore((s) => s.selectedProjectId === ALL_FLOORS);
   return (
@@ -66,7 +69,7 @@ function RosterItem({ agent, selected, onSelect, now, offCanvas }: { agent: Agen
         type="button"
         onClick={onSelect}
         className={cx(
-          'w-full rounded-lg border px-2.5 py-2 text-left transition',
+          'w-full rounded-lg border px-2.5 py-2 text-left transition coarse:min-h-11',
           selected ? 'border-cozy/60 bg-ink-700' : 'border-transparent hover:bg-ink-800',
           (agent.status === 'done' || offCanvas) && 'opacity-60',
         )}
@@ -112,20 +115,39 @@ function RosterItem({ agent, selected, onSelect, now, offCanvas }: { agent: Agen
   );
 }
 
-export function Roster({ agents, selectedId, onSelect }: { agents: Agent[]; selectedId: string | null; onSelect: (id: string) => void }) {
+interface RosterProps {
+  agents: Agent[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}
+
+/**
+ * The roster. Docked (`variant="aside"`, wide screens) it is the fixed column beside the canvas; on a
+ * phone or small tablet (`variant="tray"`) the canvas is full width and the roster is a collapsed pill
+ * that opens a bottom sheet (portrait) or side sheet (landscape) over it. The open tray reports its
+ * box to the camera as a safe-area overlay via `data-camera-overlay`.
+ */
+export function Roster({ agents, selectedId, onSelect, variant = 'aside', open = false, onOpenChange, hidePill = false }: RosterProps & { variant?: 'aside' | 'tray'; open?: boolean; onOpenChange?: (open: boolean) => void; hidePill?: boolean }) {
   const now = useNow();
   const hidden = useHiddenAgentIds(agents, now);
   const [showOffCanvas, setShowOffCanvas] = useState(false);
   const shown = showOffCanvas ? agents : agents.filter((a) => !hidden.has(a.id));
   const offCanvasCount = agents.length - agents.filter((a) => !hidden.has(a.id)).length;
   const active = agents.filter((a) => a.status !== 'done').length;
-  return (
-    <aside className="flex w-72 shrink-0 flex-col border-l border-ink-700 bg-ink-850">
-      <header className="flex items-center justify-between border-b border-ink-700 px-3 py-2">
+  const tray = variant === 'tray';
+
+  const body = (
+    <>
+      <header className="flex items-center justify-between gap-2 border-b border-ink-700 px-3 py-2">
         <h2 className="text-xs font-semibold tracking-wide">Roster</h2>
-        <span className="text-[11px] text-ink-300">
+        <span className="ml-auto text-[11px] text-ink-300">
           {active} working · {agents.length} total
         </span>
+        {tray && (
+          <Button variant="ghost" onClick={() => onOpenChange?.(false)} aria-label="Close roster" title="Close roster">
+            ✕
+          </Button>
+        )}
       </header>
       {offCanvasCount > 0 && (
         <div className="flex items-center justify-between border-b border-ink-700 px-3 py-1.5">
@@ -136,12 +158,42 @@ export function Roster({ agents, selectedId, onSelect }: { agents: Agent[]; sele
       {shown.length === 0 ? (
         <Empty>{agents.length === 0 ? 'No one is in the office yet.' : 'Everyone here is off canvas — toggle "Show off-canvas" to list them.'}</Empty>
       ) : (
-        <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+        <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2">
           {shown.map((a) => (
             <RosterItem key={a.id} agent={a} now={now} selected={a.id === selectedId} onSelect={() => onSelect(a.id)} offCanvas={hidden.has(a.id)} />
           ))}
         </ul>
       )}
+    </>
+  );
+
+  if (!tray) return <aside className="flex w-72 shrink-0 flex-col border-l border-ink-700 bg-ink-850">{body}</aside>;
+
+  if (!open) {
+    if (hidePill) return null;
+    return (
+      <button
+        type="button"
+        onClick={() => onOpenChange?.(true)}
+        aria-expanded={false}
+        className="absolute bottom-3 right-3 z-10 flex min-h-11 items-center gap-2 rounded-full border border-ink-700 bg-ink-850/95 px-3.5 text-xs font-medium text-ink-100 shadow-lg backdrop-blur transition active:scale-[0.97]"
+      >
+        <span className="size-2 rounded-full bg-emerald-400" aria-hidden="true" />
+        Roster
+        <span className="font-pixel text-[11px] text-ink-300">
+          {active}/{agents.length}
+        </span>
+      </button>
+    );
+  }
+  return (
+    <aside
+      role="region"
+      aria-label="Roster"
+      data-camera-overlay
+      className="anim-sheet absolute inset-x-0 bottom-0 z-20 flex max-h-[55%] flex-col rounded-t-xl border-t border-ink-700 bg-ink-850/95 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur side:inset-x-auto side:inset-y-0 side:right-0 side:max-h-none side:w-[min(24rem,60%)] side:rounded-none side:border-l side:border-t-0"
+    >
+      {body}
     </aside>
   );
 }

@@ -1,15 +1,16 @@
 import { useRef } from 'react';
+import { MAIN_ROLE } from '@tagconn/shared';
 import { elapsed, shortId } from '../../lib/format';
-import { useNow } from '../../lib/hooks';
+import { useNow, useThemedRoleLookup } from '../../lib/hooks';
 import { useModalFocus } from '../../lib/useModalFocus';
 import { useOfficeStore } from '../../stores/officeStore';
 import { Badge, Button, Empty, Panel } from '../../components/ui';
 
 /**
- * The Guild Master's session-count chip popover (M8 8b, docs/design/living-office.md section 5).
+ * The floor lead's (Guild Master / Project Manager, per the floor's style) session-count chip popover (M8 8b, docs/design/living-office.md section 5).
  * Opened from the scene's `gmSessions` event (the floor's GM chip, "+N"): lists every live main
  * session on that floor (short id, last prompt, status, age), lets you jump to one's agent drawer,
- * and lets you "Pin as Guild Master" — sticking the floor's GM to that session until it ends
+ * and lets you pin one as the lead — sticking the floor's lead to that session until it ends
  * (`officeStore`'s `pinnedPrimary`, auto-cleared by `prunePins` once the session does).
  */
 export function GmSessionsPopover({
@@ -23,6 +24,7 @@ export function GmSessionsPopover({
   onSelectAgent: (agentId: string) => void;
 }) {
   const now = useNow();
+  const leadTitle = useThemedRoleLookup()(MAIN_ROLE, { projectId }).themedTitle;
   const agents = useOfficeStore((s) => s.agents);
   const sessions = useOfficeStore((s) => s.sessions);
   const projectName = useOfficeStore((s) => s.projects[projectId]?.name ?? projectId);
@@ -31,7 +33,7 @@ export function GmSessionsPopover({
   const unpinPrimary = useOfficeStore((s) => s.unpinPrimary);
 
   // Live main sessions on this floor, most recently updated first — the same population `cast.ts`
-  // merges into the Guild Master (the chosen primary) plus its `sessionsChip`.
+  // merges into the floor lead (the chosen primary) plus its `sessionsChip`.
   const mains = Object.values(agents)
     .filter((a) => a.projectId === projectId && a.isMain && a.status !== 'done' && sessions[a.sessionId]?.status !== 'ended')
     .sort((a, b) => b.updatedAt - a.updatedAt);
@@ -51,7 +53,7 @@ export function GmSessionsPopover({
     >
       <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <Panel
-          title={`Guild Master · ${projectName}`}
+          title={`${leadTitle} · ${projectName}`}
           actions={
             <Button variant="ghost" onClick={onClose} aria-label="Close">
               ✕
@@ -85,9 +87,9 @@ export function GmSessionsPopover({
                       <Button
                         variant={isPinned ? 'primary' : 'subtle'}
                         onClick={() => (isPinned ? unpinPrimary(projectId) : pinPrimary(projectId, a.id))}
-                        title="Sticks this session as the floor's Guild Master until it ends"
+                        title={`Sticks this session as the floor's ${leadTitle} until it ends`}
                       >
-                        {isPinned ? 'Pinned as Guild Master ✓' : 'Pin as Guild Master'}
+                        {isPinned ? `Pinned as ${leadTitle} ✓` : `Pin as ${leadTitle}`}
                       </Button>
                     </div>
                   </li>

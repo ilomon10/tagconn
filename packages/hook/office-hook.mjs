@@ -27,7 +27,7 @@
 // `--attribution`) is spawned with unref() and the parent exits at once. The alternative,
 // finishing inline, would add filesystem work plus a second POST (up to a whole second)
 // to the latency Claude Code waits on, while a spawn costs ~1 ms in the parent.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, constants as fsc, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import net from 'node:net';
 import { homedir } from 'node:os';
@@ -429,6 +429,8 @@ async function main() {
   if (!cfg) return dbg('no usable config at', hookJson);
 
   const headers = isRunIdHint(process.env.TAGCONN_RUN_ID) ? { 'x-tagconn-run-id': process.env.TAGCONN_RUN_ID } : {};
+  const root = projectRoot(process.env);
+  if (root) headers['x-tagconn-project-root'] = Buffer.from(root, 'utf8').toString('base64');
   await post(`${cfg.base}/api/hooks`, cfg.token, buf, headers);
 
   const body = buf.length <= SESSION_START_SCAN_MAX ? buf.toString('utf8') : '';
@@ -447,6 +449,29 @@ async function main() {
     }
   }
   clearTimeout(failsafe);
+}
+
+/**
+ * M12: the project root sent as `x-tagconn-project-root`: the git toplevel of CLAUDE_PROJECT_DIR (git
+ * bounded to 300 ms; missing git or a non-repo falls back), else CLAUDE_PROJECT_DIR itself, else none.
+ * Only absolute POSIX/Windows paths are sent; the server validates the value again.
+ */
+export function projectRoot(env) {
+  const dir = env.CLAUDE_PROJECT_DIR;
+  if (!dir || dir.length > 3000) return undefined;
+  let root = dir;
+  try {
+    const r = spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      timeout: 300,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const out = r.status === 0 ? String(r.stdout ?? '').trim() : '';
+    if (out) root = out;
+  } catch {}
+  if (root.length > 3000 || !(root.startsWith('/') || /^[A-Za-z]:[\\/]/.test(root))) return undefined;
+  return root;
 }
 
 /** L2: the detached child must not inherit interpreter-altering env. */

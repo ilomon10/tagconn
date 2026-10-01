@@ -25,8 +25,8 @@ function ComboChips({ combo }: { combo: string }) {
 
 /**
  * The hotkey help overlay (M9 8f): every hotkey in the app, grouped by area, opened by `?` (ignored
- * while typing or another modal is open — `shouldOpenHelp`) or the "?" button in `TopBar` next to
- * "Hall Planner". Same dialog pattern as `FloorManager`/`PairingDialog` (backdrop click-away,
+ * while typing or another modal is open — `shouldOpenHelp`) or the "Keyboard shortcuts" row in the top
+ * bar's menu. Same dialog pattern as `FloorManager`/`PairingDialog` (backdrop click-away,
  * `data-modal`/`aria-modal` so other hotkeys stay quiet while it's open), plus the initial-focus and
  * focus-return this one is the first to add — see `HOTKEY_GROUPS`' comment for how the list here was
  * checked against the actual handlers rather than assumed.
@@ -48,7 +48,7 @@ export function HelpOverlay() {
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-20"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] dialog:p-4 dialog:pt-20"
       onClick={close}
       data-modal="help"
       aria-modal="true"
@@ -64,7 +64,7 @@ export function HelpOverlay() {
             </Button>
           }
         >
-          <div className="grid max-h-[70vh] gap-4 overflow-y-auto p-3 sm:grid-cols-2">
+          <div className="grid max-h-[calc(100dvh-5rem)] dialog:max-h-[calc(100dvh-10rem)] gap-4 overflow-y-auto p-3 sm:grid-cols-2">
             {HOTKEY_GROUPS.map((group) => (
               <section key={group.title}>
                 <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-300">{group.title}</h3>

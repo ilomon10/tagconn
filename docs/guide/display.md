@@ -38,8 +38,8 @@ not a setting inside tagconn, tagconn just honors the one your system already ha
 
 ### Screen effect (per browser)
 
-A **Screen** button in the top bar puts a "monitor" look over the whole office. Press it (or the `V`
-key) to switch the effect on or off; the small arrow next to it picks the look:
+**Screen effect** in the menu puts a "monitor" look over the whole office. Switch it on or off there
+(or with the `V` key); the CRT / LCD / VHS buttons under it pick the look:
 
 | Effect | Look |
 |---|---|

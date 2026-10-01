@@ -361,4 +361,52 @@ describe('heroes module (M8 8i)', () => {
     const list = await new Promise<{ ok: boolean; data?: Hero[] }>((resolve) => anon.emit('heroes:list', { projectId: pid }, resolve));
     expect(list.ok).toBe(true); // never denied/timed-out by the admin-guard's per-packet check
   });
+
+  it('PATCH role (M12): moves a released hero to the lowest free slot, 409 when bound or full; styles merge/null/reset', async () => {
+    app = await buildTestApp({ settings: { heroes: { maxPerRole: 2 } } });
+    const headers = adminHeaders(app);
+    await app.inject({ method: 'POST', url: '/api/hooks', payload: hook({ hook_event_name: 'SessionStart', cwd: CWD }) });
+    await app.inject({ method: 'POST', url: '/api/hooks', payload: hook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }) });
+    const pid = await projectId(app);
+    const create = async (role: string) =>
+      (await app!.inject({ method: 'POST', url: '/api/heroes', payload: { projectId: pid, role }, headers })).json<Hero>();
+    const patch = (id: string, payload: Record<string, unknown>) =>
+      app!.inject({ method: 'PATCH', url: `/api/heroes/${id}`, payload, headers });
+
+    // Bound hero (the main agent's pm GM) cannot change role.
+    const gm = (await app.inject({ url: `/api/heroes?projectId=${pid}` })).json<Hero[]>().find((h) => h.boundAgentId !== null)!;
+    expect((await patch(gm.id, { role: 'analyst' })).statusCode).toBe(409);
+
+    const a1 = await create('analyst');
+    const d1 = await create('developer');
+    const d2 = await create('developer');
+    // developer is full (2): analyst cannot move there.
+    const full = await patch(a1.id, { role: 'developer' });
+    expect(full.statusCode).toBe(409);
+    expect(full.json().error).toMatch(/maxPerRole/);
+
+    // Free slot 0 of developer, then move: lowest free slot, appearance untouched, customized.
+    await app.inject({ method: 'DELETE', url: `/api/heroes/${d1.id}`, headers });
+    const moved = await patch(a1.id, { role: 'developer' });
+    expect(moved.statusCode).toBe(200);
+    expect(moved.json<Hero>()).toMatchObject({ role: 'developer', slot: 0, customized: true, appearance: a1.appearance, name: a1.name });
+    expect(d2.slot).toBe(1);
+
+    // Styles: each named style is replaced wholesale, null or {} removes it (none left = undefined).
+    const s1 = (await patch(a1.id, { styles: { guild: { hat: 'wizard', title: 'Keeper' } } })).json<Hero>();
+    expect(s1.styles).toEqual({ guild: { hat: 'wizard', title: 'Keeper' } });
+    const s2 = (await patch(a1.id, { styles: { guild: { prop: 'staff' }, modern: { hairStyle: 2 } } })).json<Hero>();
+    expect(s2.styles).toEqual({ guild: { prop: 'staff' }, modern: { hairStyle: 2 } });
+    const s3 = (await patch(a1.id, { styles: { guild: {}, modern: null } })).json<Hero>();
+    expect(s3.styles).toBeUndefined();
+    const s4 = (await patch(a1.id, { styles: { rift: { skin: '#ffe0bd' } } })).json<Hero>();
+    expect(s4.styles).toEqual({ rift: { skin: '#ffe0bd' } });
+    // Persisted and listed.
+    expect((await app.inject({ url: `/api/heroes?projectId=${pid}` })).json<Hero[]>().find((h) => h.id === a1.id)?.styles).toEqual({ rift: { skin: '#ffe0bd' } });
+    // Unknown style rejected by the schema.
+    expect((await patch(a1.id, { styles: { nope: { hat: 'none' } } })).statusCode).toBe(400);
+
+    const reset = await app.inject({ method: 'POST', url: `/api/heroes/${a1.id}/reset`, headers: { 'content-type': 'application/json', ...headers } });
+    expect(reset.json<Hero>().styles).toBeUndefined();
+  });
 });

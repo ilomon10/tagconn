@@ -1,9 +1,10 @@
-import { generateHeroAppearance, heroSeed, namePoolFor, pickHeroName, type Hero, type HeroCreate, type HeroPatch } from '@tagconn/shared';
+import { generateHeroAppearance, HERO_LOOK_STYLES, isHeroReleased, type HeroStyleOverride, type HeroStyles, heroSeed, namePoolFor, pickHeroName, type Hero, type HeroCreate, type HeroPatch } from '@tagconn/shared';
 import { isDemo } from '../../lib/connection';
 import { heroSocket } from '../../lib/socket';
 import { demoHeroes } from '../../lib/mock';
 import { useHeroStore } from '../../stores/heroStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { diffHeroPatch, type HeroDraft } from './formState';
 
 /**
  * User-initiated hero writes (the hero editor). Mirrors `lib/layoutCommands.ts`: live mode goes over
@@ -83,6 +84,7 @@ export async function createHero(input: HeroCreate): Promise<Hero> {
       createdAt: now,
       updatedAt: now,
     };
+    if (input.styles) hero.styles = input.styles;
     useHeroStore.getState().upsertHero(hero);
     demoHeroes.saveDemoHeroes();
     return hero;
@@ -98,14 +100,40 @@ export async function patchHero(id: string, patch: HeroPatch): Promise<Hero> {
   if (isDemo()) {
     const existing = useHeroStore.getState().heroes[id];
     if (!existing) throw new Error(`Hero "${id}" not found`);
+    let role = existing.role;
+    let slot = existing.slot;
+    if (patch.role !== undefined && patch.role !== existing.role) {
+      if (!isHeroReleased(existing)) throw new Error(`Hero "${id}" is bound to a live agent; release it before changing its role`);
+      const cfg = useSettingsStore.getState().settings.heroes;
+      const target = Object.values(useHeroStore.getState().heroes).filter((h) => h.projectId === existing.projectId && h.role === patch.role);
+      if (target.length >= cfg.maxPerRole) throw new Error(`Cannot move hero: at most ${cfg.maxPerRole} heroes per role may be stored (heroes.maxPerRole)`);
+      const used = new Set(target.map((h) => h.slot));
+      slot = 0;
+      while (used.has(slot)) slot++;
+      role = patch.role;
+    }
+    let styles: HeroStyles | undefined = existing.styles;
+    if (patch.styles) {
+      const next: Record<string, HeroStyleOverride> = { ...(existing.styles ?? {}) };
+      for (const style of HERO_LOOK_STYLES) {
+        const o = patch.styles[style];
+        if (o === null || (o && Object.keys(o).length === 0)) delete next[style];
+        else if (o) next[style] = o;
+      }
+      styles = Object.keys(next).length > 0 ? next : undefined;
+    }
     const updated: Hero = {
       ...existing,
+      role,
+      slot,
       name: patch.name ?? existing.name,
       title: patch.title === undefined ? existing.title : patch.title,
       appearance: { ...existing.appearance, ...(patch.appearance ?? {}) },
       customized: true,
       updatedAt: Date.now(),
     };
+    if (styles) updated.styles = styles;
+    else delete updated.styles;
     useHeroStore.getState().upsertHero(updated);
     demoHeroes.saveDemoHeroes();
     return updated;
@@ -113,6 +141,13 @@ export async function patchHero(id: string, patch: HeroPatch): Promise<Hero> {
   const updated = await heroSocket.update(id, patch);
   useHeroStore.getState().upsertHero(updated);
   return updated;
+}
+
+/** Saves a draft in one PATCH. `force` sends every field without `baseUpdatedAt` (conflict "Overwrite").
+ *  Resolves with the saved hero, or `hero` itself when nothing changed. */
+export async function saveHeroDraft(hero: Hero, draft: HeroDraft, force = false): Promise<Hero> {
+  const patch = diffHeroPatch(hero, draft, force);
+  return patch ? patchHero(hero.id, patch) : hero;
 }
 
 /** `POST /api/heroes/:id/reset` / `heroes:reset`: regenerates the seeded name and appearance, clearing `customized`. */
@@ -133,6 +168,7 @@ export async function resetHero(id: string): Promise<Hero> {
       customized: false,
       updatedAt: Date.now(),
     };
+    delete updated.styles;
     useHeroStore.getState().upsertHero(updated);
     demoHeroes.saveDemoHeroes();
     return updated;

@@ -1,4 +1,5 @@
 import { isModalOpen, isTypingTarget } from '../../lib/floors';
+import { MENU_HOTKEYS } from '../../app/menuHotkeys';
 
 /**
  * One shortcut row: `combos` are alternative key combinations that all do the same thing (rendered
@@ -19,8 +20,8 @@ export interface HotkeyGroup {
  * Every hotkey in the app, grouped by area (M9 8f). Each entry below was checked against the
  * handler that implements it, not copied from docs:
  *   - Office: `features/office/OfficeView.tsx`'s two global `keydown` listeners (floor nav + `F`,
- *     and `[`/`]` roster cycling — `lib/floors.ts`'s `cycleIndex`), `app/TopBar.tsx`'s `H` (Heroes)
- *     and `V` (screen effect) listeners, and this feature's own `?`.
+ *     and `[`/`]` roster cycling — `lib/floors.ts`'s `cycleIndex`) and this feature's own `?`.
+ *   - Menu: `app/menuHotkeys.ts` (`MENU_HOTKEYS`), registered once by `app/useMenuActions.ts`.
  *   - Hall Planner: `features/editor/shortcuts.ts`'s `resolveShortcut`.
  * Keep this in sync when a hotkey changes — there's no single source of truth to derive it from.
  */
@@ -33,12 +34,26 @@ export const HOTKEY_GROUPS: HotkeyGroup[] = [
       { combos: ['Home'], description: 'Ground floor' },
       { combos: ['End'], description: 'Top floor' },
       { combos: ['F'], description: 'Manage floors' },
-      { combos: ['H'], description: 'Heroes' },
-      { combos: ['V'], description: 'Screen effect' },
       { combos: ['['], description: 'Previous character' },
       { combos: [']'], description: 'Next character' },
-      { combos: ['Esc'], description: 'Close panel' },
+      { combos: ['Esc'], description: 'Close the character panel' },
       { combos: ['?'], description: 'Keyboard shortcuts (this dialog)' },
+    ],
+  },
+  {
+    title: 'Menu and panels',
+    entries: [
+      { combos: [MENU_HOTKEYS.menu], description: 'Open the menu' },
+      { combos: [MENU_HOTKEYS.board], description: 'Board' },
+      { combos: [MENU_HOTKEYS.log], description: 'Log' },
+      { combos: [MENU_HOTKEYS.quests], description: 'Quests' },
+      { combos: [MENU_HOTKEYS.roles], description: 'Roles' },
+      { combos: [MENU_HOTKEYS.settings], description: 'Settings' },
+      { combos: [MENU_HOTKEYS.heroes], description: 'Heroes' },
+      { combos: [MENU_HOTKEYS.planner], description: 'Hall Planner' },
+      { combos: [MENU_HOTKEYS.receptionist], description: 'Receptionist (the desk)' },
+      { combos: [MENU_HOTKEYS.screen], description: 'Screen effect on/off' },
+      { combos: ['Esc'], description: 'Close the top panel' },
     ],
   },
   {

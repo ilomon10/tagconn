@@ -28,6 +28,8 @@ export interface HookContext {
   ts: number;
   /** Set by projects. */
   projectId: string;
+  /** Validated `x-tagconn-project-root` header (M12): the repo root the hook ran in, if sent. */
+  projectRoot?: string;
   sessionId: string;
   /** Set by agents: the agent the event is attributed to. */
   agentId: string;

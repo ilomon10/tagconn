@@ -12,7 +12,7 @@ panel in the browser; it can answer questions about a project or about tagconn i
 2. **Get the runner online** — every Receptionist turn is a run through the host runner, same as a
    quest (see [Runner & quests](runner-and-quests.md)). Without a connected runner the panel shows
    an "offline" badge and disables sending.
-3. **Open the panel** — click **Receptionist** in the top bar (or click the NPC itself, standing at
+3. **Open the panel** — click **Receptionist** in the menu (`D`) (or click the NPC itself, standing at
    the gate/Nexus on the floor).
 4. **Pick a scope** for a new conversation:
    - **General** — tagconn and general knowledge, no project files. Always available.

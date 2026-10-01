@@ -5,7 +5,7 @@
 // `curl` on PATH for sh and a local HTTP server for node (so nothing ever touches the network) and a sandboxed
 // HOME/CLAUDE_PROJECT_DIR (never the real ones - see support/real-paths-guard.ts).
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -114,6 +114,38 @@ describe('office-hook basics', () => {
     await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, { TAGCONN_RUN_ID: 'not-a-uuid' });
     await afterBackground();
     expect(readFileSync(sandbox.logFile, 'utf8')).not.toContain('run-id');
+  });
+
+  const rootHeader = (log: string) => /ARG: x-tagconn-project-root: (\S+)/.exec(log)?.[1];
+  const decode = (b64: string | undefined) => (b64 ? Buffer.from(b64, 'base64').toString('utf8') : undefined);
+
+  it('sends x-tagconn-project-root as base64 of CLAUDE_PROJECT_DIR when it is not in a git repo', async () => {
+    sandbox = await createHookSandbox();
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' });
+    await afterBackground();
+    const b64 = rootHeader(readFileSync(sandbox.logFile, 'utf8'));
+    expect(b64).toMatch(/^[A-Za-z0-9+/]+=*$/);
+    expect(decode(b64)).toBe(sandbox.projectDir);
+  });
+
+  it('sends the git toplevel when CLAUDE_PROJECT_DIR is a subdirectory of a repo', async () => {
+    sandbox = await createHookSandbox();
+    const init = spawnSync('git', ['init', '-q', sandbox.projectDir]);
+    if (init.status !== 0) return; // no git on this machine: nothing to assert
+    const sub = join(sandbox.projectDir, 'apps', 'web');
+    mkdirSync(sub, { recursive: true });
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, { CLAUDE_PROJECT_DIR: sub });
+    await afterBackground();
+    const root = decode(rootHeader(readFileSync(sandbox.logFile, 'utf8')));
+    expect(root && realpathSync(root)).toBe(realpathSync(sandbox.projectDir));
+  });
+
+  it('omits the header when CLAUDE_PROJECT_DIR is unset or not absolute', async () => {
+    sandbox = await createHookSandbox();
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, { CLAUDE_PROJECT_DIR: '' });
+    await runHook(sandbox, { session_id: 's', hook_event_name: 'PreToolUse' }, { CLAUDE_PROJECT_DIR: 'relative/dir' });
+    await afterBackground();
+    expect(readFileSync(sandbox.logFile, 'utf8')).not.toContain('x-tagconn-project-root');
   });
 });
 

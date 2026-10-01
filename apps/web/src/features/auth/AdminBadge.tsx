@@ -67,7 +67,7 @@ export function AdminBadge() {
   return (
     <div ref={menuRef} className="relative flex items-center gap-2">
       {toast && (
-        <span role="status" className="whitespace-nowrap rounded-full bg-ink-850/95 px-2.5 py-1 text-[11px] text-ink-100 shadow-lg">
+        <span role="status" className="whitespace-nowrap rounded-full bg-ink-850/95 px-2.5 py-1 text-[11px] text-ink-100 shadow-lg max-sm:fixed max-sm:inset-x-2 max-sm:top-14 max-sm:z-30 max-sm:whitespace-normal max-sm:rounded-lg max-sm:text-center">
           {toast}
         </span>
       )}
@@ -77,7 +77,7 @@ export function AdminBadge() {
         title={locked ? 'Pair this browser to make changes' : 'Admin session active — click for sessions and logout'}
       >
         <span className={cx('size-2 rounded-full', locked ? 'bg-ink-500' : 'bg-emerald-400')} />
-        {locked ? 'Locked' : 'Admin'}
+        <span className="max-sm:sr-only">{locked ? 'Locked' : 'Admin'}</span>
       </Button>
       {menuOpen && !locked && (
         <div className="absolute right-0 top-full z-20 mt-1 w-40 rounded-md border border-ink-700 bg-ink-850 p-1 shadow-lg">

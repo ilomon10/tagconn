@@ -179,7 +179,7 @@ export const HeroPatchSchema = z.strictObject({
   name: HeroNameSchema.optional(),
   title: HeroTitleSchema.nullable().optional(),
   appearance: HeroAppearanceSchema.partial().optional(),
-  /** Per style: fields merge into that style's overrides; `null` removes the style's overrides. */
+  /** Per style: the override replaces that style's stored override; `null` (or `{}`) removes it. */
   styles: z.partialRecord(z.enum(HERO_LOOK_STYLES), HeroStyleOverrideSchema.nullable()).optional(),
   /** Optimistic concurrency, same semantics as layouts: 409 when the stored `updatedAt` differs. */
   baseUpdatedAt: z.number().optional(),

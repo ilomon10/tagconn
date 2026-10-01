@@ -120,6 +120,10 @@ export const MIGRATIONS: string[] = [
     unknown_roles TEXT NOT NULL, profile TEXT NOT NULL, imported_at INTEGER, source TEXT
   );
   `,
+  /* 10: M12 hero per-style overrides and tool start time */ `
+  ALTER TABLE heroes ADD COLUMN styles TEXT;
+  ALTER TABLE agents ADD COLUMN tool_started_at INTEGER;
+  `,
 ];
 
 export function migrate(sqlite: Database.Database): number {

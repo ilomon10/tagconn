@@ -104,7 +104,7 @@ function ShaderEffectsGroup({ value, base, onChange }: { value: Shaders; base: S
   return (
     <div className="col-span-full space-y-2 rounded-md border border-ink-700 bg-ink-900/50 p-3">
       <h3 className="text-[11px] font-semibold tracking-wide text-ink-300">Visual effects</h3>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 xl:grid-cols-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 xl:grid-cols-3">
         <Field label={label('Enabled', 'enabled')} hint={KEY_HINTS['office.shaders.enabled']}>
           <Checkbox checked={value.enabled} onChange={(v) => set('enabled', v)} label={value.enabled ? 'On' : 'Off'} />
         </Field>
@@ -225,7 +225,7 @@ function SectionPanel({ section, values, base, set, roles }: { section: Section;
     section === 'activity' ? (
       <RulesTable rules={values.rules as ActivityRule[]} onChange={(r) => set('activity', 'rules', r)} />
     ) : (
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 xl:grid-cols-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 xl:grid-cols-3">
         {section === 'runner' && <RunnerNotice />}
         {section === 'office' && (
           <ShaderEffectsGroup
@@ -364,8 +364,7 @@ export function SettingsPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-3 border-b border-ink-700 bg-ink-900 px-4 py-2">
-        <h1 className="text-sm font-semibold">Settings</h1>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink-700 bg-ink-900 px-4 py-2">
         {!loaded && <Badge className="bg-ink-700 text-ink-400">defaults (server not loaded)</Badge>}
         {dirty && <span className="text-[11px] text-cozy">{changed.length} unsaved change{changed.length === 1 ? '' : 's'}</span>}
         {dirty && remoteChanged && <span className="text-[11px] text-amber-300">Settings changed elsewhere — saving overwrites those keys.</span>}

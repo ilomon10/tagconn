@@ -56,11 +56,11 @@ export function QuestBoard() {
   const selectedRun = selectedRunId ? runsMap[selectedRunId] : undefined;
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="relative flex h-full overflow-hidden">
       <div className="flex h-full min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         <RunnerStatusBanner />
         <div className="flex items-center justify-between">
-          <h1 className="text-sm font-semibold text-ink-100">Quest board</h1>
+          <h2 className="text-sm font-semibold text-ink-100">Quest board</h2>
           <Button variant="primary" onClick={() => setFormOpen(true)}>
             New quest
           </Button>

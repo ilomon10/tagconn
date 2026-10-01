@@ -58,3 +58,8 @@ export function pickReceptionistSpot(map: GeneratedMap): Point {
 function tileKey(p: Point): string {
   return `${p.x},${p.y}`;
 }
+
+/** True when `spot` is a tile of a `reception-desk` item, i.e. the Receptionist sits "behind the counter". */
+export function isReceptionDeskTile(map: GeneratedMap, spot: Point): boolean {
+  return map.furniture.some((f) => f.kind === 'reception-desk' && spot.x >= f.x && spot.x < f.x + f.w && spot.y >= f.y && spot.y < f.y + f.h);
+}

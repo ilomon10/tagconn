@@ -1,22 +1,23 @@
 import { useEffect, useRef } from 'react';
-import type { HeroAppearance } from '@tagconn/shared';
+import type { HeroAppearance, HeroLookStyle } from '@tagconn/shared';
 import { resolveCostume } from '../../game/lookResolver';
 import { paintHeroPreview } from '../../game/heroPreview';
 import { getTheme } from '../../game/themes';
 
 /**
- * The hero editor's live preview (docs/design/living-office.md section 3.4): "a live preview is
- * rendered at 6x in both styles side by side (guild and modern) ... a 2D canvas painter over the
- * same ASCII bitmaps (see W4), so it needs no Phaser." `paintHeroPreview`/`resolveCostume` do the
- * actual drawing (`game/heroPreview.ts`, `game/lookResolver.ts`); this component only owns the
- * canvas refs and re-paints them whenever the appearance, role or role colour changes.
+ * The hero editor's live preview (docs/design/living-office.md section 3.4): a 2D canvas painter over
+ * the same ASCII bitmaps at 6x, so it needs no Phaser. It shows one style at a time (the editor's
+ * selected tab, M12): the caller resolves the appearance with `heroLookForStyle`, this component
+ * dresses it with that style's theme costume (rift reuses the guild costumes).
  */
 
 const SCALE = 6;
 const FRAME_W = 40;
 const FRAME_H = 46;
 
-function Frame({ label, appearance, role, roleColor, style }: { label: string; appearance: HeroAppearance; role: string; roleColor: number; style: 'guild' | 'modern' }) {
+const STYLE_LABELS: Record<HeroLookStyle, string> = { modern: 'Modern', guild: 'Guild', rift: 'Rift' };
+
+export function HeroPreview({ appearance, role, roleColor, style }: { appearance: HeroAppearance; role: string; roleColor: number; style: HeroLookStyle }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -24,10 +25,9 @@ function Frame({ label, appearance, role, roleColor, style }: { label: string; a
     const ctx = canvas?.getContext('2d');
     if (!ctx || !canvas) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const theme = getTheme(style);
     paintHeroPreview(ctx, {
       appearance,
-      themeCostume: resolveCostume(theme, role),
+      themeCostume: resolveCostume(getTheme(style), role),
       roleColor,
       scale: SCALE,
       originX: (FRAME_W / 2) * SCALE,
@@ -36,18 +36,9 @@ function Frame({ label, appearance, role, roleColor, style }: { label: string; a
   }, [appearance, role, roleColor, style]);
 
   return (
-    <figure className="flex flex-col items-center gap-1">
-      <canvas ref={ref} width={FRAME_W * SCALE} height={FRAME_H * SCALE} className="rounded-md bg-ink-950" role="img" aria-label={`${label} style preview`} />
-      <figcaption className="text-[10px] text-ink-400">{label}</figcaption>
+    <figure className="flex flex-col items-center gap-1 rounded-lg border border-ink-700 bg-ink-900 p-4">
+      <canvas ref={ref} width={FRAME_W * SCALE} height={FRAME_H * SCALE} className="rounded-md bg-ink-950" role="img" aria-label={`${STYLE_LABELS[style]} style preview`} />
+      <figcaption className="text-[10px] text-ink-400">{STYLE_LABELS[style]}</figcaption>
     </figure>
-  );
-}
-
-export function HeroPreview({ appearance, role, roleColor }: { appearance: HeroAppearance; role: string; roleColor: number }) {
-  return (
-    <div className="flex items-center justify-center gap-6 rounded-lg border border-ink-700 bg-ink-900 p-4">
-      <Frame label="Guild" appearance={appearance} role={role} roleColor={roleColor} style="guild" />
-      <Frame label="Modern" appearance={appearance} role={role} roleColor={roleColor} style="modern" />
-    </div>
   );
 }

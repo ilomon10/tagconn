@@ -36,6 +36,11 @@ const GLOW_SELECTED = 6;
 const GLOW_HOVER = 3;
 /** M8 8c: resting heroes read as visibly "away" without disappearing. */
 const RESTING_ALPHA = 0.85;
+/** M12 selection beacon: pixel size of the chevron's rows (in beacon units, before `beaconScale`). */
+const BEACON_PX = 2;
+const BEACON_ROWS = 5;
+/** Extra overlay depth while the beacon shows, so it is never hidden under a neighbour's tag/bubble. */
+const BEACON_DEPTH_BOOST = 40_000;
 
 function hash(s: string): number {
   let h = 2166136261;
@@ -100,6 +105,13 @@ export class Character extends Phaser.GameObjects.Container {
    *  plus outline drawn under the feet, in the same place `preFX.addGlow` highlights on WebGL. */
   private canvasGlow: Phaser.GameObjects.Graphics;
   readonly overlay: Phaser.GameObjects.Container;
+  /** M12 selection beacon (overlay layer, counter-scaled by the scene via `setBeaconScale`): a
+   *  bobbing chevron above the head and a ring at the feet, both in the role colour. */
+  private beaconArrow: Phaser.GameObjects.Graphics;
+  private beaconRing: Phaser.GameObjects.Graphics;
+  private beaconEnabled = false;
+  private beaconSize = 1;
+  private beaconStatic = false;
   private tag: Phaser.GameObjects.Text;
   /** M8 8b: the Guild Master's session-count chip, next to the tag. Created lazily (only GMs get one). */
   private chip?: Phaser.GameObjects.Text;
@@ -214,6 +226,8 @@ export class Character extends Phaser.GameObjects.Container {
         .text(0, 3, '', { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '5px', color: '#ffffff', backgroundColor: '#15121ecc', padding: { x: 1.5, y: 0.5 }, resolution: TEXT_RES })
         .setOrigin(0.5, 0),
     );
+    this.beaconRing = scene.add.graphics().setVisible(false);
+    this.beaconArrow = scene.add.graphics().setVisible(false);
     this.leaderLine = scene.add.graphics();
     this.bubbleBg = scene.add.graphics();
     this.bubbleText = crisp(
@@ -222,7 +236,7 @@ export class Character extends Phaser.GameObjects.Container {
         .setOrigin(0.5, 1),
     );
     this.bubble = scene.add.container(0, -22, [this.bubbleBg, this.bubbleText]).setVisible(false);
-    this.overlay = scene.add.container(x, y, [this.tag, this.leaderLine, this.bubble]);
+    this.overlay = scene.add.container(x, y, [this.beaconRing, this.beaconArrow, this.tag, this.leaderLine, this.bubble]);
 
     this.hitRect = new Phaser.Geom.Rectangle(-7, -18, 14, 20);
     this.setInteractive(this.hitRect, Phaser.Geom.Rectangle.Contains);
@@ -234,6 +248,7 @@ export class Character extends Phaser.GameObjects.Container {
     if (look.color !== this.roleColor) {
       this.roleColor = look.color;
       if (this.selected || this.hovered) this.refreshSelectionFx();
+      if (this.beaconEnabled && this.selected) this.paintBeacon();
     }
     if (showTag !== this.tagAllowedByLook) {
       this.tagAllowedByLook = showTag;
@@ -343,6 +358,7 @@ export class Character extends Phaser.GameObjects.Container {
     if (this.selected === selected) return;
     this.selected = selected;
     this.refreshSelectionFx();
+    this.refreshBeacon();
   }
 
   /** Subtle hover highlight for discoverability — a fainter, non-pulsing version of the same glow,
@@ -352,6 +368,88 @@ export class Character extends Phaser.GameObjects.Container {
     this.hovered = hovered;
     this.refreshSelectionFx();
     this.applyCollapse();
+  }
+
+  /** `office.selectionBeacon` gate: the beacon shows while this is on AND the character is selected. */
+  setBeaconEnabled(enabled: boolean) {
+    if (this.beaconEnabled === enabled) return;
+    this.beaconEnabled = enabled;
+    this.refreshBeacon();
+  }
+
+  /** Local scale of the beacon pieces (`game/camera/beacon.ts#beaconScale`, 1/zoom without a cap). */
+  setBeaconScale(scale: number) {
+    if (scale === this.beaconSize) return;
+    this.beaconSize = scale;
+    this.beaconArrow.setScale(scale);
+    this.beaconRing.setScale(scale);
+  }
+
+  private get beaconVisible(): boolean {
+    return this.beaconEnabled && this.selected;
+  }
+
+  private refreshBeacon() {
+    const on = this.beaconVisible;
+    this.beaconStatic = prefersReducedMotion();
+    this.beaconArrow.setVisible(on);
+    this.beaconRing.setVisible(on);
+    if (on) this.paintBeacon();
+  }
+
+  /** Pixel-art downward chevron (tip at the origin, rows grow upward) with a dark outline, plus a
+   *  feet ring; drawn once per role colour at beacon scale 1. */
+  private paintBeacon() {
+    const a = this.beaconArrow;
+    a.clear();
+    const px = BEACON_PX;
+    for (let i = 0; i < BEACON_ROWS; i++) {
+      const w = (1 + 2 * i) * px;
+      a.fillStyle(0x15121e, 0.9);
+      a.fillRect(-w / 2 - 1, -(i + 1) * px - 1, w + 2, px + 2);
+    }
+    for (let i = 0; i < BEACON_ROWS; i++) {
+      const w = (1 + 2 * i) * px;
+      a.fillStyle(i === BEACON_ROWS - 1 ? lighten(this.roleColor, 0.35) : this.roleColor, 1);
+      a.fillRect(-w / 2, -(i + 1) * px, w, px);
+    }
+    const r = this.beaconRing;
+    r.clear();
+    r.lineStyle(4, 0x15121e, 0.55);
+    r.strokeEllipse(0, 1, 22, 12);
+    r.lineStyle(2, this.roleColor, 1);
+    r.strokeEllipse(0, 1, 22, 12);
+  }
+
+  /** Per-frame beacon placement: bob (static under reduced motion) and lift above a bubble that
+   *  sits right over the head. `baseY`/`bx`/`by` are `animate()`'s head/bubble anchors. */
+  private updateBeacon(now: number, iconUp: boolean, bubbleX: number, bubbleY: number) {
+    if (!this.beaconVisible) return;
+    const s = this.beaconSize;
+    let tip = iconUp ? -35 : -27;
+    if (this.bubbleWantsShow && this.bubbleAllowedByLod) {
+      const ls = this.labelScale;
+      if (Math.abs(bubbleX) < (this.bubbleW * ls) / 2 + BEACON_PX * BEACON_ROWS * s) tip = Math.min(tip, bubbleY - this.bubbleH * ls - 2);
+    }
+    const phase = this.beaconStatic ? 0 : Math.sin(now / 1000 * 5);
+    this.beaconArrow.setPosition(0, tip - 2 * s * (phase * 0.5 + 0.5));
+    this.beaconRing.setAlpha(this.beaconStatic ? 1 : 0.7 + 0.3 * Math.sin(now / 1000 * 3));
+  }
+
+  /** Role colour (the beacon, glow and tag all use it); the scene tints the off-screen arrow with it. */
+  get accent(): number {
+    return this.roleColor;
+  }
+
+  /** The name-tag text ("Name · Title"); the scene's off-screen arrow labels the selection with it. */
+  get tagText(): string {
+    return this.tag.text;
+  }
+
+  /** Shows/hides the body AND its overlay (tag/bubble/beacon) together. */
+  setShown(shown: boolean) {
+    this.setVisible(shown);
+    this.overlay.setVisible(shown);
   }
 
   /** Focus mode (`office.focusDim`): everyone but the selected character dims by this much while
@@ -396,6 +494,9 @@ export class Character extends Phaser.GameObjects.Container {
     // own Image, so glowing it reads as a soft ring at the feet rather than distorting the sprite.
     const webgl = this.scene.game.renderer.type === Phaser.WEBGL;
     if (webgl && this.shadow.preFX) {
+      // The glow source is only the 10x3 shadow image: without padding the post-FX framebuffer
+      // clips the glow at the image's own box and it is invisible when zoomed out.
+      this.shadow.preFX.setPadding(16);
       this.glow = this.shadow.preFX.addGlow(this.roleColor, strength, 0, false, 0.15, 12);
       this.canvasGlow.setVisible(false);
       if (this.selected && !prefersReducedMotion()) {
@@ -662,7 +763,7 @@ export class Character extends Phaser.GameObjects.Container {
     this.animate(now);
     this.setDepth(this.y);
     this.overlay.setPosition(this.x, this.y);
-    this.overlay.setDepth(100_000 + this.y);
+    this.overlay.setDepth(100_000 + this.y + (this.beaconVisible ? BEACON_DEPTH_BOOST : 0));
     if (this.bubbleUntil && now > this.bubbleUntil) {
       this.bubbleUntil = 0;
       this.bubbleWantsShow = false;
@@ -814,6 +915,7 @@ export class Character extends Phaser.GameObjects.Container {
     const bx = this.labelDx;
     const by = baseY + this.labelDy;
     this.bubble.setPosition(bx, by);
+    this.updateBeacon(now, !!icon, bx, by);
     this.leaderLine.clear();
     if (this.labelLeader && this.bubbleWantsShow && this.bubbleAllowedByLod) {
       this.leaderLine.lineStyle(1, 0xfdf6e3, 0.5);

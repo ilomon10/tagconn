@@ -11,6 +11,8 @@ import {
   HeroCreateSchema,
   heroRoleFor,
   type HeroPatch,
+  type HeroStyleOverride,
+  type HeroStyles,
   HeroPatchSchema,
   heroSeed,
   isHeroReleased,
@@ -28,6 +30,29 @@ type HeroesDeps = Deps<'heroesRepository' | 'projectsRepository' | 'agentsReposi
  * hand-authored CRUD for the hero editor. Never imports the agents module's internals: agent state
  * flows in only through `onAgentUpserted`/`onAgentRemoved`, wired to the bus by `index.ts`.
  */
+/**
+ * Per style: the override replaces that style's stored override; `null` (or `{}`) removes it. Styles not
+ * named are untouched, and no styles at all yields `undefined`.
+ */
+function mergeStyles(
+  current: HeroStyles | undefined,
+  patch: Partial<Record<keyof HeroStyles, HeroStyleOverride | null>> | undefined,
+): HeroStyles | undefined {
+  const out: Record<string, HeroStyleOverride> = { ...(current ?? {}) };
+  for (const [style, value] of Object.entries(patch ?? {})) {
+    if (value === undefined) continue;
+    if (value === null) {
+      delete out[style];
+      continue;
+    }
+    const next: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) if (v !== undefined) next[k] = v;
+    if (Object.keys(next).length > 0) out[style] = next as HeroStyleOverride;
+    else delete out[style];
+  }
+  return Object.keys(out).length > 0 ? (out as HeroStyles) : undefined;
+}
+
 export class HeroesService {
   /** Liveness/activity of every tracked agent, seeded at boot and kept current from the bus. */
   private readonly agentState = new Map<string, BoundAgentState>();
@@ -188,6 +213,7 @@ export class HeroesService {
     const seed = heroSeed(input.projectId, input.role, slot);
     const name = input.name ?? pickHeroName(namePoolFor(cfg.namePools, input.role), projectHeroes.map((h) => h.name), seed, this.roleTitle(input.role));
     const appearance: HeroAppearance = { ...generateHeroAppearance(seed), ...(input.appearance ?? {}) };
+    const styles = mergeStyles(undefined, input.styles);
     const now = Date.now();
     const hero: Hero = {
       id: this.freshId(),
@@ -197,7 +223,9 @@ export class HeroesService {
       name,
       title: input.title ?? null,
       appearance,
-      customized: input.name !== undefined || input.title !== undefined || input.appearance !== undefined,
+      ...(styles && { styles }),
+      customized:
+        input.name !== undefined || input.title !== undefined || input.appearance !== undefined || styles !== undefined,
       boundAgentId: null,
       boundAt: null,
       releasedAt: null,
@@ -217,11 +245,30 @@ export class HeroesService {
     if (patch.baseUpdatedAt !== undefined && existing.updatedAt !== patch.baseUpdatedAt) {
       throw new HttpError(409, `Hero "${id}" was changed since you loaded it`);
     }
+    let role = existing.role;
+    let slot = existing.slot;
+    if (patch.role !== undefined && patch.role !== existing.role) {
+      if (!isHeroReleased(existing)) throw new HttpError(409, `Hero "${id}" is bound to a live agent and cannot change role`);
+      const { maxPerRole } = this.deps.settings.get().heroes;
+      const roleHeroes = this.repo.list(existing.projectId).filter((h) => h.role === patch.role);
+      if (roleHeroes.length >= maxPerRole) {
+        throw new HttpError(409, `Cannot move hero: role "${patch.role}" already has ${maxPerRole} heroes (heroes.maxPerRole)`);
+      }
+      const used = new Set(roleHeroes.map((h) => h.slot));
+      slot = 0;
+      while (used.has(slot)) slot++;
+      role = patch.role;
+    }
+    const styles = mergeStyles(existing.styles, patch.styles);
+    const { styles: _oldStyles, ...rest } = existing;
     const updated: Hero = {
-      ...existing,
+      ...rest,
+      role,
+      slot,
       name: patch.name ?? existing.name,
       title: patch.title === undefined ? existing.title : patch.title,
       appearance: { ...existing.appearance, ...(patch.appearance ?? {}) },
+      ...(styles && { styles }),
       customized: true,
       updatedAt: Date.now(),
     };
@@ -241,8 +288,9 @@ export class HeroesService {
       .filter((h) => h.id !== id)
       .map((h) => h.name);
     const cfg = this.deps.settings.get().heroes;
+    const { styles: _oldStyles, ...rest } = existing;
     const updated: Hero = {
-      ...existing,
+      ...rest,
       name: pickHeroName(namePoolFor(cfg.namePools, existing.role), taken, seed, this.roleTitle(existing.role)),
       title: null,
       appearance: generateHeroAppearance(seed),

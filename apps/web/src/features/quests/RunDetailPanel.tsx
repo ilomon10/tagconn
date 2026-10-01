@@ -81,7 +81,7 @@ export function RunDetailPanel({ run, onClose }: { run: Run; onClose: () => void
   };
 
   return (
-    <aside className="flex h-full w-[380px] shrink-0 flex-col border-l border-ink-700 bg-ink-900">
+    <aside className="absolute inset-0 z-10 flex h-full w-full shrink-0 flex-col border-l border-ink-700 bg-ink-900 md:static md:w-[380px]">
       <header className="flex items-center justify-between gap-2 border-b border-ink-700 px-3 py-2">
         <div className="flex items-center gap-2">
           <Badge>{run.status}</Badge>

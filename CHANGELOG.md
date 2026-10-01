@@ -7,6 +7,19 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Changed
+- A compact top bar with one **☰ Menu** (M): Board (B), Log (L), Quests (Q), Roles (R), Settings (S), Heroes (H), Hall Planner (P), Receptionist (D), Manage floors (F), screen effect, alerts and help. Board, Log, Quests, Roles and Settings now open as panels over the office instead of replacing it; `#board`-style links still work.
+- The web app works on phones and tablets, in portrait and landscape: panels become full-screen or side sheets, the roster becomes a tray, touch targets are larger, and you can pinch to zoom.
+- A floor is now the repository: the hook sends the session's git root, a session stays on the floor it started on, and existing floors for subfolders (e.g. `ovor/apps/platform`) are merged into their parent floor on upgrade.
+- Hero editor: change a hero's role (once it is released), and give it a different title and look per style (Modern, Guild, Rift) on tabs.
+- The Receptionist is drawn like every other character and dresses for the floor's style (Receptionist / Gatekeeper).
+
+### Fixed
+- Role titles follow your role settings and the floor's style everywhere (roster, drawer, tags, sessions popover); the lead no longer shows as "Guild Master" on Modern floors or on the Multiverse.
+- The selected character is easy to find at any zoom: an arrow and a ring that keep their size, and an edge arrow pointing to it when it is off-screen (`office.selectionBeacon`).
+- Subagents no longer appear on a separate floor without their lead when the session `cd`s into a subfolder.
+- Hero name pools accept spaces and new lines while typing.
+
 ## [0.5.1] - 2026-09-29
 
 ### Fixed

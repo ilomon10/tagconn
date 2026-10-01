@@ -45,11 +45,11 @@ export function KanbanBoard() {
   }, [tasks]);
 
   return (
-    <div className="grid h-full grid-cols-5 gap-3 overflow-x-auto p-4">
+    <div className="flex h-full snap-x gap-3 overflow-x-auto p-3 md:grid md:grid-cols-5 md:p-4">
       {COLUMNS.map((c) => {
         const list = byStatus.get(c.id) ?? [];
         return (
-          <section key={c.id} className={cx('flex min-h-0 min-w-44 flex-col rounded-lg border border-t-2 border-ink-700 bg-ink-850', c.accent)}>
+          <section key={c.id} className={cx('flex min-h-0 w-[72vw] shrink-0 snap-start flex-col rounded-lg md:w-auto md:min-w-44 border border-t-2 border-ink-700 bg-ink-850', c.accent)}>
             <header className="flex items-center justify-between px-3 py-2">
               <h2 className="text-xs font-semibold">{c.label}</h2>
               <span className="rounded bg-ink-700 px-1.5 text-[10px] text-ink-300">{list.length}</span>

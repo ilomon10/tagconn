@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ZERO_INSETS, centerInSafeRect, clampScrollToSafeBounds, insetsFromOverlay, safeViewportRect, type SafeInsets } from '../insets';
+import { ZERO_INSETS, centerInSafeRect, combineInsets, clampScrollToSafeBounds, insetsFromOverlay, safeViewportRect, type SafeInsets } from '../insets';
 import { centerOn, screenToWorld } from './phaserCameraModel';
 
 describe('safeViewportRect', () => {
@@ -179,5 +179,21 @@ describe('insetsFromOverlay', () => {
   it('tolerates sub-pixel slop at the touching edges', () => {
     const overlay = { top: -0.4, left: 700, right: 1000.3, bottom: 800.2 };
     expect(insetsFromOverlay(container, overlay).right).toBeCloseTo(300);
+  });
+});
+
+describe('combineInsets', () => {
+  it('is zero for no overlays', () => {
+    expect(combineInsets([])).toEqual(ZERO_INSETS);
+  });
+
+  it('takes the deepest inset on each edge', () => {
+    expect(combineInsets([{ ...ZERO_INSETS, bottom: 120 }, { ...ZERO_INSETS, bottom: 300 }, { ...ZERO_INSETS, right: 320 }])).toEqual({ ...ZERO_INSETS, bottom: 300, right: 320 });
+  });
+
+  it('treats a phone bottom sheet and a landscape side sheet as separate edges', () => {
+    const container = { top: 0, left: 0, right: 375, bottom: 619 };
+    const sheet = { top: 369, left: 0, right: 375, bottom: 619 };
+    expect(combineInsets([insetsFromOverlay(container, sheet)])).toEqual({ ...ZERO_INSETS, bottom: 250 });
   });
 });

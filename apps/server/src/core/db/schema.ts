@@ -1,4 +1,4 @@
-import type { HeroAppearance, SessionOrigin, TokenUsage } from '@tagconn/shared';
+import type { HeroAppearance, HeroStyles, SessionOrigin, TokenUsage } from '@tagconn/shared';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 // Keep in sync with migrations.ts (runtime DDL; drizzle-kit is not needed at runtime).
@@ -48,6 +48,8 @@ export const agents = sqliteTable(
     activity: text('activity').notNull(),
     zone: text('zone').notNull(),
     currentTool: text('current_tool'),
+    /** M12: when `currentTool` started (PreToolUse). */
+    toolStartedAt: integer('tool_started_at'),
     bubble: text('bubble'),
     lastMessage: text('last_message'),
     toolCount: integer('tool_count').notNull().default(0),
@@ -153,6 +155,8 @@ export const heroes = sqliteTable(
     name: text('name').notNull(),
     title: text('title'),
     appearance: text('appearance', { mode: 'json' }).notNull().$type<HeroAppearance>(),
+    /** M12: per-style look/title overrides (nullable JSON). */
+    styles: text('styles', { mode: 'json' }).$type<HeroStyles | null>(),
     customized: integer('customized', { mode: 'boolean' }).notNull().default(false),
     boundAgentId: text('bound_agent_id'),
     boundAt: integer('bound_at'),

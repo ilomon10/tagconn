@@ -118,3 +118,14 @@ export function insetsFromOverlay(container: EdgeRect, overlay: EdgeRect, edgeSl
   if (touchesTop && touchesLeft && touchesRight) return { ...ZERO_INSETS, top: Math.max(0, overlay.bottom - container.top) };
   return { ...ZERO_INSETS };
 }
+
+/**
+ * Merge the insets of several overlays shown at once (an agent drawer plus the roster tray, ...): the
+ * camera must stay clear of the deepest one on each edge, so it is the per-edge maximum.
+ */
+export function combineInsets(list: readonly SafeInsets[]): SafeInsets {
+  return list.reduce<SafeInsets>(
+    (acc, i) => ({ top: Math.max(acc.top, i.top), right: Math.max(acc.right, i.right), bottom: Math.max(acc.bottom, i.bottom), left: Math.max(acc.left, i.left) }),
+    { ...ZERO_INSETS },
+  );
+}
