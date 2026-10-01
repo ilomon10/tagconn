@@ -27,12 +27,17 @@ const leafPaths: string[] = sections
  * and should have its own hint.
  */
 const M13_SECTIONS = ['labels', 'life', 'npcs', 'alerts', 'audio'] as const;
+const flatten = (prefix: string, o: Record<string, unknown>): string[] =>
+  Object.entries(o).flatMap(([k, v]) => (v && typeof v === 'object' && !Array.isArray(v) ? flatten(`${prefix}.${k}`, v as Record<string, unknown>) : [`${prefix}.${k}`]));
+const M14_LEAVES = [...flatten('progression', settings.progression), ...flatten('battle', settings.battle)];
 const nestedLeafPaths: string[] = Object.keys(settings.office.shaders)
   .map((k) => `office.shaders.${k}`)
   // M12: `office.drama` is a fixed-shape object whose keys carry their own hints.
   .concat(Object.keys(settings.office.drama).map((k) => `office.drama.${k}`))
   // M13: fixed-shape sections with their own hints.
-  .concat(M13_SECTIONS.flatMap((s) => Object.keys(settings.office[s]).map((k) => `office.${s}.${k}`)));
+  .concat(M13_SECTIONS.flatMap((s) => Object.keys(settings.office[s]).map((k) => `office.${s}.${k}`)))
+  // M14: progression and battle leaves, including the fixed-shape xpWeights / items groups.
+  .concat(M14_LEAVES);
 
 describe('SECTION_LABELS', () => {
   it('has a title and hint for every settings section', () => {
@@ -52,6 +57,10 @@ describe('KEY_HINTS', () => {
   it('covers every key of every new M8 section', () => {
     const missing = leafPaths.filter((path) => newSections.has(path.split('.')[0] as keyof Settings) && !KEY_HINTS[path]);
     expect(missing).toEqual([]);
+  });
+
+  it('covers every progression and battle leaf (M14)', () => {
+    expect(M14_LEAVES.filter((path) => !KEY_HINTS[path])).toEqual([]);
   });
 
   it('covers every office.shaders key (M8 8o)', () => {
@@ -98,6 +107,16 @@ describe('numberBounds', () => {
       for (const [k, v] of Object.entries(settings.office[sec])) if (typeof v === 'number') expect(numberBounds(`office.${sec}.${k}`).min, `${sec}.${k}`).toBeDefined();
     expect(NUMBER_STEP['office.audio.volume']).toBe(0.05);
     expect(ENUM_OPTIONS['office.labels.showTask']).toEqual(['focus', 'always', 'never']);
+  });
+  it('has bounds for every numeric M14 field and the fine steps', () => {
+    for (const path of M14_LEAVES) {
+      const v = path.split('.').reduce<unknown>((o, k) => (o as Record<string, unknown>)[k], settings);
+      if (typeof v === 'number') expect(numberBounds(path).min, path).toBeDefined();
+    }
+    expect(numberBounds('battle.items.coffee')).toEqual({ min: 0, max: 9, int: true });
+    expect(numberBounds('progression.xpWeights.input')).toEqual({ min: 0, max: 10, int: false });
+    for (const k of ['progression.xpWeights.output', 'battle.offerChance', 'battle.lootChance', 'battle.difficulty', 'battle.xpScale']) expect(NUMBER_STEP[k], k).toBe(0.05);
+    expect(NUMBER_STEP['progression.levelExponent']).toBe(0.1);
   });
   it('reads min/max/int from the schema at nested depth', () => {
     expect(numberBounds('office.drama.idleChatSec')).toEqual({ min: 5, max: 3600, int: false });

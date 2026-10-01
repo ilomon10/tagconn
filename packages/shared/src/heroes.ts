@@ -76,6 +76,12 @@ const HexColorSchema = z
   .regex(HEX_COLOR_RE)
   .transform((s) => s.toLowerCase());
 
+/** M14: hats/props only obtainable as battle loot. When set they override `hat`/`prop`. */
+export const LOOT_HATS = ['cap', 'police-cap', 'fedora', 'hardhat'] as const;
+export type LootHat = (typeof LOOT_HATS)[number];
+export const LOOT_PROPS = ['mop', 'parcel', 'watering-can', 'clipboard'] as const;
+export type LootProp = (typeof LOOT_PROPS)[number];
+
 export const HeroAppearanceSchema = z.strictObject({
   skin: HexColorSchema,
   hairStyle: z
@@ -93,6 +99,10 @@ export const HeroAppearanceSchema = z.strictObject({
   accessory: z.enum(HERO_ACCESSORIES),
   /** Cloak colour when `accessory` is `cloak`; null = the theme's cloak colour, else the role colour. */
   accessoryColor: HexColorSchema.nullable(),
+  /** M14 loot hat; null/omitted = use `hat`. Ownership is checked by the UI (docs/design/battles.md 7). */
+  lootHat: z.enum(LOOT_HATS).nullable().optional(),
+  /** M14 loot prop; null/omitted = use `prop`. */
+  lootProp: z.enum(LOOT_PROPS).nullable().optional(),
 });
 export type HeroAppearance = z.infer<typeof HeroAppearanceSchema>;
 

@@ -98,6 +98,43 @@ heroes: {}
   #   developer: [Brom, Tamsin, ...]         # packages/shared/src/heroes.ts for the full
   #   default: [Rook, Ember, ...]            # shipped list (one pool per built-in role)
 
+progression: {}
+  # M14 hero levels from tokens spent (docs/design/battles.md).
+  # enabled: true
+  # xpWeights:                # 0..10 XP per token kind
+  #   output: 1
+  #   input: 0.2
+  #   cacheCreation: 0.1
+  #   cacheRead: 0            # cache reads excluded so long sessions don't inflate XP
+  # levelBase: 1500           # 10..10000000. XP for level L = levelBase * (L-1)^levelExponent
+  # levelExponent: 2          # 1..4
+  # maxLevel: 50              # 2..100
+  # skillPointsPerLevel: 1    # 0..5
+  # allowRespec: true
+  # anonymousInBattle: true   # anonymous subagents may join a party with a temporary level
+
+battle: {}
+  # M14 turn-based battles against encounter NPCs. Cosmetic stakes only.
+  # enabled: true
+  # offerChance: 0.5          # 0..1. Chance an encounter NPC offers a battle
+  # autoIgnoreSec: 20         # 5..300. Prompt counts as Ignore after this
+  # maxParty: 4               # 1..4
+  # koMinutes: 5              # 0..240. Rest time for a knocked-out hero; 0 = no KO
+  # difficulty: 1             # 0.5..2. Enemy level = party average level x difficulty
+  # music: true
+  # xpScale: 0.5              # 0..10. Win XP = levelBase x enemy level x xpScale
+  # skillPointEveryWins: 3    # 0..100. Bonus skill point every N wins; 0 = never
+  # lootChance: 0.35          # 0..1
+  # maxTurns: 60              # 10..200. Turns before the enemy loses interest (timeout)
+  # maxPerHour: 30            # 1..600. Battles that may be started per hour
+  # openTtlMin: 30            # 1..240. Minutes an unresolved battle stays open
+  # retentionDays: 30         # 1..3650. Days finished battles are kept
+  # items:                    # consumables each party brings, 0..9 each
+  #   coffee: 2
+  #   energyDrink: 1
+  #   rubberDuck: 1
+  #   pizza: 0
+
 activity: {}
   # rules: []   # see DEFAULT_ACTIVITY_RULES in packages/shared/src/settings.ts for
   #             # the full default list (tool/input regex -> activity/zone/bubble).

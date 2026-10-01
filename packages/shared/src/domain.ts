@@ -1,5 +1,6 @@
 import type { ProjectProfileMeta } from './attribution.js';
 import type { Hero } from './heroes.js';
+import type { HeroProgress } from './progression.js';
 import type { OfficeLayout } from './layout.js';
 
 /** What a character is visibly doing. Drives sprite animation. */
@@ -146,4 +147,6 @@ export interface OfficeSnapshot {
   layouts?: OfficeLayout[];
   /** Heroes of the subscribed floor(s) (M8 8i). Optional so pre-M8 servers and fixtures stay valid. */
   heroes?: Hero[];
+  /** M14: stored progress of the subscribed floor(s)' heroes (heroes without a row are level 1). Optional for pre-M14 servers/fixtures. */
+  progress?: HeroProgress[];
 }

@@ -133,6 +133,67 @@ export const SettingsSchema = z.object({
       namePools: HeroNamePoolsSchema.default(DEFAULT_HERO_NAME_POOLS),
     })
     .prefault({}),
+  /** M14: hero levels from tokens spent (docs/design/battles.md). */
+  progression: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** XP per token kind. Cache reads are 0 by default so long sessions don't inflate XP. */
+      xpWeights: z
+        .object({
+          output: z.number().min(0).max(10).default(1),
+          input: z.number().min(0).max(10).default(0.2),
+          cacheCreation: z.number().min(0).max(10).default(0.1),
+          cacheRead: z.number().min(0).max(10).default(0),
+        })
+        .prefault({}),
+      /** XP for level L = levelBase * (L-1)^levelExponent. */
+      levelBase: z.number().min(10).max(10_000_000).default(1500),
+      levelExponent: z.number().min(1).max(4).default(2),
+      maxLevel: z.number().int().min(2).max(100).default(50),
+      skillPointsPerLevel: z.number().int().min(0).max(5).default(1),
+      allowRespec: z.boolean().default(true),
+      /** Anonymous subagents may join a party with a temporary level from their own usage. */
+      anonymousInBattle: z.boolean().default(true),
+    })
+    .prefault({}),
+  /** M14: turn-based battles against encounter NPCs. Cosmetic stakes only. */
+  battle: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** Chance that an encounter NPC offers a battle. */
+      offerChance: z.number().min(0).max(1).default(0.5),
+      /** Seconds the "Battle / Ignore" prompt waits before it counts as Ignore. */
+      autoIgnoreSec: z.number().min(5).max(300).default(20),
+      maxParty: z.number().int().min(1).max(4).default(4),
+      /** Minutes a knocked-out hero rests (0 = no KO). */
+      koMinutes: z.number().min(0).max(240).default(5),
+      /** Enemy level = party average level x difficulty (+ a small seeded spread). */
+      difficulty: z.number().min(0.5).max(2).default(1),
+      music: z.boolean().default(true),
+      /** Win XP = levelBase x enemy level x xpScale (about a quarter level at 0.5). */
+      xpScale: z.number().min(0).max(10).default(0.5),
+      /** A bonus skill point every N wins; 0 = never. */
+      skillPointEveryWins: z.number().int().min(0).max(100).default(3),
+      lootChance: z.number().min(0).max(1).default(0.35),
+      /** Turns before the enemy loses interest (result 'timeout', no stakes). */
+      maxTurns: z.number().int().min(10).max(200).default(60),
+      /** Battles that may be started per hour (server rate limit). */
+      maxPerHour: z.number().int().min(1).max(600).default(30),
+      /** Minutes an unresolved battle stays open before it expires. */
+      openTtlMin: z.number().int().min(1).max(240).default(30),
+      /** Days resolved/abandoned battles are kept. */
+      retentionDays: z.number().int().min(1).max(3650).default(30),
+      /** Consumables each hero party brings to every battle. */
+      items: z
+        .object({
+          coffee: z.number().int().min(0).max(9).default(2),
+          energyDrink: z.number().int().min(0).max(9).default(1),
+          rubberDuck: z.number().int().min(0).max(9).default(1),
+          pizza: z.number().int().min(0).max(9).default(0),
+        })
+        .prefault({}),
+    })
+    .prefault({}),
   sessions: z
     .object({
       /** Seconds without events before a session shows as idle. */

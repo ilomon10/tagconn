@@ -4,6 +4,7 @@ import type { AuthClientToServerEvents, AuthServerToClientEvents } from './auth.
 import type { Agent, OfficeEvent, OfficeSnapshot, Project, Session, Task } from './domain.js';
 import type { Hero, HeroCreate, HeroListRequest, HeroUpdateRequest } from './heroes.js';
 import type { LayoutAssign, OfficeLayout, OfficeLayoutInput } from './layout.js';
+import type { HeroProgress } from './progression.js';
 import type { ReceptionistClientToServerEvents, ReceptionistServerToClientEvents } from './receptionist.js';
 import type { Role } from './roles.js';
 import type { RunsClientToServerEvents, RunsServerToClientEvents } from './runner.js';
@@ -40,6 +41,8 @@ export interface ServerToClientEvents
   'layout:remove': (id: string) => void;
   'hero:upsert': (h: Hero) => void;
   'hero:remove': (id: string) => void;
+  /** M14: a hero's progress changed (broadcast like `hero:upsert`). */
+  'hero:progress': (p: HeroProgress) => void;
 }
 
 export interface ClientToServerEvents
