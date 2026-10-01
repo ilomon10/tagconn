@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-01
+
 ### Added
 - **Hero progression** (v0.8.0): heroes level up from the tokens their bound agents spend in Claude Code. XP comes from input, output, cache-creation, and (optionally) cache-read tokens, with configurable weights. Each level requires increasingly more XP (a curve you can tune: `progression.levelBase`, `levelExponent`, `maxLevel`). Each level grants skill points (`progression.skillPointsPerLevel`), bonus points on some wins, and a cumulative pool to spend.
 - **Skill trees** (v0.8.0): each hero class has a unique 3-branch, 4-tier skill tree. Spend skill points to unlock moves, increase stats, boost crit chance, improve status resistance, and more. Respec anytime to reset and try a different build (`progression.allowRespec`, on by default). Tier requirements prevent overspending: tier 2 unlocks at level 3, tier 3 at level 8, tier 4 at level 15.
@@ -199,7 +201,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/ilomon10/tagconn/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/ilomon10/tagconn/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ilomon10/tagconn/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/ilomon10/tagconn/compare/v0.5.2...v0.5.3
