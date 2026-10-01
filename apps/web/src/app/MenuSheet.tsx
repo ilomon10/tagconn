@@ -9,6 +9,7 @@ import { useModalFocus } from '../lib/useModalFocus';
 import { officeNavBus } from '../game/OfficeGame';
 import { cx } from '../components/ui';
 import { MENU_HOTKEYS, type MenuActionId } from './menuHotkeys';
+import { SoundRow } from '../features/office/audio/SoundRow';
 import { useScreenEffect, type useMenuActions } from './useMenuActions';
 
 const SCREEN_EFFECT_LABEL: Record<ScreenEffectPref, string> = { crt: 'CRT', lcd: 'LCD', vhs: 'VHS' };
@@ -160,6 +161,7 @@ export function MenuSheet({ actions, onClose, onHelp }: { actions: ReturnType<ty
         </Group>
         <Group title="This browser">
           <ScreenEffectRow />
+          <SoundRow />
           {notificationsSupported() && perm === 'default' && (
             <button
               type="button"

@@ -48,6 +48,9 @@ import { counterScale, labelVisible, layoutLabels, type LabelSubject, type Rect 
 import { PostFxController } from '../postfx/PostFxController';
 import { DramaDirector } from './dramaDirector';
 import { FurnitureTriggerLayer } from './furnitureTriggerLayer';
+import { plateOptions } from '../actors/namePlate';
+import { ProximitySfx, listenerFromCamera } from '../sfxProximity';
+import { sfxBus } from '../sfxBus';
 
 /** M8 8e: how often the bubble/label layout (`game/labels`) is recomputed — a throttle, not every
  *  frame, since it's a many-subject greedy placement and labels don't need to react per-pixel. */
@@ -265,6 +268,8 @@ export class OfficeScene extends Phaser.Scene {
   private drama!: DramaDirector;
   /** M12 G3: furniture that opens panels (section 4). */
   private triggers!: FurnitureTriggerLayer;
+  /** M13: footstep/typing ticks near the camera centre. */
+  private proximity = new ProximitySfx();
   private tooltip!: Phaser.GameObjects.Text;
   private characters = new Map<ActorKey, Character>();
   /** W3b/M12: one fixed NPC per floor (the Nexus's own plaza is an `'entrance'`-type room too, so it gets
@@ -400,6 +405,7 @@ export class OfficeScene extends Phaser.Scene {
       this.receptionist?.destroyAll();
       this.receptionistDeskFront?.destroy();
       this.drama.destroy();
+      sfxBus.setListener(null);
       this.triggers.destroy();
     });
     this.onReady?.(this);
@@ -1062,6 +1068,7 @@ export class OfficeScene extends Phaser.Scene {
     const isNight = mode === 'night' || (mode === 'auto' && (hour >= 19 || hour < 7));
     const lighting = this.theme.lighting;
     this.night.setFillStyle(lighting.nightTint, isNight ? lighting.nightAlpha : 0);
+    sfxBus.setAmbient({ style: this.theme.id === 'modern' ? 'modern' : this.theme.id === 'guild' ? 'guild' : 'rift', night: isNight });
   }
 
   setOfficeState(state: OfficeState) {
@@ -1307,7 +1314,7 @@ export class OfficeScene extends Phaser.Scene {
       this.walk(c, seat, seat.seated);
       const pmTitle = titleFor(theme, 'pm', roles.find((r) => r.name === 'pm')?.title);
       const name = (c.heroId && heroById.get(c.heroId)?.name) || (c.kind === 'guild-master' ? pmTitle : 'Someone');
-      c.setLook({ color: 0x8e8e9e, title: 'Resting', description: name, sprite: 0 }, true);
+      c.setLook({ color: 0x8e8e9e, name, title: 'Resting', sprite: 0 }, true);
       c.setActivity('idle', 'active');
     }
   }
@@ -1348,8 +1355,7 @@ export class OfficeScene extends Phaser.Scene {
     // the Multiverse, else the floor's).
     const heroLook = hero ? heroLookForStyle(hero, theme.id) : null;
     const themedTitle = titleFor(theme, agent.role, role?.title, heroLook?.title);
-    const title = hero ? `${hero.name} · ${themedTitle}` : themedTitle;
-    c.setLook({ color, title, description: agent.isMain ? undefined : agent.description, sprite: role?.sprite ?? 0 }, true);
+    c.setLook({ color, name: hero?.name, title: themedTitle, description: agent.isMain ? undefined : agent.description, sprite: role?.sprite ?? 0 }, true);
 
     const themeCostume = resolveCostume(theme, agent.role);
     if (heroLook) {
@@ -1426,6 +1432,13 @@ export class OfficeScene extends Phaser.Scene {
    * `LABEL_REFRESH_MS` from `update()`, and also run immediately on anything that changes who's
    * important (selection, hover, a fresh `setOfficeState`).
    */
+  /** M13: what the footstep/typing proximity ticker samples each frame. */
+  private *proximityActors() {
+    for (const c of this.characters.values()) {
+      yield { x: c.x, y: c.y, walking: c.walking, typing: c.currentActivity === 'typing' };
+    }
+  }
+
   private refreshLabels() {
     const office = this.state?.settings.office;
     if (!office) return;
@@ -1435,9 +1448,12 @@ export class OfficeScene extends Phaser.Scene {
     const obstacles: LabelRect[] = [];
     const actors: Array<[ActorKey, Character]> = [...this.characters];
     if (this.receptionist) actors.push([RECEPTIONIST_KEY, this.receptionist]);
+    const plate = plateOptions(office.labels);
     for (const [key, c] of actors) {
       if (c.leaving) continue;
       c.setLabelScale(scale);
+      c.setPlateOptions(plate);
+      c.setPlateZoom(zoom);
       const waiting = c.isWaiting;
       const important = key === this.selectedKey || waiting || key === this.hoveredKey;
       const visible = labelVisible({ zoom, minZoom: office.labelMinZoom, important });
@@ -1600,6 +1616,7 @@ export class OfficeScene extends Phaser.Scene {
     }
     this.drama.update(time, delta);
     this.triggers.update(time, this.cameras.main);
+    this.proximity.tick(time, this.proximityActors(), listenerFromCamera(this.cameras.main));
     this.updateBeacon(zoom);
     // M9 8f deferred: under reduced motion, snap to the follow target every frame instead of
     // lerping toward it — `reducedMotion.value` is a cached read, not a per-frame `matchMedia` call.

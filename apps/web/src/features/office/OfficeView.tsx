@@ -22,6 +22,8 @@ import { FloorManager } from './FloorManager';
 import { GmSessionsPopover } from './GmSessionsPopover';
 import { Button, cx } from '../../components/ui';
 import { useFurnitureTriggers } from './useFurnitureTriggers';
+import { AlertHost } from './alerts/AlertHost';
+import { useAudioBridge } from './audio/useAudioBridge';
 
 /**
  * Per-project inputs `planMultiverse` needs (docs/design/living-office.md section 6.1), built from
@@ -260,6 +262,7 @@ export function OfficeView({ active }: { active: boolean }) {
 
   useGameBridge(game);
   useFurnitureTriggers(game);
+  useAudioBridge(active);
 
   // Stairs (docs/design/guild-hall.md section 6; M8 8h living-office.md section 6.3): take the
   // neighboring floor in `office.floorOrder`, or do nothing at an end. The Multiverse is just
@@ -559,6 +562,7 @@ export function OfficeView({ active }: { active: boolean }) {
             </span>
           )}
         </div>
+        <AlertHost onShowMe={selectAgent} />
         {/* M9 8f follow-up: a bare dark canvas while the socket connects reads as broken. Only while
             there's no data yet — once agents arrive there's already a populated office to look at.
             Demo mode never reaches `connection === 'connecting'` (it's its own `'demo'` state), so
