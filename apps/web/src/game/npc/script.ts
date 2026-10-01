@@ -16,13 +16,17 @@ interface StepState { index: number; [k: string]: unknown }
 export const createScriptRunner: CreateScriptRunner = (ctx: NpcScriptCtx) => {
   const { host } = ctx;
 
-  const isFree = (p: Point, waiting: readonly Point[]): boolean => {
+  /** A free-tile predicate; the occupied-tile set is built once per call, not once per tile. */
+  const freeFn = (waiting: readonly Point[]): ((p: Point) => boolean) => {
     const map = host.map();
-    if (map.walkable[p.y]?.[p.x] !== 0) return false;
-    if (waiting.some((w) => cheb(w, p) <= WAITING_CLEARANCE_TILES)) return false;
-    if (host.claims().isTileReserved(p)) return false;
-    for (const c of host.actors().values()) if (!c.gone && c.tile.x === p.x && c.tile.y === p.y) return false;
-    return true;
+    const occupied = new Set<string>();
+    for (const c of host.actors().values()) if (!c.gone) occupied.add(`${c.tile.x},${c.tile.y}`);
+    return (p) => {
+      if (map.walkable[p.y]?.[p.x] !== 0) return false;
+      if (waiting.some((w) => cheb(w, p) <= WAITING_CLEARANCE_TILES)) return false;
+      if (host.claims().isTileReserved(p)) return false;
+      return !occupied.has(`${p.x},${p.y}`);
+    };
   };
 
   const pickFrom = (list: readonly Point[], rand: () => number): Point | null => (list.length ? list[Math.floor(rand() * list.length)]! : null);
@@ -80,7 +84,7 @@ export const createScriptRunner: CreateScriptRunner = (ctx: NpcScriptCtx) => {
   const resolve = (npc: NpcActor, target: NpcTarget, seed: string): Point | null => {
     const map = host.map();
     const waiting = ctx.waitingTiles();
-    const free = (p: Point): boolean => isFree(p, waiting);
+    const free = freeFn(waiting);
     const rand = ctx.rng(seed);
     if (target === 'corridor') return corridorTile(rand, free);
     if (target === 'entrance') return entranceTile(free);
@@ -162,7 +166,7 @@ export const createScriptRunner: CreateScriptRunner = (ctx: NpcScriptCtx) => {
           st.n = n + 1;
           st.leg = true;
           const waiting = ctx.waitingTiles();
-          const to = anyRoomTile(ctx.rng(`${seed}:${n}`), (p) => isFree(p, waiting));
+          const to = anyRoomTile(ctx.rng(`${seed}:${n}`), freeFn(waiting));
           if (!to || !startWalk(npc, st, to)) return true;
           npc.stepAt = now;
           return false;
@@ -182,7 +186,7 @@ export const createScriptRunner: CreateScriptRunner = (ctx: NpcScriptCtx) => {
         }
         if (st.leg === undefined) {
           const waiting = ctx.waitingTiles();
-          const to = corridorTile(ctx.rng(`${seed}:${n}`), (p) => isFree(p, waiting));
+          const to = corridorTile(ctx.rng(`${seed}:${n}`), freeFn(waiting));
           st.leg = true;
           if (!to || !startWalk(npc, st, to)) return true;
           npc.stepAt = now;

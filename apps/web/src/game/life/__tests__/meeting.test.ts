@@ -244,8 +244,10 @@ describe('startMeeting', () => {
   it('never starts when a character is already in a higher claim, and rolls back', () => {
     const t = setup();
     t.claims.tryClaim('a' as never, 'meeting', () => {});
-    // Pre-claimed as meeting (by the director) is accepted.
-    expect(startMeeting(t.ctx, t.plan, 0)).not.toBeNull();
+    // Already held by another meeting: refused, and only the claims this begin() took are rolled back.
+    expect(startMeeting(t.ctx, t.plan, 0)).toBeNull();
+    expect(t.claims.count()).toBe(1);
+    expect(t.claims.holder('a' as never)).toBe('meeting');
     const u = setup();
     u.claims.tryClaim('b' as never, 'reaction', () => {});
     expect(startMeeting(u.ctx, u.plan, 0)).not.toBeNull(); // meeting preempts reaction

@@ -144,6 +144,7 @@ describe('startActivity', () => {
     expect(s.keys).toEqual(['a']);
     expect(chars.get('a')!.pose).toBe('play');
     expect(claims.isTileReserved({ x: 6, y: 3 })).toBe(false);
+    expect(chars.get('b')!.homed).toBe(1); // still walking toward the prop, yet sent home
   });
 
   it('revoke forgets the key without walking it; abort releases all', () => {

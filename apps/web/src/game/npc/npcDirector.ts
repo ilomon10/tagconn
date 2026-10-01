@@ -73,7 +73,6 @@ export class NpcDirector {
     this.attempt = 0;
     this.nextAt = null;
     this.stepAcc = 0;
-    if (!opts?.sendHome) this.lastJanitorAt = null;
   }
 
   destroy(): void {
@@ -227,6 +226,8 @@ export class NpcDirector {
   }
 
   private remove(key: ActorKey): void {
+    const npc = this.actors.get(key);
+    if (npc) this.reactions.cancelFor(npc);
     this.chars.get(key)?.destroyAll();
     this.chars.delete(key);
     this.actors.delete(key);

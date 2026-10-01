@@ -5,7 +5,7 @@ export type PlateStyle = 'name' | 'title' | 'task';
 export interface PlateMetrics { advance: Record<PlateStyle, number>; lineH: Record<PlateStyle, number>; pad: number; gap: number }
 export const PIXEL_METRICS: PlateMetrics = {
   advance: { name: 6, title: 4, task: 4 },
-  lineH: { name: 8, title: 6, task: 6 },
+  lineH: { name: 10, title: 6, task: 6 },
   pad: 2,
   gap: 1,
 };
@@ -19,12 +19,28 @@ export function pixelMeasure(metrics: PlateMetrics = PIXEL_METRICS): MeasureFn {
 
 const ELLIPSIS = '…';
 
+/** Largest n in [lo, text.length] with `fits(n)`, assuming monotonic widths (binary search: O(log L) measures),
+ *  never leaving a split surrogate pair at the end. */
+function longestFit(text: string, lo: number, fits: (n: number) => boolean): number {
+  let a = lo;
+  let b = text.length;
+  while (a < b) {
+    const mid = (a + b + 1) >> 1;
+    if (fits(mid)) a = mid;
+    else b = mid - 1;
+  }
+  if (a > lo && a < text.length) {
+    const c = text.charCodeAt(a - 1);
+    if (c >= 0xd800 && c <= 0xdbff) a--;
+  }
+  return a;
+}
+
 /** Cuts `text` so that it plus a trailing ellipsis fits `maxW`. Empty when not even the ellipsis fits. */
 function cutWithEllipsis(text: string, maxW: number, measure: (t: string) => number): string {
-  let cut = text;
-  while (cut.length > 0 && measure(cut.trimEnd() + ELLIPSIS) > maxW) cut = cut.slice(0, -1);
-  if (measure(cut.trimEnd() + ELLIPSIS) > maxW) return '';
-  return cut.trimEnd() + ELLIPSIS;
+  const n = longestFit(text, 0, (k) => measure(text.slice(0, k).trimEnd() + ELLIPSIS) <= maxW);
+  const out = text.slice(0, n).trimEnd() + ELLIPSIS;
+  return measure(out) > maxW ? '' : out;
 }
 
 /** Line 1 name (ellipsized to maxW), line 2 title (optional, ellipsized), then the task word-wrapped to
@@ -62,11 +78,11 @@ export function wrapWords(text: string, maxW: number, maxLines: number, measure:
   const lines: string[] = [];
   let cur = '';
   for (let word of words) {
+    if (lines.length > maxLines) break; // already overflowing: the rest is cut anyway
     while (measure(word) > maxW) {
       // Hard-cut a word wider than a whole line.
       if (cur) { lines.push(cur); cur = ''; }
-      let n = word.length;
-      while (n > 1 && measure(word.slice(0, n)) > maxW) n--;
+      const n = Math.max(1, longestFit(word, 1, (k) => measure(word.slice(0, k)) <= maxW));
       lines.push(word.slice(0, n));
       word = word.slice(n);
       if (lines.length > maxLines) break;

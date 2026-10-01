@@ -15,7 +15,7 @@ interface FontSpec {
   cellH: number;
 }
 
-const BIG: FontSpec = { key: PIXEL_FONT_KEYS.big, chars: BIG_CHARS, glyphs: GLYPHS_5X7, cellW: 6, cellH: 8 };
+const BIG: FontSpec = { key: PIXEL_FONT_KEYS.big, chars: BIG_CHARS, glyphs: GLYPHS_5X7, cellW: 6, cellH: 10 };
 const SMALL: FontSpec = { key: PIXEL_FONT_KEYS.small, chars: SMALL_CHARS, glyphs: GLYPHS_3X5, cellW: 4, cellH: 6 };
 
 /** The cache entry Phaser's RetroFont.Parse builds (same shape, same cell math), written out here so this module

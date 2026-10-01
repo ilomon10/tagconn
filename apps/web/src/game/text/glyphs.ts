@@ -6,7 +6,8 @@ export const BIG_CHARS = Array.from({ length: 95 }, (_, i) => String.fromCharCod
 /** Uppercase set: ASCII ' '..'_' then '·' and '…' (lowercase is drawn uppercase). */
 export const SMALL_CHARS = Array.from({ length: 64 }, (_, i) => String.fromCharCode(32 + i)).join('') + '·…';
 
-/** 5x7 glyphs, 7 rows of 5. Lowercase sits on the row-6 baseline (x-height 5); g j p q y trim their body to 4 rows. */
+/** 5x7 glyphs, 7 rows of 5, on the row-6 baseline (lowercase x-height 5). Padded to 9 rows by `expand`: rows 7-8 are
+ *  the descender space, used by g j p q y (DESCENDERS) and by nothing else. */
 const BIG_SRC: Record<string, string> = {
   ' ': '...../...../...../...../...../...../.....',
   '!': '..#../..#../..#../..#../..#../...../..#..',
@@ -79,17 +80,13 @@ const BIG_SRC: Record<string, string> = {
   d: '....#/....#/.####/#...#/#...#/#...#/.####',
   e: '...../...../.###./#...#/#####/#..../.###.',
   f: '..##./.#..#/.#.../###../.#.../.#.../.#...',
-  g: '...../.####/#...#/#...#/.####/....#/.###.',
   h: '#..../#..../#.##./##..#/#...#/#...#/#...#',
   i: '..#../...../.##../..#../..#../..#../.###.',
-  j: '...#./...../..##./...#./...#./#..#./.##..',
   k: '#..../#..../#..#./#.#../##.../#.#../#..#.',
   l: '.##../..#../..#../..#../..#../..#../.###.',
   m: '...../...../##.#./#.#.#/#.#.#/#.#.#/#.#.#',
   n: '...../...../####./#...#/#...#/#...#/#...#',
   o: '...../...../.###./#...#/#...#/#...#/.###.',
-  p: '...../####./#...#/#...#/####./#..../#....',
-  q: '...../.####/#...#/#...#/.####/....#/....#',
   r: '...../...../#.##./##..#/#..../#..../#....',
   s: '...../...../.####/#..../.###./....#/####.',
   t: '.#.../.#.../###../.#.../.#.../.#..#/..##.',
@@ -97,7 +94,6 @@ const BIG_SRC: Record<string, string> = {
   v: '...../...../#...#/#...#/#...#/.#.#./..#..',
   w: '...../...../#...#/#...#/#.#.#/#.#.#/.#.#.',
   x: '...../...../#...#/.#.#./..#../.#.#./#...#',
-  y: '...../#...#/#...#/#...#/.####/....#/.###.',
   z: '...../...../#####/...#./..#../.#.../#####',
   '{': '..##./.#.../.#.../#..../.#.../.#.../..##.',
   '|': '..#../..#../..#../..#../..#../..#../..#..',
@@ -105,6 +101,15 @@ const BIG_SRC: Record<string, string> = {
   '~': '...../...../.#..#/#.##./...../...../.....',
   '·': '...../...../...../..#../...../...../.....',
   '…': '...../...../...../...../...../...../#.#.#',
+};
+
+/** 5x9 lowercase descenders (rows 0-6 as above, rows 7-8 below the baseline). */
+const DESCENDERS: Record<string, string> = {
+  g: '...../...../.####/#...#/#...#/.####/....#/#...#/.###.',
+  j: '...#./...../..##./...#./...#./...#./...#./#..#./.##..',
+  p: '...../...../####./#...#/#...#/#...#/####./#..../#....',
+  q: '...../...../.####/#...#/#...#/#...#/.####/....#/....#',
+  y: '...../...../#...#/#...#/#...#/.####/....#/#...#/.###.',
 };
 
 /** 3x5 glyphs, 5 rows of 3, uppercase only. */
@@ -177,11 +182,15 @@ const SMALL_SRC: Record<string, string> = {
   '…': '.../.../.../.../#.#',
 };
 
-function expand(src: Record<string, string>): Record<string, readonly string[]> {
+function expand(src: Record<string, string>, rowCount: number, width: number): Record<string, readonly string[]> {
   const out: Record<string, readonly string[]> = {};
-  for (const [ch, rows] of Object.entries(src)) out[ch] = rows.split('/').map((r) => r.replaceAll('.', ' '));
+  for (const [ch, rows] of Object.entries(src)) {
+    const r = rows.split('/').map((x) => x.replaceAll('.', ' '));
+    while (r.length < rowCount) r.push(' '.repeat(width));
+    out[ch] = r;
+  }
   return out;
 }
 
-export const GLYPHS_5X7: Readonly<Record<string, readonly string[]>> = expand(BIG_SRC);
-export const GLYPHS_3X5: Readonly<Record<string, readonly string[]>> = expand(SMALL_SRC);
+export const GLYPHS_5X7: Readonly<Record<string, readonly string[]>> = expand({ ...BIG_SRC, ...DESCENDERS }, 9, 5);
+export const GLYPHS_3X5: Readonly<Record<string, readonly string[]>> = expand(SMALL_SRC, 5, 3);

@@ -17,4 +17,16 @@ describe('alertCopy', () => {
     expect(alertCopy(item('ask', ids), 'guild', []).title).toBe('3 heroes need you');
     expect(alertCopy(item('ask', ids), 'rift', []).title).toBe('3 crew need you');
   });
+  it('clips and sanitizes untrusted text', () => {
+    const long = 'x'.repeat(500);
+    const body = alertCopy(item('done', ['a']), 'guild', ['Mira'], long).body!;
+    expect(Array.from(body).length).toBeLessThanOrEqual(6 + 140);
+    expect(body.endsWith('…')).toBe(true);
+    const t = alertCopy(item('failure', ['a'], long), 'modern', ['Mira']).title;
+    expect(Array.from(t).length).toBeLessThan(80);
+    expect(alertCopy(item('ask', ['a']), 'modern', ['Mi\u202Era\n']).title).toBe('Mi ra asks for you');
+  });
+  it('coalesced failures do not name a tool', () => {
+    expect(alertCopy(item('failure', ['a', 'b'], 'Bash'), 'modern', []).title).toBe('2 teammates stumbled');
+  });
 });

@@ -70,12 +70,12 @@ class ActivityScript implements LifeScript {
   }
 
   /** Takes `m` out of the script; walking characters are left alone, the rest go home. */
-  private drop(m: Member, goHome: boolean) {
+  private drop(m: Member, goHome: boolean, force = false) {
     this.members = this.members.filter((x) => x !== m);
     this.freeSpot(m);
     const c = this.ctx.char(m.key);
     this.clearVisuals(c);
-    if (c && goHome && !c.walking) this.ctx.goHome(c);
+    if (c && goHome && (force || !c.walking)) this.ctx.goHome(c);
     this.claims().release(m.key, 'activity');
   }
 
@@ -146,7 +146,7 @@ class ActivityScript implements LifeScript {
       }
       const timedOut = now - this.phaseAt >= LIFE_TIMING.convene;
       if (timedOut) {
-        for (const m of [...this.members]) if (!this.arrived(m)) this.drop(m, true);
+        for (const m of [...this.members]) if (!this.arrived(m)) this.drop(m, true, true);
         if (this.members.length < this.plan.activity.cast[0]) this.toReturn(now);
         else if (this.members.length) this.toPlay(now);
       } else if (this.members.every((m) => this.arrived(m))) this.toPlay(now);

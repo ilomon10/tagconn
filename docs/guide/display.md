@@ -1,5 +1,11 @@
 # Display & shaders
 
+## Name plates and labels
+
+Each character has an RPG-style name plate floating above their head, showing their name, role title,
+and current task. See [Name plates](name-plates.md) for full details on configuring what shows and
+the pixel font.
+
 ## Styles
 
 Every floor is drawn in one of two visual styles (`office.style` — a per-layout `style` in the Hall

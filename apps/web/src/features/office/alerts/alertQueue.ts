@@ -5,7 +5,7 @@ const KIND_FLAG: Record<AlertKind, 'onAsk' | 'onFailure' | 'onDone'> = { ask: 'o
 
 /** tokens = burst */
 export function initialAlertQueue(cfg: AlertSettings, nowMs: number): AlertQueueState {
-  return { tokens: cfg.burst, refilledAt: nowMs, lastShown: {}, lastKey: {}, pending: [], visible: [], seq: 0 };
+  return { tokens: cfg.burst, refilledAt: nowMs, lastShown: {}, pending: [], visible: [], seq: 0 };
 }
 
 /** Lowest priority first, then oldest first: the eviction order when pending is full. */
@@ -14,23 +14,27 @@ function evictionOrder(a: AlertItem, b: AlertItem): number {
 }
 
 export function offerAlert(s: AlertQueueState, input: AlertInput, cfg: AlertSettings, nowMs: number): AlertQueueState {
-  const repeat = s.lastKey[input.agentId] === input.key;
-  const withKey: AlertQueueState = repeat ? s : { ...s, lastKey: { ...s.lastKey, [input.agentId]: input.key } };
-  if (!cfg.enabled || !cfg[KIND_FLAG[input.kind]] || repeat) return withKey;
+  // No per-agent "last key" dedupe: the sources already emit one offer per transition, and a repeat
+  // (waiting -> active -> waiting, or the same tool failing twice) is a new event. The cooldown and the
+  // pending coalescing below absorb real bursts.
+  if (!cfg.enabled || !cfg[KIND_FLAG[input.kind]]) return s;
 
   const priority = ALERT_PRIORITY[input.kind];
   const last = s.lastShown[input.agentId];
-  if (last && nowMs - last.at < cfg.agentCooldownSec * 1000 && last.priority >= priority) return withKey;
+  if (last && nowMs - last.at < cfg.agentCooldownSec * 1000 && last.priority >= priority) return s;
 
   const target = s.pending.find((p) => p.kind === input.kind && nowMs - p.createdAt <= ALERT_LIMITS.coalesceMs);
   if (target) {
-    if (target.agentIds.includes(input.agentId)) return withKey;
+    if (target.agentIds.includes(input.agentId)) return s;
+    // Different tools -> no single toolName for the coalesced item (the plural copy never names one anyway).
+    const { toolName: _t, ...rest } = target;
+    const sameTool = target.toolName === input.toolName;
     const merged: AlertItem = {
-      ...target,
+      ...(sameTool ? target : rest),
       agentIds: [...target.agentIds, input.agentId],
       ...(input.agent || target.agents ? { agents: { ...target.agents, ...(input.agent ? { [input.agentId]: input.agent } : {}) } } : {}),
     };
-    return { ...withKey, pending: s.pending.map((p) => (p === target ? merged : p)) };
+    return { ...s, pending: s.pending.map((p) => (p === target ? merged : p)) };
   }
 
   const item: AlertItem = {
@@ -47,7 +51,7 @@ export function offerAlert(s: AlertQueueState, input: AlertInput, cfg: AlertSett
     const drop = [...pending].sort(evictionOrder)[0]!;
     pending = pending.filter((p) => p !== drop);
   }
-  return { ...withKey, pending, seq: s.seq + 1 };
+  return { ...s, pending, seq: s.seq + 1 };
 }
 
 export function tickAlerts(
@@ -56,6 +60,7 @@ export function tickAlerts(
   const elapsed = Math.max(0, nowMs - s.refilledAt);
   let tokens = Math.min(cfg.burst, s.tokens + (elapsed * cfg.perMinute) / 60_000);
   let visible = s.visible;
+  // autoDismissSec = 0 keeps visible boxes until dismissed, but pending items still expire after pendingTtlMs.
   if (cfg.autoDismissSec > 0) {
     const ttl = cfg.autoDismissSec * 1000;
     visible = visible.filter((v) => v.shownAt === null || nowMs - v.shownAt < ttl);
@@ -66,7 +71,9 @@ export function tickAlerts(
 
   let pending = s.pending.filter((p) => nowMs - p.createdAt <= ALERT_LIMITS.pendingTtlMs);
   const shown: AlertItem[] = [];
-  const lastShown = { ...s.lastShown };
+  // Drop entries past the cooldown: they no longer gate anything, and the map would grow forever.
+  const lastShown: Record<string, { at: number; priority: number }> = {};
+  for (const [id, v] of Object.entries(s.lastShown)) if (nowMs - v.at < cfg.agentCooldownSec * 1000) lastShown[id] = v;
   const ready = pending
     .filter((p) => nowMs - p.createdAt >= ALERT_LIMITS.coalesceMs)
     .sort((a, b) => ALERT_PRIORITY[b.kind] - ALERT_PRIORITY[a.kind] || a.createdAt - b.createdAt);

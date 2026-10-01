@@ -35,7 +35,7 @@ function setup(over: { office?: Record<string, unknown>; reduced?: boolean; low?
   const emitted: unknown[] = [];
   const steps: string[] = [];
   const scripted = new Map<string, 'running' | 'done'>();
-  const reactions = { start: vi.fn(() => 1), step: vi.fn(), cancelAll: vi.fn(), activeKeys: () => new Set() } as unknown as ReactionController & { start: ReturnType<typeof vi.fn>; step: ReturnType<typeof vi.fn>; cancelAll: ReturnType<typeof vi.fn> };
+  const reactions = { start: vi.fn(() => 1), step: vi.fn(), cancelAll: vi.fn(), cancelFor: vi.fn(), activeKeys: () => new Set() } as unknown as ReactionController & { start: ReturnType<typeof vi.fn>; step: ReturnType<typeof vi.fn>; cancelAll: ReturnType<typeof vi.fn>; cancelFor: ReturnType<typeof vi.fn> };
   let ctx!: NpcScriptCtx;
   const host = {
     map: () => ({ spawn: { x: 3, y: 4 } }),
@@ -152,6 +152,15 @@ describe('NpcDirector', () => {
     expect(s.spawned).toHaveLength(1); // cooldown / same hour bucket
   });
 
+  it('a reset (floor switch) keeps the janitor cooldown', () => {
+    const s = setup({ hour: 20, office: { npcs: { ...NPCS, encounters: false, encounterEverySec: 86_400 } } });
+    tick(s.d, 2);
+    expect(s.spawned).toHaveLength(1);
+    s.d.reset();
+    tick(s.d, 3);
+    expect(s.spawned).toHaveLength(1);
+  });
+
   it('no janitor when the setting is off', () => {
     const s = setup({ hour: 20, office: { npcs: { ...NPCS, janitor: false, encounterEverySec: 86_400 } } });
     tick(s.d, 5);
@@ -166,6 +175,7 @@ describe('NpcDirector', () => {
     tick(s.d);
     expect(c.destroyed).toBe(true);
     expect(s.d.npcs().size).toBe(0);
+    expect(s.reactions.cancelFor).toHaveBeenCalledTimes(1); // reactors stop chasing the removed NPC
   });
 
   it('reset destroys every NPC and cancels reactions (sendHome passes through)', () => {

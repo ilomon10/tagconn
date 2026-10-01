@@ -31,6 +31,10 @@ Read first: `docs/design/game-office.md` (drama: the closest precedent, section 
    `seats.get(key)` only to walk a character home (`goHome`, same as `DramaDirector.goHome`). Real agent state
    always wins: a character that becomes `waiting`/`blocked`, gets a `currentTool` (real tool), starts leaving or is
    destroyed drops out of its script at once.
+   One deliberate exception to "no real work": a kickoff meeting pulls active (working) subagents to the meeting room
+   for the short kickoff, because the user asked that everyone invited goes to the meeting room. This is cosmetic
+   only (it walks the character, nothing else), never takes a waiting/blocked character, and never goes through
+   `SeatAllocator`; a character that turns waiting/blocked mid-kickoff leaves at once (break-off).
 2. **Never cover a waiting bubble.** Waiting/blocked characters never take part in a script. Script spots and NPC
    targets keep `WAITING_CLEARANCE_TILES = 2` (Chebyshev) from every waiting character. All script lines go through
    `Character.sayDrama` (ranked last by `layoutLabels`, skipped while the character's own waiting bubble is up).

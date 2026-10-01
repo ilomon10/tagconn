@@ -462,6 +462,7 @@ export class OfficeScene extends Phaser.Scene {
       this.drama.destroy();
       this.life.destroy();
       this.npcs.destroy();
+      this.claims.clear();
       sfxBus.setListener(null);
       this.triggers.destroy();
     });
@@ -1681,7 +1682,12 @@ export class OfficeScene extends Phaser.Scene {
       this.lastHitZoom = zoom;
       this.currentHitScale = hitScaleFor(CHARACTER_HIT_WORLD_PX, zoom);
       this.updateZoneHitSizes(zoom);
-      for (const n of this.npcs.npcs().values()) n.setHitScale(this.currentHitScale);
+      for (const n of this.npcs.npcs().values()) {
+        n.setHitScale(this.currentHitScale);
+        n.setPlateZoom(zoom);
+      }
+      for (const c of this.characters.values()) c.setPlateZoom(zoom);
+      this.receptionist?.setPlateZoom(zoom);
     }
     const speed = this.state?.settings.office.walkSpeed ?? 120;
     for (const [key, c] of this.characters) {
@@ -1700,7 +1706,8 @@ export class OfficeScene extends Phaser.Scene {
     this.life.update(time, delta);
     this.npcs.update(time, delta, speed);
     this.triggers.update(time, this.cameras.main);
-    this.proximity.tick(time, this.proximityActors(), listenerFromCamera(this.cameras.main));
+    this.proximity.tick(time, () => this.proximityActors(), () => listenerFromCamera(this.cameras.main));
+    if (this.hoveredKey && !this.actorFor(this.hoveredKey)) this.hoveredKey = null; // a hovered NPC was destroyed
     this.updateBeacon(zoom);
     // M9 8f deferred: under reduced motion, snap to the follow target every frame instead of
     // lerping toward it — `reducedMotion.value` is a cached read, not a per-frame `matchMedia` call.

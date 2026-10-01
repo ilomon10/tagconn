@@ -50,9 +50,12 @@ export class ProximitySfx {
   private lastTickAt = -Infinity;
 
   /** 100 ms throttle: sets sfxBus' listener and emits picked events. */
-  tick(nowMs: number, actors: Iterable<ProximityActor>, listener: SfxListenerPose): void {
+  tick(nowMs: number, actorsFn: () => Iterable<ProximityActor>, listenerFn: () => SfxListenerPose): void {
+    // The getters keep the per-frame path allocation-free until the throttle is due.
     if (nowMs - this.lastTickAt < TICK_INTERVAL_MS) return;
     this.lastTickAt = nowMs;
+    const actors = actorsFn();
+    const listener = listenerFn();
     sfxBus.setListener(listener);
     const { events, state } = pickProximitySfx(actors, listener, nowMs, this.state);
     this.state = state;

@@ -13,13 +13,13 @@ describe('layoutPlate', () => {
     const l = layoutPlate('Ada', undefined, undefined, MAXW, 2);
     expect(l.lines.map((x) => x.style)).toEqual(['name']);
     expect(l.w).toBe(3 * 6 + 4);
-    expect(l.h).toBe(8 + 4);
+    expect(l.h).toBe(PIXEL_METRICS.lineH.name + 4);
   });
 
   it('name + title is two lines with gap in h', () => {
     const l = layoutPlate('Ada', 'Lead dev', undefined, MAXW, 2);
     expect(l.lines.map((x) => x.style)).toEqual(['name', 'title']);
-    expect(l.h).toBe(8 + PIXEL_METRICS.gap + 6 + 4);
+    expect(l.h).toBe(PIXEL_METRICS.lineH.name + PIXEL_METRICS.gap + 6 + 4);
     expect(l.w).toBe(Math.max(18, 8 * 4) + 4);
   });
 
@@ -49,6 +49,25 @@ describe('layoutPlate', () => {
     expect(l.lines[0]!.w).toBeLessThanOrEqual(MAXW);
     expect(l.lines[0]!.text.endsWith('…')).toBe(true);
     expect(l.w).toBeLessThanOrEqual(MAXW + 4);
+  });
+});
+
+describe('bounded measure work', () => {
+  it('a 100k-char description lays out with few measure calls', () => {
+    let calls = 0;
+    const counting = (t: string, s: Parameters<typeof m>[1]) => { calls++; return m(t, s); };
+    for (const big of ['x'.repeat(100_000), 'ab '.repeat(40_000)]) {
+      calls = 0;
+      const l = layoutPlate('A', 'B', big, MAXW, 3, counting);
+      expect(calls).toBeLessThan(500);
+      for (const x of l.lines) expect(x.w).toBeLessThanOrEqual(MAXW);
+    }
+  });
+  it('ellipsize of a long string is logarithmic', () => {
+    let calls = 0;
+    const out = ellipsize('y'.repeat(100_000), 40, (t) => { calls++; return small(t); });
+    expect(out).toBe('yyyyyyyyy…');
+    expect(calls).toBeLessThan(40);
   });
 });
 

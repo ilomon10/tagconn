@@ -29,8 +29,6 @@ export interface AlertQueueState {
   refilledAt: number;
   /** agentId -> { at, priority } of the last alert shown for it. */
   lastShown: Readonly<Record<string, { at: number; priority: number }>>;
-  /** agentId -> last key offered (drops exact repeats, e.g. a re-sent waiting status). */
-  lastKey: Readonly<Record<string, string>>;
   pending: readonly AlertItem[];
   visible: readonly AlertItem[];
   seq: number;

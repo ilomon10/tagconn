@@ -16,14 +16,24 @@ guide is for using the running app day to day — for the project's architecture
    for you, and the Quests tab.
 5. **[The Receptionist](receptionist.md)** — the read-only help desk NPC you can chat with.
 6. **[Using the office](office.md)** — floors, stairs, the Multiverse, heroes, the Hall Planner,
-   notifications, settings.
-7. **[Attribution](attribution.md)** — the `.tagconn/` marker, saving and importing a project's
-   office profile.
-8. **[Display & shaders](display.md)** — visual styles, WebGL post-processing, and the screen
-   effects/vignette work landing in the next release.
-9. **[Configuration](configuration.md)** — how settings layer, what the GUI can't change, and the
-   most useful keys.
-10. **[Troubleshooting](troubleshooting.md)** — the doctor script and common problems.
+   notifications, settings, and work strain.
+7. **[Name plates](name-plates.md)** (v0.7.0) — RPG-style labels above each character showing name,
+   title, and task.
+8. **[Office life](office-life.md)** (v0.7.0) — meetings, stand-ups, idle activities, and lounge
+   games when characters are downtime.
+9. **[NPCs and encounters](npcs.md)** (v0.7.0) — routine staff and random visitors who walk through
+   the office.
+10. **[Game alerts](alerts.md)** (v0.7.0) — JRPG-style alert boxes for key events (asks, failures,
+    quests done).
+11. **[Sound and audio](sound.md)** (v0.7.0) — procedurally generated sound effects, ambient beds,
+    and per-browser audio controls.
+12. **[Attribution](attribution.md)** — the `.tagconn/` marker, saving and importing a project's
+    office profile.
+13. **[Display & shaders](display.md)** — visual styles, WebGL post-processing, screen effects,
+    and edge vignette.
+14. **[Configuration](configuration.md)** — how settings layer, what the GUI can't change, and the
+    most useful keys.
+15. **[Troubleshooting](troubleshooting.md)** — the doctor script and common problems.
 
 ## The 5-minute path
 

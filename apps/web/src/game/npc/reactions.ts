@@ -33,12 +33,18 @@ export const createReactions: CreateReactions = (host: NpcHost, rng) => {
   const agentOf = (c: Character) => (c.boundAgentId ? host.agents().find((a) => a.id === c.boundAgentId) : undefined);
   const eligible = (c: Character): boolean => isIdleEligible(c, agentOf(c));
 
-  const freeTile = (p: Point, waiting: readonly Point[]): boolean => {
+  const occupiedTiles = (): Set<string> => {
+    const out = new Set<string>();
+    for (const c of host.actors().values()) if (!c.gone) out.add(tileKey(c.tile));
+    return out;
+  };
+
+  const freeTile = (p: Point, waiting: readonly Point[], occupied: ReadonlySet<string>): boolean => {
     const m = host.map();
     if (m.walkable[p.y]?.[p.x] !== 0) return false;
     if (host.seats().occupant(p)) return false;
     if (host.claims().isTileReserved(p)) return false;
-    for (const c of host.actors().values()) if (!c.gone && c.tile.x === p.x && c.tile.y === p.y) return false;
+    if (occupied.has(tileKey(p))) return false;
     return !waiting.some((w) => Math.max(Math.abs(w.x - p.x), Math.abs(w.y - p.y)) <= 2);
   };
 
@@ -86,13 +92,13 @@ export const createReactions: CreateReactions = (host: NpcHost, rng) => {
     c.face(null);
   };
 
-  function begin(r: Reactor, c: Character, now: number, waiting: readonly Point[]): void {
+  function begin(r: Reactor, c: Character, now: number, waiting: readonly Point[], occupied: ReadonlySet<string>): void {
     const npcTile = r.npc.char.tile;
     const rand = rng(`${host.floorKey()}:react:${r.npc.id}:${r.key}`);
     rand(); // the first draw is the duration
     if (r.kind === 'flee') {
       c.setDramaEmote('alarm');
-      const to = fleeTarget(host.map(), c.tile, npcTile, rand, (p) => freeTile(p, waiting) && !spots.has(tileKey(p)));
+      const to = fleeTarget(host.map(), c.tile, npcTile, rand, (p) => freeTile(p, waiting, occupied) && !spots.has(tileKey(p)));
       if (to && reserve(to)) {
         r.spot = to;
         walkTo(c, to);
@@ -102,7 +108,7 @@ export const createReactions: CreateReactions = (host: NpcHost, rng) => {
       c.face(r.npc.char.x);
       const m = host.map();
       const roomId = m.roomAt[npcTile.y]?.[npcTile.x];
-      const free = (p: Point) => freeTile(p, waiting) && !spots.has(tileKey(p));
+      const free = (p: Point) => freeTile(p, waiting, occupied) && !spots.has(tileKey(p));
       const ring = roomId
         ? ringSpots(m, { x: npcTile.x, y: npcTile.y, w: 1, h: 1, roomId }, 8, free)
         : [{ x: npcTile.x - 1, y: npcTile.y }, { x: npcTile.x + 1, y: npcTile.y }, { x: npcTile.x, y: npcTile.y - 1 }, { x: npcTile.x, y: npcTile.y + 1 }].filter(free);
@@ -154,9 +160,10 @@ export const createReactions: CreateReactions = (host: NpcHost, rng) => {
         reactors.set(key, r);
         started.push(r);
       }
+      const occupied = occupiedTiles();
       for (const r of started) {
         const c = char(r.key);
-        if (c) begin(r, c, now, waiting);
+        if (c) begin(r, c, now, waiting, occupied);
       }
       return started.length;
     },
@@ -166,6 +173,13 @@ export const createReactions: CreateReactions = (host: NpcHost, rng) => {
         const c = char(r.key);
         if (!c) {
           drop(r.key);
+          continue;
+        }
+        if (r.phase === 'active' && (r.npc.char.gone || r.npc.char.leaving)) {
+          // The NPC this one reacts to is gone: stop chasing / gathering and walk home.
+          clear(c);
+          drop(r.key);
+          if (!c.leaving) goHome(c);
           continue;
         }
         if (r.phase === 'returning') {
@@ -200,6 +214,17 @@ export const createReactions: CreateReactions = (host: NpcHost, rng) => {
         if (!c) continue;
         clear(c);
         if (sendHome && !c.leaving) goHome(c);
+      }
+    },
+
+    cancelFor(npc) {
+      for (const r of [...reactors.values()]) {
+        if (r.npc !== npc) continue;
+        const c = char(r.key);
+        drop(r.key);
+        if (!c) continue;
+        clear(c);
+        if (!c.leaving) goHome(c);
       }
     },
 

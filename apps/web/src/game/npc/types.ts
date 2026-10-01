@@ -104,6 +104,8 @@ export interface ReactionController {
   step(now: number): void;
   /** Everyone goes home (sendHome) or is dropped in place; claims released. */
   cancelAll(sendHome: boolean): void;
+  /** The NPC is being removed: its reactors go home and stop chasing it. */
+  cancelFor(npc: NpcActor): void;
   activeKeys(): ReadonlySet<ActorKey>;
 }
 export type CreateReactions = (host: NpcHost, rng: (seed: string) => () => number) => ReactionController;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sfxBus, type SfxEvent, type SfxListenerPose } from '../sfxBus';
 import { listenerFromCamera, pickProximitySfx, ProximitySfx, type ProximityActor, type ProximityState } from '../sfxProximity';
 
@@ -46,12 +46,14 @@ describe('ProximitySfx', () => {
     const got: SfxEvent[] = [];
     sfxBus.on((e) => got.push(e));
     const p = new ProximitySfx();
-    p.tick(1000, [walker(500, 500)], L);
+    p.tick(1000, () => [walker(500, 500)], () => L);
     expect(sfxBus.listener()).toEqual(L);
     expect(got).toHaveLength(1);
-    p.tick(1050, [walker(500, 500)], { ...L, x: 1 });
+    const skipped = vi.fn(() => [walker(500, 500)]);
+    p.tick(1050, skipped, () => ({ ...L, x: 1 }));
+    expect(skipped).not.toHaveBeenCalled();
     expect(sfxBus.listener()).toEqual(L);
-    p.tick(1400, [walker(500, 500)], L);
+    p.tick(1400, () => [walker(500, 500)], () => L);
     expect(got).toHaveLength(2);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Agent } from '@tagconn/shared';
 import { Button, cx } from '../../../components/ui';
 import { useMediaQuery } from '../../../lib/useMediaQuery';
@@ -19,7 +19,8 @@ const ACCENT: Record<AlertKind, { ring: string; glow: string; plate: string }> =
 
 function Typewriter({ text, reduced }: { text: string; reduced: boolean }) {
   const [elapsed, setElapsed] = useState(0);
-  const done = typewriterDone(text, elapsed, CHARS_PER_SEC, reduced);
+  const chars = useMemo(() => Array.from(text), [text]);
+  const done = typewriterDone(chars, elapsed, CHARS_PER_SEC, reduced);
   useEffect(() => {
     if (done) return;
     const start = performance.now();
@@ -30,7 +31,7 @@ function Typewriter({ text, reduced }: { text: string; reduced: boolean }) {
     <>
       {/* The full text is the accessible name; the typed prefix is decoration. */}
       <span className="sr-only">{text}</span>
-      <span aria-hidden="true">{typewriterText(text, elapsed, CHARS_PER_SEC, reduced)}</span>
+      <span aria-hidden="true">{typewriterText(chars, elapsed, CHARS_PER_SEC, reduced)}</span>
       {!done && <span aria-hidden="true" className="ml-0.5 inline-block h-3 w-1.5 translate-y-0.5 bg-ink-100/80" />}
     </>
   );
@@ -52,7 +53,7 @@ export function AlertBox({ kind, agent, copy, onShowMe, onDismiss }: { kind: Ale
   return (
     <div
       className={cx(
-        'pointer-events-auto w-full rounded-lg bg-ink-950/95 p-[3px] backdrop-blur sm:w-80',
+        'pointer-events-auto w-full min-w-0 rounded-lg bg-ink-950/95 p-[3px] backdrop-blur sm:w-80',
         a.glow,
         'motion-safe:transition-[transform,opacity] motion-safe:duration-200 motion-safe:ease-[cubic-bezier(0.23,1,0.32,1)]',
         shown ? 'translate-x-0 opacity-100' : 'opacity-0 motion-safe:translate-x-6',
@@ -67,7 +68,7 @@ export function AlertBox({ kind, agent, copy, onShowMe, onDismiss }: { kind: Ale
               <span aria-hidden="true" className={cx('inline-flex size-5 shrink-0 items-center justify-center rounded text-[11px]', a.plate)}>
                 {copy.icon}
               </span>
-              <span className="min-w-0">{copy.title}</span>
+              <span className="min-w-0 break-words">{copy.title}</span>
             </p>
             {copy.body && (
               <p className="min-h-[2.5em] break-words font-pixel text-[11px] leading-snug text-ink-300">

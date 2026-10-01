@@ -4,9 +4,9 @@ import type { AmbientContext } from '../../game/sfxBus';
 import { mulberry32 } from './sfxr';
 import type { AmbientKind } from './types';
 
-/** Ambient bus level relative to the master. */
-export const AMBIENT_GAIN = 0.25;
+// Level: the ONE 0.25 attenuation (relative to master) lives on the engine's ambient bus; this inner bus ramps 0..1.
 const FADE_S = 1.5;
+const STOP_FADE_S = 0.6;
 
 export function ambientFor(style: AmbientContext['style'], night: boolean): AmbientKind {
   if (style === 'rift') return 'rift';
@@ -53,7 +53,7 @@ export function createAmbient(ctx: BaseAudioContext, kind: AmbientKind, out: Aud
   const bus = track(ctx.createGain());
   const now = ctx.currentTime;
   bus.gain.setValueAtTime(0, now);
-  bus.gain.linearRampToValueAtTime(AMBIENT_GAIN, now + FADE_S);
+  bus.gain.linearRampToValueAtTime(1, now + FADE_S);
   bus.connect(out);
 
   const loop = (buf: AudioBuffer, ...chain: AudioNode[]): void => {
@@ -139,14 +139,21 @@ export function createAmbient(ctx: BaseAudioContext, kind: AmbientKind, out: Aud
     stop() {
       if (stopped) return;
       stopped = true;
+      // Fade out, stop the sources once silent, then disconnect.
+      const t = ctx.currentTime;
+      bus.gain.cancelScheduledValues(t);
+      bus.gain.setValueAtTime(bus.gain.value, t);
+      bus.gain.linearRampToValueAtTime(0, t + STOP_FADE_S);
       for (const s of sources) {
         try {
-          s.stop();
+          s.stop(t + STOP_FADE_S);
         } catch {
           /* never started or already stopped */
         }
       }
-      for (const n of nodes) n.disconnect();
+      setTimeout(() => {
+        for (const n of nodes) n.disconnect();
+      }, (STOP_FADE_S + 0.1) * 1000);
     },
   };
 }

@@ -12,11 +12,11 @@ describe('glyph tables', () => {
     expect(SMALL_CHARS.endsWith('·…')).toBe(true);
   });
 
-  it('every 5x7 char has 7 rows of exactly 5 using only # and space', () => {
+  it('every 5x7 char has 9 rows (7 + 2 descender) of exactly 5 using only # and space', () => {
     for (const ch of BIG_CHARS) {
       const g = GLYPHS_5X7[ch];
       expect(g, `5x7 ${ch}`).toBeDefined();
-      expect(g).toHaveLength(7);
+      expect(g).toHaveLength(9);
       for (const r of g!) expect(r).toMatch(/^[# ]{5}$/);
     }
   });
@@ -38,6 +38,20 @@ describe('glyph tables', () => {
   it('visible glyphs have ink', () => {
     for (const ch of BIG_CHARS) if (ch !== ' ') expect(GLYPHS_5X7[ch]!.join('')).toContain('#');
     for (const ch of SMALL_CHARS) if (ch !== ' ') expect(GLYPHS_3X5[ch]!.join('')).toContain('#');
+  });
+
+  it('g j p q y have ink in the descender rows, nothing else does', () => {
+    for (const ch of BIG_CHARS) {
+      const tail = GLYPHS_5X7[ch]!.slice(7).join('');
+      if ('gjpqy'.includes(ch)) expect(tail, ch).toContain('#');
+      else expect(tail, ch).not.toContain('#');
+    }
+  });
+
+  it('prints lowercase for eyeballing (a-z at 1x)', () => {
+    const rows = Array.from({ length: 9 }, (_, r) =>
+      [...'abcdefghijklmnopqrstuvwxyz'].map((c) => GLYPHS_5X7[c]![r]!.replaceAll(' ', '.').replaceAll('#', '@')).join(' '));
+    expect(rows.join('\n')).toMatchSnapshot();
   });
 
   it('hasGlyphs: lowercase maps to the small set, unknown chars fail', () => {

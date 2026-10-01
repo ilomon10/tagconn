@@ -75,8 +75,7 @@ class MeetingScript implements LifeScript {
   begin(now: number): boolean {
     const claims = this.ctx.host.claims();
     for (const m of this.members.values()) {
-      // A director that claimed the cast for us already holds it as `meeting`.
-      const ok = claims.tryClaim(m.key, 'meeting', (k) => this.revoke(k, this.phaseAt)) || claims.holder(m.key) === 'meeting';
+      const ok = claims.tryClaim(m.key, 'meeting', (k) => this.revoke(k, this.phaseAt));
       if (!ok) {
         this.abort();
         return false;
@@ -138,7 +137,7 @@ class MeetingScript implements LifeScript {
 
   abort(): void {
     for (const m of this.members.values()) {
-      const c = this.char(m.key);
+      const c = this.claimed.has(m.key) ? this.char(m.key) : undefined;
       if (c) this.clearLook(c);
     }
     this.members.clear();
@@ -175,7 +174,7 @@ class MeetingScript implements LifeScript {
     const waiting = [...this.members.values()].filter((m) => m.key !== this.straggler && !this.atSpot(m));
     if (waiting.length && !timedOut) return;
     // Whoever did not make it by the timeout is sent home; the meeting goes on without them.
-    for (const m of waiting) this.release(m.key, true);
+    for (const m of waiting) this.release(m.key, true, true);
     if (this.straggler && this.members.has(this.straggler) && this.members.size >= 2) this.startFetch(now);
     else this.startMeeting(now);
   }
@@ -215,7 +214,7 @@ class MeetingScript implements LifeScript {
     const timedOut = now - this.fetchAt >= LIFE_TIMING.fetch;
     if (timedOut && st && this.fetchStep !== 'back') {
       // The straggler never came round: let it go and carry on without it.
-      this.release(st.key, true);
+      this.release(st.key, true, true);
       this.straggler = null;
     }
     if (!this.straggler || !this.members.has(this.straggler)) {
@@ -325,7 +324,7 @@ class MeetingScript implements LifeScript {
   }
 
   /** Remove a participant mid-script. Walking ones are left alone; the rest go home. */
-  private release(key: ActorKey, goHome: boolean): void {
+  private release(key: ActorKey, goHome: boolean, force = false): void {
     const m = this.members.get(key);
     if (!m) return;
     const c = this.char(key);
@@ -335,7 +334,7 @@ class MeetingScript implements LifeScript {
     if (this.dawdleAt && key === this.plan.stragglerKey) this.dawdleAt = null;
     if (c) {
       this.clearLook(c);
-      if (goHome && !c.walking && !c.leaving && !c.gone) this.ctx.goHome(c);
+      if (goHome && (force || !c.walking) && !c.leaving && !c.gone) this.ctx.goHome(c);
     }
     if (this.claimed.delete(key)) this.ctx.host.claims().release(key, 'meeting');
   }

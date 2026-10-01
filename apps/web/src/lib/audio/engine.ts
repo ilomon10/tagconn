@@ -9,7 +9,10 @@ import type { AmbientKind, AudioEngine, AudioMix } from './types';
 export const MAX_VOICES = 8;
 const DEFAULT_MIN_INTERVAL_MS = 60;
 const MIN_INTERVAL_MS: Partial<Record<SfxId, number>> = { footstep: 250, typing: 150 };
-/** Ambient level relative to master. */
+/** Voices kept free for alerts and ui; footsteps and other sfx can only use MAX_VOICES - PRIORITY_RESERVE. */
+const PRIORITY_RESERVE = 2;
+const MASTER_FADE_S = 0.1;
+/** Ambient level relative to master: the only 0.25 stage (ambient.ts ramps its own bus 0..1). */
 const AMBIENT_GAIN = 0.25;
 
 const OFF: AudioMix = { master: 0, sfx: false, ambient: false, alerts: false, footsteps: false };
@@ -36,6 +39,8 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
   let unlocked = false;
   let destroyed = false;
   let voices = 0;
+  const live: { cat: string; src: AudioBufferSourceNode }[] = [];
+  let suspendTimer: ReturnType<typeof setTimeout> | null = null;
   let wantedAmbient: AmbientKind | null = null;
   let ambient: { kind: AmbientKind; stop(): void } | null = null;
   const buffers = new Map<SfxId, AudioBuffer | null>();
@@ -56,18 +61,35 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
   const syncAmbient = (): void => {
     const kind = mix.ambient && mix.master > 0 && unlocked ? wantedAmbient : null;
     if (ambient && ambient.kind === kind) return;
-    ambient?.stop();
+    ambient?.stop(); // fades out while the new bed fades in (crossfade)
     ambient = null;
     if (kind) ambient = { kind, ...createAmbient(c, kind, ambientBus) };
   };
 
   const syncContext = (): void => {
     if (destroyed) return;
-    masterGain.gain.value = mix.master;
-    if (!unlocked) return;
-    if (mix.master === 0) void c.suspend?.().catch?.(() => {});
-    else void c.resume?.().catch?.(() => {});
+    if (suspendTimer) clearTimeout(suspendTimer);
+    suspendTimer = null;
+    if (!unlocked) {
+      masterGain.gain.value = mix.master;
+      return;
+    }
     syncAmbient();
+    if (mix.master === 0) {
+      // Ramp down first so suspending does not click; the ambient bed fades out meanwhile.
+      const t = c.currentTime;
+      masterGain.gain.cancelScheduledValues(t);
+      masterGain.gain.setValueAtTime(masterGain.gain.value, t);
+      masterGain.gain.linearRampToValueAtTime(0, t + MASTER_FADE_S);
+      suspendTimer = setTimeout(() => {
+        suspendTimer = null;
+        if (!destroyed) void c.suspend?.().catch?.(() => {});
+      }, MASTER_FADE_S * 1000 + 700);
+    } else {
+      masterGain.gain.cancelScheduledValues(c.currentTime);
+      masterGain.gain.value = mix.master;
+      void c.resume?.().catch?.(() => {});
+    }
   };
 
   const unlock = (): void => {
@@ -95,7 +117,19 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
       if (destroyed || !unlocked || mix.master <= 0) return;
       const cat = SFX_CATEGORY[id];
       if (!mix[cat === 'ui' ? 'sfx' : cat]) return;
-      if (voices >= MAX_VOICES) return;
+      const priority = cat === 'alerts' || cat === 'ui';
+      if (voices >= (priority ? MAX_VOICES : MAX_VOICES - PRIORITY_RESERVE)) {
+        // Alerts may steal the oldest footstep/typing voice; everything else is dropped.
+        const victim = cat === 'alerts' ? live.find((v) => v.cat === 'footsteps') : undefined;
+        if (!victim) return;
+        try {
+          victim.src.stop();
+        } catch {
+          /* already stopped */
+        }
+        victim.src.onended?.(new Event('ended'));
+        victim.src.onended = null;
+      }
       const now = c.currentTime * 1000;
       const last = lastAt.get(id);
       if (last !== undefined && now - last < (MIN_INTERVAL_MS[id] ?? DEFAULT_MIN_INTERVAL_MS)) return;
@@ -116,7 +150,12 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
       }
       tail.connect(sfxBus);
       voices++;
+      const entry = { cat, src };
+      live.push(entry);
       src.onended = () => {
+        const i = live.indexOf(entry);
+        if (i < 0) return;
+        live.splice(i, 1);
         voices = Math.max(0, voices - 1);
         try {
           src.disconnect();
@@ -135,6 +174,7 @@ export function createAudioEngine(deps: { createContext: () => AudioContext | nu
       if (destroyed) return;
       destroyed = true;
       off();
+      if (suspendTimer) clearTimeout(suspendTimer);
       ambient?.stop();
       ambient = null;
       try {
@@ -152,7 +192,7 @@ let shared: AudioEngine | null = null;
 /** Lazy browser singleton; inert without `window` or `AudioContext`. */
 export function getAudioEngine(): AudioEngine {
   if (!shared) {
-    shared = createAudioEngine({
+    const engine = createAudioEngine({
       createContext: () => {
         if (typeof window === 'undefined') return null;
         const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
@@ -161,6 +201,13 @@ export function getAudioEngine(): AudioEngine {
       },
       target: typeof window === 'undefined' ? new EventTarget() : window,
     });
+    const destroy = engine.destroy.bind(engine);
+    // Reset the singleton so a later call builds a fresh engine.
+    engine.destroy = () => {
+      destroy();
+      if (shared === engine) shared = null;
+    };
+    shared = engine;
   }
   return shared;
 }

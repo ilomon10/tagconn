@@ -7,17 +7,18 @@ const stopAmbient = vi.fn();
 vi.mock('../ambient', () => ({ createAmbient: vi.fn(() => ({ stop: stopAmbient })) }));
 
 import { createAmbient } from '../ambient';
-import { createAudioEngine } from '../engine';
+import { createAudioEngine, getAudioEngine } from '../engine';
 import { renderSfx } from '../sfxr';
 
 class FakeNode {
-  gain = { value: 1 };
+  gain = { value: 1, cancelScheduledValues: vi.fn(), setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn() };
   pan = { value: 0 };
   buffer: unknown = null;
   onended: (() => void) | null = null;
   connect = vi.fn();
   disconnect = vi.fn();
   start = vi.fn();
+  stop = vi.fn();
 }
 class FakeCtx {
   currentTime = 0;
@@ -49,6 +50,7 @@ const unlock = (t: EventTarget) => t.dispatchEvent(new Event('pointerdown'));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
 });
 
 describe('audio engine', () => {
@@ -92,16 +94,52 @@ describe('audio engine', () => {
     expect(ctx.sources).toHaveLength(1);
   });
 
-  it('caps concurrent voices at 8 and frees them on end', () => {
+  it('caps sfx at 8 minus the alert/ui reserve, frees on end', () => {
     const { ctx, target, engine } = setup();
     unlock(target);
     engine.setMix(ALL);
-    const ids = ['door-bell', 'meeting-gong', 'bark', 'meow', 'slime', 'whistle', 'roar', 'mop', 'ui-click'] as const;
+    const ids = ['door-bell', 'meeting-gong', 'bark', 'meow', 'slime', 'whistle', 'roar', 'mop'] as const;
     for (const id of ids) engine.play(id);
+    expect(ctx.sources).toHaveLength(6);
+    engine.play('ui-click');
+    engine.play('ui-open');
+    expect(ctx.sources).toHaveLength(8);
+    engine.play('ui-close');
     expect(ctx.sources).toHaveLength(8);
     ctx.sources[0]!.onended?.();
-    engine.play('ui-open');
+    engine.play('ui-close');
     expect(ctx.sources).toHaveLength(9);
+  });
+
+  it('alerts are not starved by footsteps and typing', () => {
+    const { ctx, target, engine } = setup();
+    unlock(target);
+    engine.setMix(ALL);
+    for (let i = 0; i < 12; i++) {
+      ctx.currentTime = i;
+      engine.play(i % 2 ? 'typing' : 'footstep');
+    }
+    expect(ctx.sources).toHaveLength(6);
+    engine.play('alert-done');
+    ctx.currentTime = 20;
+    engine.play('alert-ask');
+    expect(ctx.sources).toHaveLength(8);
+    // pool full: an alert steals the oldest footstep voice
+    ctx.currentTime = 30;
+    engine.play('alert-fail');
+    expect(ctx.sources).toHaveLength(9);
+    expect(ctx.sources[0]!.stop).toHaveBeenCalled();
+  });
+
+  it('getAudioEngine is recreated after destroy', () => {
+    class Ctx extends FakeCtx {}
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { AudioContext: Ctx }));
+    const a = getAudioEngine();
+    expect(getAudioEngine()).toBe(a);
+    a.destroy();
+    expect(getAudioEngine()).not.toBe(a);
+    getAudioEngine().destroy();
+    vi.unstubAllGlobals();
   });
 
   it('enforces per-id min interval (60 ms, footstep 250, typing 150)', () => {
@@ -152,6 +190,8 @@ describe('audio engine', () => {
     const { ctx, target, engine } = setup();
     unlock(target);
     engine.setMix({ ...ALL, master: 0 });
+    expect(ctx.suspend).not.toHaveBeenCalled(); // ramps down first
+    vi.advanceTimersByTime(1000);
     expect(ctx.suspend).toHaveBeenCalled();
     engine.play('bark');
     expect(ctx.sources).toHaveLength(0);

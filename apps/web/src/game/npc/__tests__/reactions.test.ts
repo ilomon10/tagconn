@@ -121,6 +121,23 @@ describe('npc reactions', () => {
     expect(a.walks).toHaveLength(2);
   });
 
+  it('reactors go home when their NPC is gone, and cancelFor does the same at once', () => {
+    const { a, b, rx, npc, claims } = setup();
+    rx.start(npc, 'chase', 0);
+    expect(rx.activeKeys().size).toBe(2);
+    (npc.char as unknown as { gone: boolean }).gone = true;
+    rx.step(10);
+    expect(rx.activeKeys().size).toBe(0);
+    expect(claims.holder(a.key as never)).toBeUndefined();
+    expect(a.walks.at(-1)).toMatchObject({ x: 1, y: 1 });
+    expect(b.walks.at(-1)).toMatchObject({ x: 2, y: 1 });
+    const t = setup();
+    t.rx.start(t.npc, 'chase', 0);
+    t.rx.cancelFor(t.npc);
+    expect(t.rx.activeKeys().size).toBe(0);
+    expect(t.a.walks.at(-1)).toMatchObject({ x: 1, y: 1 });
+  });
+
   it('duration is within bounds', () => {
     const { a, rx, npc } = setup();
     rx.start(npc, 'flee', 0);

@@ -9,6 +9,7 @@ import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES } from '../textures';
 import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, prefersReducedMotion, staffTextureKey, type ActivityFxKind, type Costume, type DramaEmote, type StrainKind } from '../themes';
 import type { CreatureId, LifePose } from '../themes/types';
 import { SHADES_TEXTURE, creatureTextureKey } from '../npc/types';
+import { clipDisplayText } from '../../lib/displayText';
 import { PIXEL_FONT_KEYS, ensurePixelFonts, hasGlyphs } from '../text/pixelFont';
 import { PIXEL_METRICS, layoutPlate, pixelMeasure, plateGlyphScale, taskVisible, type MeasureFn, type PlateLayout, type PlateOptions, type PlateStyle } from './namePlate';
 import { POSE_ANIM, POSE_PROP } from './poses';
@@ -348,21 +349,25 @@ export class Character extends Phaser.GameObjects.Container {
     const o = this.plateOptions;
     const showTask = taskVisible(o.showTask, this.selected, this.hovered);
     const named = !!look.name;
-    const task = showTask ? look.description : undefined;
+    const task = showTask ? look.description : undefined; // clipped below, before layout
     const webgl = this.scene.game.renderer.type === Phaser.WEBGL;
     const key = `${look.color}|${look.name ?? ''}|${look.title}|${task ?? ''}|${o.taskLines}|${o.maxWidthChars}|${o.showTitle}|${o.pixelFont}|${webgl}`;
     if (key === this.plateKey) return;
     this.plateKey = key;
-    const line1 = named ? look.name! : look.title;
-    const title = named && o.showTitle ? look.title : undefined;
+    // Untrusted text: sanitize and clip by code point before any layout/measure work (M13 gate).
+    const cap = o.maxWidthChars + 1;
+    const line1 = clipDisplayText(named ? look.name! : look.title, cap);
+    const title = named && o.showTitle ? clipDisplayText(look.title, cap) : undefined;
+    const taskClip = task ? clipDisplayText(task, o.maxWidthChars * Math.max(1, o.taskLines) + 1) : undefined;
     const maxW = o.maxWidthChars * 6;
     const maxLines = showTask ? o.taskLines : 0;
     this.plateText = named ? `${look.name} · ${look.title}` : look.title;
 
-    let layout = layoutPlate(line1, title, task, maxW, maxLines, pixelMeasure());
+    // The small font is uppercase only: measure and check glyphs on the uppercased text.
+    let layout = layoutPlate(line1, title?.toUpperCase(), taskClip?.toUpperCase(), maxW, maxLines, pixelMeasure());
     const bitmap = o.pixelFont && webgl && ensurePixelFonts(this.scene)
       && layout.lines.every((l) => hasGlyphs(l.text, l.style === 'name' ? 'big' : 'small'));
-    if (!bitmap) layout = layoutPlate(line1, title, task, maxW, maxLines, this.textMeasure());
+    if (!bitmap) layout = layoutPlate(line1, title, taskClip, maxW, maxLines, this.textMeasure());
     this.plateLayout = layout;
 
     for (const c of this.plate.list.slice(1)) c.destroy();
@@ -378,7 +383,7 @@ export class Character extends Phaser.GameObjects.Container {
       let obj: Phaser.GameObjects.BitmapText | Phaser.GameObjects.Text;
       if (bitmap) {
         const big = l.style === 'name';
-        obj = this.scene.make.bitmapText({ x, y: top, font: big ? PIXEL_FONT_KEYS.big : PIXEL_FONT_KEYS.small, text: big ? l.text : l.text.toUpperCase() }, false);
+        obj = this.scene.make.bitmapText({ x, y: top, font: big ? PIXEL_FONT_KEYS.big : PIXEL_FONT_KEYS.small, text: l.text }, false);
         obj.setOrigin(0, 0).setTint(color);
       } else {
         obj = crisp(

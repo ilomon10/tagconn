@@ -226,7 +226,7 @@ Receptionist, Admin access, Attribution). Keys the GUI can't change (see
 config file/env var that controls them instead. A **restart required** badge marks keys that only
 take effect after the server process restarts.
 
-Next: [Attribution](attribution.md).
+Next: [Name plates](name-plates.md).
 
 ## Accessibility
 

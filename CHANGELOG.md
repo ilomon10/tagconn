@@ -7,6 +7,17 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- **RPG name plates** (v0.7.0): each character displays a multi-line label above their head showing name, role title, and current task. The label is drawn in a hand-made pixel font that stays crisp at any zoom. Configure which lines show and the plate width with `office.labels.*` settings; plates fall back to system text in canvas mode or when glyphs are missing.
+- **Office life — meetings and activities** (v0.7.0): when subagents gather during a kickoff, they hold a meeting at a conference table. Every ~30 minutes, idle characters hold stand-ups. Between meetings, characters take breaks roughly every minute: coffee chats, arcade games, ping-pong, foosball, board games, stretches, naps on the sofa, and more. Meetings last ~20 seconds; activities last a few seconds. All controlled by `office.life.*` settings. Reduced motion disables walking and meetings; on low graphics quality, only 1 concurrent activity runs.
+- **Lounge furniture** (v0.7.0): new game tables in the lounge — arcade cabinet, ping-pong table, foosball table, board game table — plus refurbished water cooler and sofa. Characters gather at these during idle activities.
+- **NPCs and random encounters** (v0.7.0): routine staff (janitor, courier, plant waterer) clock in at regular hours, sweeping and delivering. Random visitors (guests, police, CIA agents, sales dogs, monsters, office cats) show up roughly every 4 minutes. They're styled per theme (modern office workers, guild fantasy, sci-fi rift). Idle characters react — gathering, fleeing, or chasing — controlled by `office.npcs.*` settings. Encounters are disabled on the Multiverse floor; chaos reactions respect low graphics quality.
+- **Game-style alerts** (v0.7.0): JRPG alert boxes in the top-right corner (top-center on phones) for key events — when an agent asks for you, a tool fails, or a quest completes. Alerts are rate-limited (4 per minute by default), coalesce when multiple characters need you, and auto-dismiss after 8 seconds (configurable). Click "Show me" to jump to the character. Controlled by `office.alerts.*` settings; browser notifications still work when the tab is hidden.
+- **Procedurally generated sound and music** (v0.7.0): WebAudio synthesis creates sound effects and ambient beds in real-time — no asset files. Meeting gongs, NPC sounds (barks, meows, whistles), footsteps, typing, alert jingles, and per-style ambient beds (office hum, crickets, tavern chatter, rift drones). Sound is off by default; each browser can toggle it from the menu (**Sound** row in the **☰ Menu**) and adjust volume independently. Spatial audio: effects play louder near the center of your view. Controlled by `office.sound` (master switch) and `office.audio.*` (mix toggles per browser).
+
+### Changed
+- Display page now links to [Name plates](docs/guide/name-plates.md) for label configuration.
+
 ## [0.6.0] - 2026-10-01
 
 ### Added

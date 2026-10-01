@@ -45,22 +45,52 @@ describe('alertQueue', () => {
     expect(tickAlerts(s, c, 20 + W, false).shown.map((i) => i.kind)).toEqual(['ask', 'failure', 'done']);
   });
 
-  it('drops exact repeats but updates lastKey', () => {
-    const c = cfg({ agentCooldownSec: 0 });
+  it('same-agent offers coalesce while pending; a repeat after the item shows alerts again', () => {
+    const c = cfg({ agentCooldownSec: 60 });
     let s = initialAlertQueue(c, 0);
     s = offerAlert(s, inp('a', 'ask', 'waiting'), c, 0);
-    s = offerAlert(s, inp('a', 'ask', 'waiting'), c, 5_000);
+    s = offerAlert(s, inp('a', 'ask', 'waiting'), c, 100);
     expect(s.pending).toHaveLength(1);
-    s = offerAlert(s, inp('a', 'ask', 'blocked'), c, 20_000);
-    expect(s.lastKey.a).toBe('blocked');
-    expect(s.pending).toHaveLength(2);
+    s = tickAlerts(s, c, W, false).state;
+    // waiting -> active -> waiting after the cooldown: alerts a second time
+    s = offerAlert(s, inp('a', 'ask', 'waiting'), c, 61_000 + W);
+    expect(s.pending).toHaveLength(1);
+    expect(tickAlerts(s, c, 61_000 + 2 * W, false).shown).toHaveLength(1);
   });
 
-  it('drops when disabled or kind off, still tracking lastKey', () => {
+  it('two failures of the same tool alert twice (after the cooldown)', () => {
+    const c = cfg({ agentCooldownSec: 60, maxVisible: 5 });
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, inp('a', 'failure', 'Bash'), c, 0);
+    let r = tickAlerts(s, c, W, false);
+    expect(r.shown).toHaveLength(1);
+    s = offerAlert(r.state, inp('a', 'failure', 'Bash'), c, 70_000);
+    r = tickAlerts(s, c, 70_000 + W, false);
+    expect(r.shown).toHaveLength(1);
+  });
+
+  it('prunes lastShown entries past the cooldown', () => {
+    const c = cfg({ agentCooldownSec: 10 });
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, inp('a', 'done'), c, 0);
+    s = tickAlerts(s, c, W, false).state;
+    expect(Object.keys(s.lastShown)).toEqual(['a']);
+    s = tickAlerts(s, c, W + 11_000, false).state;
+    expect(s.lastShown).toEqual({});
+  });
+
+  it('coalescing failures of different tools drops the single toolName', () => {
+    const c = cfg({ agentCooldownSec: 0 });
+    let s = initialAlertQueue(c, 0);
+    s = offerAlert(s, inp('a', 'failure', 'Bash'), { ...c }, 0);
+    s = offerAlert(s, { ...inp('b', 'failure', 'Edit'), toolName: 'Edit' }, c, 10);
+    expect(s.pending[0]?.toolName).toBeUndefined();
+  });
+
+  it('drops when disabled or kind off', () => {
     let s = initialAlertQueue(base, 0);
     s = offerAlert(s, inp('a'), cfg({ enabled: false }), 0);
     expect(s.pending).toHaveLength(0);
-    expect(s.lastKey.a).toBe('ask');
     s = offerAlert(s, inp('b', 'done'), cfg({ onDone: false }), 0);
     expect(s.pending).toHaveLength(0);
   });
