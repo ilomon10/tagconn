@@ -1,1 +1,1 @@
-{ "name": "@tagconn/hook", "version": "0.9.0", "private": true, "files": ["office-hook.sh", "office-hook.mjs"] }
+{ "name": "@tagconn/hook", "version": "0.10.0", "private": true, "files": ["office-hook.sh", "office-hook.mjs"] }

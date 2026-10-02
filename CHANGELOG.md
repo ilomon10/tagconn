@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-02
+
 ### Added
 - **Host-clock sun cycle** (M16): light follows the server's local time with smooth dawn and dusk ramps (`office.lighting.cycle`: `host-clock`, `fixed` or `accelerated`). The ☰ menu's **Time of day** row lets one browser pick its own hour. In Docker, set `TZ` in `.env` (the office otherwise runs on UTC).
 - **Lightmap with wall-clipped room lights** (M16): every room gets ceiling lights, lamps and torches whose light stops at walls; windows cast sun shafts by day and moonlight at night (`office.lighting.lightmap`, `lightScale`, `windowShafts`). Low quality and the canvas renderer use a lighter fallback.
@@ -230,7 +232,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/ilomon10/tagconn/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/ilomon10/tagconn/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/ilomon10/tagconn/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/ilomon10/tagconn/compare/v0.6.0...v0.7.0
