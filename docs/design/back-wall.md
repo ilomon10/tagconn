@@ -257,8 +257,13 @@ export interface BackWallCtx {
 
 ### 3.2 `renderGeneratedMap` pass order (one Graphics, one `generateTexture`; decision #22 kept)
 1. Tiles, as today. When `themeAt(x,y).paintBackWall` exists, face tiles call `paintWall(..., faceVisible = false, ...)`
-   so only the cap and top are drawn.
+   so only the cap and top are drawn. (M15: when the dual pass below runs, `paintWallBase` replaces `paintWall` for
+   wall tiles, consuming the same `rand()` draws; `docs/design/dual-grid.md` §2.2.)
 2. Island edges (unchanged).
+2b. **Dual grid** (M15, `docs/design/dual-grid.md` §2): when `office.dualGrid` is on, every dual cell
+   (`(cols+1) x (rows+1)`, centred on tile corners) calls `paintDualFloor` then `paintDualWall` with its own PRNG
+   `mulberry32(map.seed ^ 0x5d1a7c3b)`. It never paints a face quadrant (a wall quarter-tile with floor/door directly
+   south), the band pixels under one, or a door quadrant, so the face pass below is unchanged.
 3. **Back-wall face** (new): every face tile with a painter. It uses a **separate** PRNG
    `mulberry32(map.seed ^ 0x8b3a11ed)`, so the existing floor and wall noise stream is not reshuffled more than step 1
    requires.

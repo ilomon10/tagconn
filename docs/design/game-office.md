@@ -574,10 +574,13 @@ export class FurnitureTriggerLayer {
 
 ### 5.1 Data
 
-`LayoutRoom.furniture?: PinnedFurniture[]` (shared, already there): interior-relative `x, y`, `w, h <= 8`,
-`kind` regex, optional `variant`; max 48 per room; `validateLayout` errors (`pinned-invalid`) on out of
-interior, overlap, or covering an explicit door's apron (`layout.ts:392-431`). Reminder: a geometry error makes
-`generateMap` fall back to `DEFAULT_LAYOUT` (`generate.ts:172-179`), so the editor must never produce one.
+`LayoutRoom.furniture?: PinnedFurniture[]` (shared, already there): interior-relative `x, y` (M15: multiples of
+`HALF_TILE = 0.5`, so a pin may sit on a half tile; `docs/design/navigation.md` §1), `w, h <= 8` in **whole**
+tiles, `kind` regex, optional `variant`; max 48 per room; `validateLayout` errors (`pinned-invalid`) on out of
+interior, overlap (exact `rectsIntersect`, so two half-offset pins may share a tile without overlapping), or
+covering an explicit door's apron (any covered tile counts, `coveredTileRect`; `layout.ts:392-431`). Reminder: a
+geometry error makes `generateMap` fall back to `DEFAULT_LAYOUT` (`generate.ts:172-179`), so the editor must never
+produce one.
 
 ### 5.2 Generation (`procgen/pins.ts` new, `procgen/generate.ts`, `procgen/recipes.ts`; task T5)
 
@@ -589,27 +592,30 @@ export const KIND_BLOCKING: Record<FurnitureKind, boolean>;
 export function isPinnableKind(kind: string): kind is FurnitureKind;
 export interface ResolvedPins { items: (RecipeItem & { pinned: true })[]; issues: LayoutIssue[] }
 /** Absolute-coord pins for one room. Skips (with a `pinned-invalid` WARNING) unknown kinds, items outside the
- *  interior, and items overlapping an earlier pin. Covering a door apron is kept but reported `pinned-blocks` (warning). */
+ *  interior, and items overlapping an earlier pin (M15: exact `rectsIntersect`; positions keep their half-tile
+ *  offsets). Covering a door apron is kept but reported `pinned-blocks` (warning). M15: "any overlap blocks the
+ *  tile": a blocking pin blocks every tile it covers (`coveredTiles`), and any covered apron tile counts. */
 export function resolvePins(room: Pick<LayoutRoom, 'id' | 'name' | 'type' | 'furniture'>, interior: Rect, aprons: ReadonlySet<string>): ResolvedPins;
 
 // procgen/recipes.ts
 /** The seats a single item of `kind` at `rect` offers inside `interior` (extracted from furnishRoom's per-kind rules:
  *  desks/booths/reading tables sit on the outward row below, else above; tables ring; benches, benches of the lab,
- *  shelves, racks and counters stand below every 2 tiles; console sits left; sofa/armchair sit on themselves). */
+ *  shelves, racks and counters stand below every 2 tiles; console sits left; sofa/armchair sit on themselves).
+ *  M15: computed on `coveredTileRect(rect)`, so a half-offset pin seats the outward edge of the tiles it covers. */
 export function seatsFor(kind: FurnitureKind, rect: Rect, interior: Rect): RecipeSeat[];
 ```
 
 Changes in `build()`'s room loop (`generate.ts:509-758`):
 1. Before the recipe (`:587`): `const pins = resolvePins(spec, interior, reserved)`; push its issues; put every pin
-   into `keptItems` first and its blocking cells into `blocked`; seats from `seatsFor` for each pin are added to the
-   recipe seats before the existing filter (`:600-602`).
+   into `keptItems` first and its covered tiles (M15: `cellKeys`, any overlap blocks the tile) into `blocked`; seats
+   from `seatsFor` for each pin are added to the recipe seats before the existing filter (`:600-602`).
 2. Recipe items colliding with a pinned cell are skipped by the existing `fits` check (`:590-599`) once pinned
    cells (blocking or soft) are in a `pinnedCells` set checked there.
 3. The retry (`:651-688`) looks for the last blocking item **without** `pinned`; if only pins remain and the room is
    still not clean, push `{ severity: 'warning', code: 'pinned-blocks', message: '<room>: locked furniture blocks part of the room.', roomIds: [id] }`
    and stop. The global verify (`:785-813`) adds a `pinned-blocks` warning next to `unreachable-room` when the room has pins.
 4. Appliances (`:700-731`) already treat `blocked`/`occupiedCells` as taken; pins are in both. `flagAgainstNorthWall`
-   (`:726`) runs over `keptItems` including pins.
+   (`:726`) runs over `keptItems` including pins (M15: strict `y === interior.y`, so a `y + 0.5` pin is never tall).
 5. Pins keep their `variant` (default 0) and are emitted with `pinned: true`.
 6. Rooms with pins and no recipe (`stairs`, `hall`): pins are ignored for `stairs` (the landing must stay free) and
    placed for `hall` (decor only, no seats).
@@ -649,23 +655,25 @@ For each action in `TRIGGER_ORDER`:
 ### 5.4 Editor (task T6: `PlanCanvas.tsx`, `Inspector.tsx`, `OfficeEditor.tsx`, `shortcuts.ts`, `stores/editorStore.ts`, `features/editor/pins.ts` new)
 
 - **Tool**: `EditorTool` gains `'furniture'`, shortcut `F` (`shortcuts.ts:76-80`), toolbar button "Furniture".
-- **Hit-test** (`pins.ts`): `hitFurnitureAt(map, rooms, tile)` → topmost item under the tile, pinned first; returns
-  `{ room, item, pinIndex | null }`. Not pinnable: `stairs-*`, items wider/taller than 8 (cursor `not-allowed`,
-  hint "Too large to lock").
+- **Hit-test** (`pins.ts`): `hitFurnitureAt(map, rooms, at)` → topmost item under a world point (M15: half-cell
+  resolution; the point may be fractional), pinned first; returns `{ room, item, pinIndex | null }`. Not pinnable:
+  `stairs-*`, items wider/taller than 8 (cursor `not-allowed`, hint "Too large to lock").
 - **Drag a generated item** = materialize + move in ONE undo step: `beginGesture()` (`editorStore.ts:395`), then
   `pinDirect(roomId, pinFromPlaced(item, interior))` (direct mutate like `setDoorRect`, `editorStore.ts:331`), then
-  `setPinPos` per move (clamped to the interior; a position overlapping another pin is refused, the pin stays at
+  `setPinPos` per move (M15: positions snap to half tiles via `toWorldHalf` and `clampPinPos`; rooms keep whole
+  tiles; clamped to the interior; a position overlapping another pin is refused, the pin stays at
   its last valid spot), `endGesture()` on pointer up. Dragging a pin is the same without the materialize. Same
   pattern as the door tool's `ensureExplicitDoors` + `move-door` (`PlanCanvas.tsx:526-533`).
 - **Click** (no drag) selects the item (`selectedFurniture`). Drawing: generated items as today
   (`PlanCanvas.tsx:238`); pins amber with a padlock badge (the U+1F512 glyph, like the stairs arrows at `:247`) in
   the top-right corner; the selection outlined.
-- **Inspector furniture section** (selected item): kind (themed label if any), position and size (interior-relative),
-  "Locked" / "Generated"; buttons **Lock in place** (generated) or **Release to procedural** (pinned). Room section:
-  "N locked", **Lock all** (every pinnable generated item of the room, deduped, capped at
-  `LAYOUT_LIMITS.maxPinnedPerRoom`) and **Release all** (`furniture: undefined`).
-- **Keyboard**: arrows nudge the selected pin (one commit, clamped, overlap refused), Delete/Backspace releases it,
-  Esc clears the furniture selection.
+- **Inspector furniture section** (selected item): kind (themed label if any), position and size (interior-relative;
+  M15: positions may be halves and show as `2.5`, sizes are whole), "Locked" / "Generated"; buttons **Lock in
+  place** (generated) or **Release to procedural** (pinned). Room section: "N locked", **Lock all** (every pinnable
+  generated item of the room, deduped, capped at `LAYOUT_LIMITS.maxPinnedPerRoom`) and **Release all**
+  (`furniture: undefined`).
+- **Keyboard**: arrows nudge the selected pin by one tile (one commit, clamped, overlap refused; M15: Alt+arrow
+  nudges by 0.5, Shift stays x5), Delete/Backspace releases it, Esc clears the furniture selection.
 - **Store API** (`editorStore.ts`):
 
 ```ts
