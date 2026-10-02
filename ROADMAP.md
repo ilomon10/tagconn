@@ -293,7 +293,7 @@ fractional sizes). Designs: `docs/design/lighting.md`, `docs/design/furnishing.m
 - [x] Furniture editor: no duplicate on drag (slot consumption), stable decor, displaced items move, labels/icons, rotate/delete/palette
 - [x] Gate → v0.10.0 (QA browser smoke at 06/12/18/23 per style, review fixes: a dragged desk costs at most one neighbour, relocated desks keep their chairs, ambience follows a reskin; security clean; generate 1.22× v0.9.0)
 
-## M17: Deep 3/4 RPG renderer (2.5D) → v1.0.0 [in progress]
+## M17: Deep 3/4 RPG renderer (2.5D) → v1.0.0 [released 2026-10-02]
 
 Design `docs/design/depth-25d.md`, ADR #31. Layouts and pins load unchanged; flags restore the v0.10 look.
 
@@ -304,7 +304,7 @@ Design `docs/design/depth-25d.md`, ADR #31. Layouts and pins load unchanged; fla
 - [x] 4-direction characters with walk cycles, seat facing
 - [x] Height map, wall shadows, see-through fade for tall items hiding a character
 - [x] Follow camera with deadzone, integer zoom, optional perspective shader; Hall Planner preview on the sprite path
-- [ ] Gate → v1.0.0
+- [x] Gate → v1.0.0 (QA browser gate in modern/guild/Multiverse, canvas, phone; review and security fixes: perspective snaps to screen rows, atlas page and texture caps, see-through only where art can cover; perf suite runs files serially)
 
 ## Backlog
 
