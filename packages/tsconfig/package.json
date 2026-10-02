@@ -1,1 +1,1 @@
-{ "name": "@tagconn/tsconfig", "version": "0.8.0", "private": true, "files": ["*.json"] }
+{ "name": "@tagconn/tsconfig", "version": "0.9.0", "private": true, "files": ["*.json"] }

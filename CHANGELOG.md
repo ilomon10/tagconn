@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-02
+
 ### Added
 - **Dual-grid tile edges** (M15, v0.9.0): walls get a 1 px outline with rounded outer corners, floors cast a shadow where they meet a wall, and cliffs line the edges to the void. Every style draws edges in its own aesthetic (modern outlined and chamfered, guild lit with ashlar joints, rift with teal rims). Controlled by `office.dualGrid` (default `true`); off restores the flat per-tile look.
 - **Half-tile furniture placement** (M15, v0.9.0): locked furniture can now position at 0.5 tile boundaries (8 px grid). Drag snaps to halves; the Hall Planner shows positions like `at 2.5, 1`; Alt+arrow nudges by 0.5 tiles (Shift+Alt = 2.5). Sizes stay whole tiles. A half-offset footprint blocks navigation through every full tile it overlaps. Integer layouts are unchanged — old saved `.tagconn/office.json` files parse as-is.
@@ -210,7 +212,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/ilomon10/tagconn/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/ilomon10/tagconn/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/ilomon10/tagconn/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ilomon10/tagconn/compare/v0.5.3...v0.6.0
