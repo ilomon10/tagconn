@@ -50,7 +50,8 @@ type Mode =
   | { kind: 'resize'; roomId: string; handle: Handle; anchor: Rect }
   | { kind: 'move-door'; roomId: string; index: number }
   // Furniture tool: `index` is null until the first real drag materializes a generated item into a pin.
-  | { kind: 'move-furniture'; roomId: string; index: number | null; hit: FurnitureHit; startTile: { x: number; y: number }; origin: { x: number; y: number } }
+  // M15: `startHalf` / `origin` are in half tiles (`toWorldHalf`), so a drag moves the pin in 0.5 steps.
+  | { kind: 'move-furniture'; roomId: string; index: number | null; hit: FurnitureHit; startHalf: { x: number; y: number }; origin: { x: number; y: number } }
   | { kind: 'resize-door'; roomId: string; index: number; handle: DoorHandle; anchor: DoorSpec };
 
 /** This room's doors as currently drawn: explicit if the layout has one, else the generator's auto
@@ -172,12 +173,29 @@ export function PlanCanvas({
   }, [fitView]);
 
   const toScreen = useCallback((wx: number, wy: number) => ({ x: (wx - view.scrollX) * view.zoom, y: (wy - view.scrollY) * view.zoom }), [view]);
-  const toWorldTile = useCallback(
+  /** The exact (fractional) world tile coordinate under a screen point. */
+  const toWorldPoint = useCallback(
     (screenX: number, screenY: number) => ({
-      x: Math.floor(screenX / view.zoom / WORLD_TILE_PX + view.scrollX / WORLD_TILE_PX),
-      y: Math.floor(screenY / view.zoom / WORLD_TILE_PX + view.scrollY / WORLD_TILE_PX),
+      x: screenX / view.zoom / WORLD_TILE_PX + view.scrollX / WORLD_TILE_PX,
+      y: screenY / view.zoom / WORLD_TILE_PX + view.scrollY / WORLD_TILE_PX,
     }),
     [view],
+  );
+  /** Whole tiles: rooms, doors and stairs live on the tile grid. */
+  const toWorldTile = useCallback(
+    (screenX: number, screenY: number) => {
+      const p = toWorldPoint(screenX, screenY);
+      return { x: Math.floor(p.x), y: Math.floor(p.y) };
+    },
+    [toWorldPoint],
+  );
+  /** Half tiles (M15): furniture pins snap to `HALF_TILE`, so a drag tracks the pointer in halves. */
+  const toWorldHalf = useCallback(
+    (screenX: number, screenY: number) => {
+      const p = toWorldPoint(screenX, screenY);
+      return { x: Math.floor(p.x * 2) / 2, y: Math.floor(p.y * 2) / 2 };
+    },
+    [toWorldPoint],
   );
   const screenPos = useCallback((e: { clientX: number; clientY: number }) => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -590,7 +608,8 @@ export function PlanCanvas({
       return;
     }
     if (tool === 'furniture') {
-      const hit = hitFurnitureAt(generatedMap, draft.rooms, tile);
+      // Half-cell resolution (M15): the exact point tells two half-offset items in one tile apart.
+      const hit = hitFurnitureAt(generatedMap, draft.rooms, toWorldPoint(screen.x, screen.y));
       if (!hit) {
         // Empty floor selects the room (so Lock all / Release all are one click away) and clears the item pick.
         const room = hitRoom(tile);
@@ -614,7 +633,7 @@ export function PlanCanvas({
         roomId: hit.room.id,
         index: hit.pinIndex,
         hit,
-        startTile: tile,
+        startHalf: toWorldHalf(screen.x, screen.y),
         origin: { x: hit.item.x - inner.x, y: hit.item.y - inner.y },
       };
       return;
@@ -643,13 +662,13 @@ export function PlanCanvas({
     }
     const mode = modeRef.current;
     if (tool === 'furniture' && mode.kind === 'none' && !builtin) {
-      const hit = hitFurnitureAt(generatedMap, draft.rooms, toWorldTile(screen.x, screen.y));
+      const hit = hitFurnitureAt(generatedMap, draft.rooms, toWorldPoint(screen.x, screen.y));
       const reason = hit && hit.pinIndex === null ? unpinnableReason(hit.item) : null;
       if (reason !== furnitureHint) setFurnitureHint(reason);
     }
     if (mode.kind === 'move-furniture') {
       if (!downRef.current?.moved) return;
-      const tile = toWorldTile(screen.x, screen.y);
+      const half = toWorldHalf(screen.x, screen.y);
       const room = draft.rooms.find((r) => r.id === mode.roomId);
       if (!room) return;
       let index = mode.index;
@@ -669,7 +688,7 @@ export function PlanCanvas({
       const fresh = useEditorStore.getState().draft?.rooms.find((r) => r.id === mode.roomId);
       const pin = fresh?.furniture?.[index];
       if (!fresh || !pin) return;
-      store.setPinPos(mode.roomId, index, clampPinPos(fresh, pin, { x: mode.origin.x + tile.x - mode.startTile.x, y: mode.origin.y + tile.y - mode.startTile.y }));
+      store.setPinPos(mode.roomId, index, clampPinPos(fresh, pin, { x: mode.origin.x + half.x - mode.startHalf.x, y: mode.origin.y + half.y - mode.startHalf.y }));
       return;
     }
     if (mode.kind === 'pan') {

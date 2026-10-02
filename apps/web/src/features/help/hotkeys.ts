@@ -67,7 +67,7 @@ export const HOTKEY_GROUPS: HotkeyGroup[] = [
       { combos: ['1..9', '0'], description: 'Pick a room type from the popover' },
       { combos: ['Arrows'], description: 'Nudge the selection by 1 tile' },
       { combos: ['Shift+Arrows'], description: 'Nudge the selection by 5 tiles' },
-      { combos: ['Alt+Arrows'], description: 'Resize the selection by 1 tile' },
+      { combos: ['Alt+Arrows'], description: 'Resize the selection by 1 tile (a locked furniture item: nudge by half a tile)' },
       { combos: ['Delete', 'Backspace'], description: 'Delete the selection' },
       { combos: ['Ctrl/Cmd+D'], description: 'Duplicate the selection' },
       { combos: ['Ctrl/Cmd+Z'], description: 'Undo' },

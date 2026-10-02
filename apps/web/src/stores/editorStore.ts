@@ -154,9 +154,9 @@ export interface EditorState {
   lockFurniture(roomId: string, pin: PinnedFurniture): void;
   /** Gesture-only (pair with `beginGesture()`/`endGesture()`): appends the pin without a history entry and returns its index (the existing index if identical; -1 if refused). */
   pinDirect(roomId: string, pin: PinnedFurniture): number;
-  /** Gesture-only: moves a pin, clamped to the interior; a position that overlaps another pin or an explicit door apron is refused (the pin stays). */
+  /** Gesture-only: moves a pin, snapped to half tiles (M15) and clamped to the interior; a position that overlaps another pin or an explicit door apron is refused (the pin stays). */
   setPinPos(roomId: string, index: number, pos: { x: number; y: number }): void;
-  /** One-commit keyboard nudge of a pin, clamped to the interior; refused if it would overlap or block a door. */
+  /** One-commit keyboard nudge of a pin (whole or half tiles), clamped to the interior; refused if it would overlap or block a door. */
   nudgePin(roomId: string, index: number, dx: number, dy: number): void;
   /** Releases a pin back to procedural generation (one commit); clears the selection if it pointed at it. */
   releasePin(roomId: string, index: number): void;

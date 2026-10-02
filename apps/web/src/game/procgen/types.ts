@@ -173,7 +173,7 @@ export interface GeneratedMap {
   tiles: TileKind[][]; // [y][x]
   walkable: number[][]; // [y][x] 0 = walkable, 1 = blocked (easystar); M15: derived from `nav`
   /** M15: the sub-tile collision grid (docs/design/navigation.md). Optional until W1 makes `generateMap` emit it. */
-  nav?: NavGrid;
+  nav: NavGrid;
   walls: boolean[][]; // tiles === 'wall'
   roomAt: (string | null)[][]; // room id for floor tiles; null = hall/corridor
   zoneAt: (Zone | null)[][];

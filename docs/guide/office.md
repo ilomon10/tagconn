@@ -174,7 +174,7 @@ either visual style before you save.
 | Drag a selected room's body | Move the selection |
 | Drag a resize handle | Resize the selected room |
 | Arrows / Shift+Arrows | Nudge the selection by 1 / 5 tiles |
-| Alt+Arrows | Resize the selected room by 1 tile |
+| Alt+Arrows | Resize the selected room by 1 tile; with a locked furniture item selected, nudge it by half a tile (Shift+Alt: 2.5) |
 | Delete / Backspace | Delete the selection |
 | Ctrl/Cmd+D | Duplicate the selected rooms |
 | Doors tool: click a wall | Add a door (Shift+click for width 2) |
@@ -203,8 +203,9 @@ either visual style before you save.
 
 Locked furniture (marked with a **padlock** 🔒 icon on the canvas) stays in place when you change
 the seed or regenerate. Generated furniture can be dragged to lock in place; once locked, locked
-furniture can be nudged with arrow keys or dragged to a new position. Reachability checking is
-shown as an overlay while a room is selected.
+furniture can be nudged with arrow keys or dragged to a new position. Positions snap to half tiles
+(a drag moves in 0.5 steps, Alt+Arrows nudges by 0.5; the inspector shows `2.5`), while sizes stay
+whole tiles. Reachability checking is shown as an overlay while a room is selected.
 
 ## Manage floors (`F`)
 

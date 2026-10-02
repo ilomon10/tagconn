@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isTypingTarget, resolveShortcut, type KeyLike } from './shortcuts';
+import { isTypingTarget, pinNudgeDelta, resolveShortcut, type KeyLike } from './shortcuts';
 
 const key = (over: Partial<KeyLike> & Pick<KeyLike, 'key'>): KeyLike => ({
   ctrlKey: false,
@@ -73,6 +73,16 @@ describe('resolveShortcut', () => {
     expect(resolveShortcut(key({ key: 'ArrowRight' }))).toEqual({ type: 'nudge', dx: 1, dy: 0, resize: false });
     expect(resolveShortcut(key({ key: 'ArrowUp', shiftKey: true }))).toEqual({ type: 'nudge', dx: 0, dy: -5, resize: false });
     expect(resolveShortcut(key({ key: 'ArrowDown', altKey: true }))).toEqual({ type: 'nudge', dx: 0, dy: 1, resize: true });
+    expect(resolveShortcut(key({ key: 'ArrowLeft', altKey: true, shiftKey: true }))).toEqual({ type: 'nudge', dx: -5, dy: 0, resize: true });
+  });
+
+  it('pinNudgeDelta: Alt steps a locked pin by half a tile, Shift stays x5, Shift+Alt = 2.5 (M15)', () => {
+    const nudge = (k: Partial<KeyLike> & Pick<KeyLike, 'key'>) => pinNudgeDelta(resolveShortcut(key(k)) as Extract<ReturnType<typeof resolveShortcut>, { type: 'nudge' }>);
+    expect(nudge({ key: 'ArrowRight' })).toEqual({ dx: 1, dy: 0 });
+    expect(nudge({ key: 'ArrowRight', altKey: true })).toEqual({ dx: 0.5, dy: 0 });
+    expect(nudge({ key: 'ArrowUp', altKey: true })).toEqual({ dx: 0, dy: -0.5 });
+    expect(nudge({ key: 'ArrowDown', shiftKey: true })).toEqual({ dx: 0, dy: 5 });
+    expect(nudge({ key: 'ArrowLeft', shiftKey: true, altKey: true })).toEqual({ dx: -2.5, dy: 0 });
   });
 
   it('leaves unmodified keys and unhandled modifier combos as null', () => {

@@ -54,6 +54,25 @@ describe('propSpots', () => {
   });
 });
 
+describe('half-tile footprints (M15)', () => {
+  it('ringSpots rings the integer tiles a half-offset footprint covers', () => {
+    const m = grid();
+    // 3.5..4.5 x 2..4 covers tiles x 3..4, y 2..3: the same ring as `table`.
+    const half = { x: 3.5, y: 2, w: 1, h: 2, roomId: 'r' };
+    for (let y = 2; y < 4; y++) for (let x = 3; x < 5; x++) m.walkable[y]![x] = 1;
+    expect(ringSpots(m, half, 8, free)).toEqual(ringSpots(m, table, 8, free));
+    expect(ringSpots(m, half, 8, free)).toHaveLength(8);
+  });
+  it('propSpots on a non-blocking half-offset prop walks its covered tiles first', () => {
+    const m = grid();
+    const sofa = { x: 3.5, y: 2, w: 2, h: 1, roomId: 'r', kind: 'sofa', blocking: false, roomType: 'lounge', variant: 0 } as PlacedFurniture;
+    expect(propSpots(m, sofa, 3, free)).toEqual([{ x: 3, y: 2 }, { x: 4, y: 2 }, { x: 5, y: 2 }]);
+    const blocking = { ...sofa, kind: 'table', blocking: true } as PlacedFurniture;
+    expect(propSpots(m, blocking, 2, free)).toEqual(ringSpots(m, blocking, 2, free));
+    expect(propSpots(m, blocking, 2, free)).toEqual([{ x: 3, y: 1 }, { x: 4, y: 1 }]);
+  });
+});
+
 describe('nearbySpot', () => {
   it('stays within radius and the room', () => {
     const m = grid();

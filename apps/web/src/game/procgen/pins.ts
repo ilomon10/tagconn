@@ -5,6 +5,7 @@
 // contributes to `generate.ts`'s room loop. Pins are placed before the procedural recipe and are never
 // removed by the reachability retry.
 import type { LayoutIssue, LayoutRoom } from '@tagconn/shared';
+import { cellKeys, isHalfAligned, overlapsAny } from './geometry';
 import type { RecipeItem } from './recipes';
 import type { FurnitureKind, Rect } from './types';
 
@@ -75,9 +76,12 @@ export interface ResolvedPins {
 
 /**
  * Absolute-coord pins for one room. `interior` is the room's absolute interior rect and `aprons` the
- * "x,y" keys of its door aprons. Skips (with a `pinned-invalid` WARNING) unknown kinds, items outside the
- * interior, and items overlapping an earlier pin. A blocking pin covering a door apron (explicit or automatic) is
- * skipped with a `pinned-blocks` warning, so locked furniture can never seal a room. Never throws.
+ * "x,y" keys of its door aprons. Skips (with a `pinned-invalid` WARNING) unknown kinds, items off the
+ * half-tile grid (the schema already enforces it; this is the defensive path for hand-edited files), items
+ * outside the interior, and items overlapping an earlier pin (exact rect overlap, so two half-offset pins may
+ * share a tile without overlapping). A blocking pin covering a door apron (explicit or automatic) is skipped
+ * with a `pinned-blocks` warning, so locked furniture can never seal a room; conservative with half tiles (any
+ * covered apron tile seals). Emitted items keep their fractional `x`/`y` and whole `w`/`h`. Never throws.
  */
 export function resolvePins(
   room: Pick<LayoutRoom, 'id' | 'name' | 'type' | 'furniture'>,
@@ -89,29 +93,32 @@ export function resolvePins(
   const pins = room.furniture;
   if (!pins?.length) return { items, issues };
   const name = room.name ?? room.type;
-  const taken = new Set<string>();
+  const taken: Rect[] = [];
   for (const f of pins) {
     if (!isPinnableKind(f.kind)) {
       issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} is not a known furniture kind and was skipped.`, roomIds: [room.id] });
       continue;
     }
+    if (!isHalfAligned(f) || f.w < 1 || f.h < 1) {
+      issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} is off the half-tile grid and was skipped.`, roomIds: [room.id] });
+      continue;
+    }
     const abs: Rect = { x: interior.x + f.x, y: interior.y + f.y, w: f.w, h: f.h };
-    if (f.x + f.w > interior.w || f.y + f.h > interior.h) {
+    if (f.x < 0 || f.y < 0 || f.x + f.w > interior.w || f.y + f.h > interior.h) {
       issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} sits outside the room and was skipped.`, roomIds: [room.id] });
       continue;
     }
-    const cells: string[] = [];
-    for (let y = abs.y; y < abs.y + abs.h; y++) for (let x = abs.x; x < abs.x + abs.w; x++) cells.push(`${x},${y}`);
-    if (cells.some((c) => taken.has(c))) {
+    if (overlapsAny(abs, taken)) {
       issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} overlaps another locked item and was skipped.`, roomIds: [room.id] });
       continue;
     }
-    // A blocking pin on a door apron (explicit OR automatic door) would seal the room: skip it.
-    if (KIND_BLOCKING[f.kind] && cells.some((c) => aprons.has(c))) {
+    // A blocking pin on a door apron (explicit OR automatic door) would seal the room: skip it. Covered tiles, so a
+    // half-offset pin touching the apron counts.
+    if (KIND_BLOCKING[f.kind] && cellKeys(abs).some((c) => aprons.has(c))) {
       issues.push({ severity: 'warning', code: 'pinned-blocks', message: `${name}: a locked ${f.kind} covers a door and was skipped.`, roomIds: [room.id] });
       continue;
     }
-    for (const c of cells) taken.add(c);
+    taken.push(abs);
     items.push({ kind: f.kind, ...abs, blocking: KIND_BLOCKING[f.kind], variant: f.variant ?? 0, pinned: true });
   }
   return { items, issues };

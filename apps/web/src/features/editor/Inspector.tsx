@@ -324,6 +324,9 @@ function LockedFurnitureFields({
   );
 }
 
+/** A tile coordinate for the inspector: whole tiles as `2`, half-tile pin positions (M15) as `2.5`. */
+const fmtTile = (v: number): string => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+
 /** The selected furniture item: kind, interior-relative position and size, Locked/Generated, Lock / Release. */
 function FurnitureItemFields({
   room,
@@ -347,7 +350,7 @@ function FurnitureItemFields({
       </div>
       <div className="text-[12px] text-ink-100">{kindLabel(item.kind)}</div>
       <div className="font-mono text-[11px] text-ink-400">
-        at {item.x}, {item.y} · {item.w} x {item.h}
+        at {fmtTile(item.x)}, {fmtTile(item.y)} · {item.w} x {item.h}
       </div>
       {pinned ? (
         <Button className="w-full" onClick={() => onRelease(selection.pinIndex)} title="Delete / Backspace">

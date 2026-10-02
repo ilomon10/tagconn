@@ -126,6 +126,10 @@ export const TILE_FLAGS = 0xf0;
 
 ### 2.2 `nav/grid.ts` (W0 signatures, T1 bodies)
 
+> **As landed (W0, commit d14195b):** `CellRect` is `{ x0, y0, x1, y1 }` with half-open cell bounds `x0 <= cx < x1` (`nav/types.ts`), not
+> `{x, y, w, h}`. Everything in `nav/` follows that type; read `dirty.x + dirty.w` below as `dirty.x1`. `SUB_SHIFT` and
+> `TILE_FLAGS` are exported from `nav/constants.ts`.
+
 ```ts
 import type { PlacedFurniture, Point, Rect } from '../procgen/types';
 import type { NavShape } from './shapes';

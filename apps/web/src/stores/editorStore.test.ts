@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { validateLayout, type LayoutRoom, type OfficeLayout } from '@tagconn/shared';
+import { PinnedFurnitureSchema, validateLayout, type LayoutRoom, type OfficeLayout } from '@tagconn/shared';
 import { DEFAULT_LAYOUT } from '@tagconn/shared';
 import { genRoomId, useEditorStore } from './editorStore';
 
@@ -626,6 +626,104 @@ describe('editorStore furniture pins (M12)', () => {
     s().lockFurniture('a', p());
     expect(s().pinDirect('a', p())).toBe(-1);
     expect(pins()).toBeUndefined();
+  });
+});
+
+describe('editorStore half-tile pins (M15)', () => {
+  beforeEach(closeStore);
+  // Room 'a': 6x5 walled -> interior 4x3.
+  const p = (over: Partial<import('@tagconn/shared').PinnedFurniture> = {}) => ({ kind: 'plant', x: 0, y: 0, w: 1, h: 1, ...over });
+  const s = () => useEditorStore.getState();
+  const pins = () => s().draft?.rooms[0]?.furniture;
+  const load = (r: Partial<LayoutRoom> = {}) => s().load(layout({ rooms: [room({ walled: true, ...r })] }));
+  const noPinIssues = () => expect(validateLayout(s().draft!).filter((i) => i.code === 'pinned-invalid')).toEqual([]);
+
+  it('Alt+arrow nudges a pin by 0.5 in one commit each, and undo/redo walk the halves back', () => {
+    load({ furniture: [p({ x: 1, y: 1 })] });
+    s().nudgePin('a', 0, 0.5, 0);
+    expect(pins()?.[0]).toMatchObject({ x: 1.5, y: 1 });
+    s().nudgePin('a', 0, 0, -0.5);
+    expect(pins()?.[0]).toMatchObject({ x: 1.5, y: 0.5 });
+    expect(s().history).toHaveLength(2);
+    s().nudgePin('a', 0, 2.5, 0); // Shift+Alt: clamped at x = 3 (interior 4 wide)
+    expect(pins()?.[0]).toMatchObject({ x: 3, y: 0.5 });
+    s().undo();
+    expect(pins()?.[0]).toMatchObject({ x: 1.5, y: 0.5 });
+    s().undo();
+    expect(pins()?.[0]).toMatchObject({ x: 1.5, y: 1 });
+    s().undo();
+    expect(pins()?.[0]).toMatchObject({ x: 1, y: 1 });
+    s().redo();
+    expect(pins()?.[0]).toMatchObject({ x: 1.5, y: 1 });
+    noPinIssues();
+  });
+
+  it('a half nudge that would overlap another pin or the interior edge is refused without history', () => {
+    load({ furniture: [p({ x: 0, y: 0 }), p({ kind: 'lamp', x: 1.5, y: 0 })] });
+    s().nudgePin('a', 1, -1, 0); // (0.5,0) overlaps the (0,0) pin by half a tile
+    expect(pins()?.[1]).toMatchObject({ x: 1.5, y: 0 });
+    s().nudgePin('a', 1, -0.5, 0); // (1,0) is edge-adjacent: fine
+    expect(pins()?.[1]).toMatchObject({ x: 1, y: 0 });
+    expect(s().history).toHaveLength(1);
+    s().nudgePin('a', 1, 2.5, 0); // clamp to x=3 (1 + 2.5 = 3.5 pokes out)
+    expect(pins()?.[1]).toMatchObject({ x: 3, y: 0 });
+    s().nudgePin('a', 1, 0.5, 0); // already at the clamp: no change, no history
+    expect(s().history).toHaveLength(2);
+    noPinIssues();
+  });
+
+  it('setPinPos snaps a fractional drag position to halves inside one gesture', () => {
+    load();
+    s().beginGesture();
+    const i = s().pinDirect('a', p({ x: 1, y: 1 }));
+    s().setPinPos('a', i, { x: 1.3, y: 0.6 });
+    expect(pins()?.[0]).toMatchObject({ x: 1.5, y: 0.5 });
+    s().setPinPos('a', i, { x: 3.4, y: 2.2 }); // 3.5 would poke out: clamped to 3
+    expect(pins()?.[0]).toMatchObject({ x: 3, y: 2 });
+    s().endGesture();
+    expect(s().history).toHaveLength(1);
+    expect(PinnedFurnitureSchema.safeParse(pins()?.[0]).success).toBe(true);
+    s().undo();
+    expect(pins()).toBeUndefined();
+  });
+
+  it('property: no sequence of drags / nudges / undos ever yields pinned-invalid or an unaligned pin', () => {
+    // Small xorshift PRNG so the run is reproducible.
+    const prng = (seed: number) => () => {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      return ((seed >>> 0) % 10_000) / 10_000;
+    };
+    const steps = [-5, -2.5, -1, -0.5, 0.5, 1, 2.5, 5];
+    for (const seed of [11, 23, 97]) {
+      const rnd = prng(seed);
+      const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(rnd() * arr.length)]!;
+      // 8x6 walled room -> interior 6x4, one N door (apron tile (2,0)), three pins of mixed sizes.
+      load({ w: 8, h: 6, doors: [{ side: 'n', offset: 3 }], furniture: [p({ x: 0, y: 1 }), p({ kind: 'desk', x: 3, y: 1, w: 2, h: 1 }), p({ kind: 'lamp', x: 5, y: 3 })] });
+      noPinIssues();
+      for (let step = 0; step < 300; step++) {
+        const count = pins()?.length ?? 0;
+        const index = Math.floor(rnd() * Math.max(1, count));
+        const op = rnd();
+        if (op < 0.45) {
+          s().nudgePin('a', index, pick(steps), pick(steps));
+        } else if (op < 0.85) {
+          s().beginGesture();
+          for (let k = 0; k < 1 + Math.floor(rnd() * 4); k++) s().setPinPos('a', index, { x: rnd() * 7 - 0.5, y: rnd() * 5 - 0.5 });
+          s().endGesture();
+        } else if (op < 0.95) {
+          s().undo();
+        } else {
+          s().redo();
+        }
+        noPinIssues();
+        for (const pin of pins() ?? []) {
+          expect(Number.isInteger(pin.x * 2) && Number.isInteger(pin.y * 2)).toBe(true);
+          expect(PinnedFurnitureSchema.safeParse(pin).success).toBe(true);
+        }
+      }
+    }
   });
 });
 

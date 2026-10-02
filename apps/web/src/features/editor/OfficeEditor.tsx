@@ -7,7 +7,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useLayoutStore, layoutForProject } from '../../stores/layoutStore';
 import { draftAsLayout, useEditorStore, type EditorTool } from '../../stores/editorStore';
 import { assignLayout, classifySaveLayoutError, deleteLayout, refreshLayouts, saveLayout } from '../../lib/layoutCommands';
-import { resolveShortcut, type KeyLike } from './shortcuts';
+import { pinNudgeDelta, resolveShortcut, type KeyLike } from './shortcuts';
 import { autoDoorsForRoom } from './reachability';
 import { planLockAll } from './pins';
 import { canSaveLayout, sealedRoomWarnings } from './saveGate';
@@ -46,7 +46,7 @@ const HELP_LINES = [
   ['Doors tool: select + Arrows', 'Nudge a door along its wall'],
   ['Furniture tool: drag an item', 'Move it; this locks it in place (generation keeps it there)'],
   ['Furniture tool: click an item', 'Select it; the Inspector can lock or release it'],
-  ['Furniture tool: select + Arrows', 'Nudge a locked item (Shift = 5 tiles)'],
+  ['Furniture tool: select + Arrows', 'Nudge a locked item (Shift = 5 tiles, Alt = half a tile)'],
   ['Furniture tool: select + Delete', 'Release a locked item back to procedural generation'],
   ['Ctrl/Cmd+Z', 'Undo'],
   ['Ctrl/Cmd+Shift+Z or Ctrl+Y', 'Redo'],
@@ -348,9 +348,12 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           break;
         case 'nudge':
           if (selectedFurniture) {
-            // A furniture pick owns the arrows: a locked item moves, a generated one does nothing (never the room).
+            // A furniture pick owns the arrows: a locked item moves (Alt = half a tile), a generated one does nothing (never the room).
             e.preventDefault();
-            if ('pinIndex' in selectedFurniture) store.nudgePin(selectedFurniture.roomId, selectedFurniture.pinIndex, action.dx, action.dy);
+            if ('pinIndex' in selectedFurniture) {
+              const { dx, dy } = pinNudgeDelta(action);
+              store.nudgePin(selectedFurniture.roomId, selectedFurniture.pinIndex, dx, dy);
+            }
           } else if (selectedDoor) {
             e.preventDefault();
             const room = draft?.rooms.find((r) => r.id === selectedDoor.roomId);

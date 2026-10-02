@@ -1,4 +1,5 @@
 import type { FurnishDensity, RoomType } from '@tagconn/shared';
+import { coveredTileRect } from './geometry';
 import type { FurnitureKind, Rect } from './types';
 
 export interface RecipeItem {
@@ -382,6 +383,9 @@ export function furnishRoom(type: RoomType, r: Rect, rand: () => number, opts: F
  */
 export function seatsFor(kind: FurnitureKind, rect: Rect, interior: Rect): RecipeSeat[] {
   const out: RecipeSeat[] = [];
+  // M15: seats are whole tiles, so a half-offset item seats the ring around (or the tiles under) the integer rect
+  // it covers; an integer rect is its own covered rect, so recipe output is unchanged.
+  rect = coveredTileRect(rect);
   const x2 = rect.x + rect.w - 1;
   const y2 = rect.y + rect.h - 1;
   const iy2 = interior.y + interior.h - 1;

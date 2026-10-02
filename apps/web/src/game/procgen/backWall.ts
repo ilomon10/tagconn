@@ -4,6 +4,7 @@
 // decor). No Phaser, no global state: every function takes exactly the room-local context it needs
 // and returns new data, so `generate.ts` stays the single place that mutates the map being built.
 import type { FurnishDensity, RoomType } from '@tagconn/shared';
+import { coveredTileRect } from './geometry';
 import {
   APPLIANCE_MAX,
   APPLIANCE_MENU,
@@ -72,7 +73,8 @@ export function componentCount(cells: ReadonlySet<string>): number {
  * Sets `againstNorthWall: true` on any kept item sitting on `interiorY` whose whole footprint has a
  * wall tile directly north (`PlacedFurniture.againstNorthWall`'s definition). Mutates the given items
  * in place - safe because every caller in `generate.ts` passes its own room-local copies. Additive:
- * geometry (x/y/w/h) is never touched.
+ * geometry (x/y/w/h) is never touched. M15: `y` stays strict (a `y + 0.5` item is not against the wall
+ * and never gets overdraw); the columns checked are the covered ones (an `x + 0.5` item spans one more).
  */
 export function flagAgainstNorthWall<T extends { x: number; y: number; w: number; h: number; againstNorthWall?: boolean }>(
   items: readonly T[],
@@ -82,7 +84,8 @@ export function flagAgainstNorthWall<T extends { x: number; y: number; w: number
   for (const item of items) {
     if (item.y !== interiorY) continue;
     let allWall = true;
-    for (let x = item.x; x < item.x + item.w; x++) {
+    const cols = coveredTileRect(item);
+    for (let x = cols.x; x < cols.x + cols.w; x++) {
       if (tiles[interiorY - 1]?.[x] !== 'wall') {
         allWall = false;
         break;

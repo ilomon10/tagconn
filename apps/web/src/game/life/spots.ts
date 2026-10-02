@@ -1,5 +1,6 @@
-import type { GeneratedMap, PlacedFurniture, Point } from '../procgen/types';
 import { WAITING_CLEARANCE_TILES } from '../cosmetic/types';
+import { coveredTileRect, coveredTiles } from '../procgen/geometry';
+import type { GeneratedMap, PlacedFurniture, Point } from '../procgen/types';
 
 type Grid = Pick<GeneratedMap, 'walkable' | 'roomAt'>;
 type Footprint = Pick<PlacedFurniture, 'x' | 'y' | 'w' | 'h' | 'roomId'>;
@@ -8,8 +9,9 @@ const open = (map: Grid, roomId: string, p: Point): boolean =>
   map.walkable[p.y]?.[p.x] === 0 && map.roomAt[p.y]?.[p.x] === roomId;
 
 /** Up to `count` free tiles 4-adjacent to the footprint in the same room, ordered around it clockwise from the
- *  north-west corner; deterministic. */
-export function ringSpots(map: Grid, prop: Footprint, count: number, isFree: (p: Point) => boolean): Point[] {
+ *  north-west corner; deterministic. M15: the ring surrounds the integer tiles the footprint covers. */
+export function ringSpots(map: Grid, footprint: Footprint, count: number, isFree: (p: Point) => boolean): Point[] {
+  const prop = coveredTileRect(footprint);
   const ring: Point[] = [];
   for (let x = prop.x; x < prop.x + prop.w; x++) ring.push({ x, y: prop.y - 1 });
   for (let y = prop.y; y < prop.y + prop.h; y++) ring.push({ x: prop.x + prop.w, y });
@@ -18,7 +20,7 @@ export function ringSpots(map: Grid, prop: Footprint, count: number, isFree: (p:
   const out: Point[] = [];
   for (const p of ring) {
     if (out.length >= count) break;
-    if (open(map, prop.roomId, p) && isFree(p)) out.push(p);
+    if (open(map, footprint.roomId, p) && isFree(p)) out.push(p);
   }
   return out;
 }
@@ -27,11 +29,9 @@ export function ringSpots(map: Grid, prop: Footprint, count: number, isFree: (p:
 export function propSpots(map: Grid, prop: PlacedFurniture, count: number, isFree: (p: Point) => boolean): Point[] {
   if (prop.blocking) return ringSpots(map, prop, count, isFree);
   const out: Point[] = [];
-  for (let y = prop.y; y < prop.y + prop.h && out.length < count; y++) {
-    for (let x = prop.x; x < prop.x + prop.w && out.length < count; x++) {
-      const p = { x, y };
-      if (open(map, prop.roomId, p) && isFree(p)) out.push(p);
-    }
+  for (const p of coveredTiles(prop)) {
+    if (out.length >= count) break;
+    if (open(map, prop.roomId, p) && isFree(p)) out.push(p);
   }
   if (out.length < count) {
     const seen = new Set(out.map((p) => `${p.x},${p.y}`));

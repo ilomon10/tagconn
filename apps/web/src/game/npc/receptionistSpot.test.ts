@@ -85,3 +85,26 @@ describe('isReceptionDeskTile', () => {
     expect(isReceptionDeskTile(map, map.spawn)).toBe(false);
   });
 });
+
+describe('half-tile reception desks (M15)', () => {
+  it('isReceptionDeskTile covers every tile a half-offset desk touches', () => {
+    const map = { furniture: [{ kind: 'reception-desk', x: 2.5, y: 1, w: 2, h: 1 }] } as unknown as GeneratedMap;
+    expect([1, 2, 3, 4, 5].map((x) => isReceptionDeskTile(map, { x, y: 1 }))).toEqual([false, true, true, true, false]);
+    expect(isReceptionDeskTile(map, { x: 3, y: 2 })).toBe(false);
+  });
+
+  it('a pinned reception desk at x = 0.5 still seats the Receptionist behind the counter', () => {
+    const entrance = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'entrance')!;
+    const layout: OfficeLayout = {
+      ...DEFAULT_LAYOUT,
+      rooms: DEFAULT_LAYOUT.rooms.map((r) => (r.id === entrance.id ? { ...r, furniture: [{ kind: 'reception-desk', x: 0.5, y: 1, w: 3, h: 1 }] } : r)),
+    };
+    const map = generateMap(layout);
+    expect(map.layoutId).toBe(layout.id);
+    const desk = map.furniture.find((f) => f.pinned && f.kind === 'reception-desk');
+    expect(desk).toBeTruthy();
+    assertValidSpot(map);
+    const spot = pickReceptionistSpot(map);
+    expect(isReceptionDeskTile(map, spot)).toBe(true);
+  });
+});

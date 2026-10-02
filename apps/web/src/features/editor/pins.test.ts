@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateLayout, type LayoutRoom, type PinnedFurniture } from '@tagconn/shared';
 import type { GeneratedMap } from '../../game/procgen';
-import { clampPinPos, hitFurnitureAt, isPinnableItem, pinFits, pinFromPlaced, planLockAll, pinsForLockAll, prunePins, unpinnableReason } from './pins';
+import { clampPinPos, hitFurnitureAt, isPinnableItem, pinFits, pinFromPlaced, planLockAll, pinsForLockAll, prunePins, snapHalf, unpinnableReason } from './pins';
 
 // A walled (explicit) desks room at (2,2) 10x8: interior (3,3) 8x6.
 const room = (over: Partial<LayoutRoom> = {}): LayoutRoom => ({ id: 'a', type: 'desks', x: 2, y: 2, w: 10, h: 8, walled: true, ...over });
@@ -33,6 +33,43 @@ describe('pinFits / clampPinPos / prunePins', () => {
   });
   it('clamps into the interior', () => {
     expect(clampPinPos(room(), pin({ w: 2, h: 2 }), { x: 99, y: -4 })).toEqual({ x: 6, y: 0 });
+  });
+  it('snapHalf rounds to the nearest half tile (M15)', () => {
+    expect(snapHalf(2)).toBe(2);
+    expect(snapHalf(2.5)).toBe(2.5);
+    expect(snapHalf(2.3)).toBe(2.5);
+    expect(snapHalf(2.74)).toBe(2.5);
+    expect(snapHalf(2.76)).toBe(3);
+    expect(snapHalf(0.2)).toBe(0);
+    expect(snapHalf(-0.2)).toBe(0);
+  });
+  it('clampPinPos snaps to halves first, and the clamp bound (inner.w - pin.w) keeps the alignment', () => {
+    expect(clampPinPos(room(), pin(), { x: 2.3, y: 1.7 })).toEqual({ x: 2.5, y: 1.5 });
+    expect(clampPinPos(room(), pin(), { x: 7.4, y: 5.2 })).toEqual({ x: 7, y: 5 }); // 7.5 would poke out of the 8x6 interior
+    expect(clampPinPos(room(), pin({ w: 2, h: 2 }), { x: 6.4, y: -0.3 })).toEqual({ x: 6, y: 0 });
+    expect(clampPinPos(room(), pin({ w: 2, h: 2 }), { x: 5.6, y: 3.9 })).toEqual({ x: 5.5, y: 4 });
+    const at = clampPinPos(room(), pin({ w: 3 }), { x: 4.9, y: 0.4 });
+    expect([at.x * 2, at.y * 2].every(Number.isInteger)).toBe(true);
+    expect(at).toEqual({ x: 5, y: 0.5 });
+  });
+  it('pinFits uses real rect bounds with half pins and seals a door from any covered apron tile', () => {
+    const r = room({ furniture: [pin({ x: 2, y: 2 })], doors: [{ side: 'n', offset: 4, width: 1 }] });
+    expect(pinFits(r, pin({ x: 2.5, y: 2 }))).toBe(false); // half overlap with the (2,2) pin
+    expect(pinFits(r, pin({ x: 2.5, y: 3 }))).toBe(true);
+    expect(pinFits(r, pin({ x: 3, y: 2 }))).toBe(true); // edge-adjacent
+    expect(pinFits(r, pin({ x: 7.5, y: 0 }))).toBe(false); // 7.5 + 1 > 8
+    expect(pinFits(r, pin({ x: 7, y: 5.5 }))).toBe(false);
+    // Door n offset 4 -> apron tile (3,0): a pin at 2.5 covers tiles 2 and 3, one at 3.5 covers 3 and 4, both seal it.
+    expect(pinFits(r, pin({ x: 2.5, y: 0 }))).toBe(false);
+    expect(pinFits(r, pin({ x: 3.5, y: 0 }))).toBe(false);
+    expect(pinFits(r, pin({ x: 3, y: 0.5 }))).toBe(false); // covers rows 0 and 1
+    expect(pinFits(r, pin({ x: 1.5, y: 0 }))).toBe(true); // tiles 1 and 2
+    expect(pinFits(r, pin({ x: 4, y: 0 }))).toBe(true);
+  });
+  it('prunePins keeps half pins that still fit and drops those poking out', () => {
+    const r = room({ furniture: [pin({ x: 6.5, y: 4.5 }), pin({ kind: 'lamp', x: 0.5, y: 0.5 })] });
+    expect(prunePins(r)).toBe(r);
+    expect(prunePins({ ...r, w: 9 }).furniture).toEqual([pin({ kind: 'lamp', x: 0.5, y: 0.5 })]); // interior 7 wide: 6.5 + 1 > 7
   });
   it('prunePins drops pins outside the new interior and is identity when nothing changes', () => {
     const r = room({ furniture: [pin({ x: 0, y: 0 }), pin({ x: 7, y: 5 })] });
@@ -68,6 +105,20 @@ describe('hitFurnitureAt', () => {
     expect(hitFurnitureAt(map, rooms, { x: 3, y: 6 })).toMatchObject({ item: { kind: 'rug' } });
     expect(hitFurnitureAt(map, rooms, { x: 20, y: 20 })).toBeNull();
     expect(hitFurnitureAt(null, rooms, { x: 9, y: 8 })).toBeNull();
+  });
+  it('tells two half-offset items sharing a tile apart at a fractional point (M15 half-cell resolution)', () => {
+    // Interior starts at world (3,3): pin A spans world x 3.5..4.5, pin B 4.5..5.5; both cover tile x=4.
+    const halves = [room({ furniture: [pin({ kind: 'a-lamp', x: 0.5, y: 1 }), pin({ kind: 'b-lamp', x: 1.5, y: 1 })] })];
+    expect(hitFurnitureAt(null, halves, { x: 4.25, y: 4.5 })).toMatchObject({ pinIndex: 0, item: { kind: 'a-lamp', x: 3.5 } });
+    expect(hitFurnitureAt(null, halves, { x: 4.75, y: 4.5 })).toMatchObject({ pinIndex: 1, item: { kind: 'b-lamp', x: 4.5 } });
+    expect(hitFurnitureAt(null, halves, { x: 4.5, y: 4.5 })).toMatchObject({ pinIndex: 1 }); // the start edge is inclusive
+    expect(hitFurnitureAt(null, halves, { x: 3.25, y: 4.5 })).toBeNull(); // the tile's empty left half
+    expect(hitFurnitureAt(null, halves, { x: 4.25, y: 3.9 })).toBeNull(); // the row above
+    // A whole-tile point still works (and a fractional point still finds a generated item).
+    const map = mapOf([{ roomId: 'a', kind: 'rug', x: 6, y: 6, w: 2, h: 2, variant: 0 }]);
+    expect(hitFurnitureAt(map, halves, { x: 7, y: 7 })).toMatchObject({ pinIndex: null, item: { kind: 'rug' } });
+    expect(hitFurnitureAt(map, halves, { x: 7.9, y: 6.1 })).toMatchObject({ item: { kind: 'rug' } });
+    expect(hitFurnitureAt(map, halves, { x: 8.1, y: 6.1 })).toBeNull();
   });
 });
 

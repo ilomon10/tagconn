@@ -4,10 +4,10 @@
 // Each cell samples the kind of its four surrounding tiles (quadrants) so edge, corner and cliff
 // art can be drawn where per-tile paint cannot see a neighbour. Pure TS, no Phaser.
 //
-// W0 contract: types, constants and the trivial pure helpers. `makeKindAt`, `buildDualCells` and
-// `isUniform` are implemented in W1 (D0) together with `dualGeom.ts`.
+// Geometry only (guild-hall.md D2): a cell reads `tiles` / `roomAt` / room types and never a theme, so
+// the masks are identical for every style. The 16-case shape lookup lives in `dualGeom.ts`.
 import type { RoomType } from '@tagconn/shared';
-import type { GeneratedMap, TileKind } from '../../procgen/types';
+import type { GeneratedMap, Point, TileKind } from '../../procgen/types';
 
 /** What a quadrant of a dual cell samples: off-map and `void` tiles are `void`; door tiles count as `floor`. */
 export type CornerKind = 'void' | 'wall' | 'floor';
@@ -63,17 +63,95 @@ export function cornerKind(tile: TileKind | undefined): CornerKind {
   return 'floor';
 }
 
-/** Floor kind lookup for a map: the room type of the tile, or `corridor` outside rooms. W1. */
-export function makeKindAt(_map: GeneratedMap): (x: number, y: number) => FloorKind {
-  throw new Error('not implemented');
+export type KindAt = (x: number, y: number) => CornerKind;
+export type FloorKindAt = (x: number, y: number) => FloorKind;
+
+/** `tiles[y][x]` → corner kind: off-map and `void` are `void`, `door` is `floor`. */
+export function makeKindAt(map: Pick<GeneratedMap, 'tiles'>): KindAt {
+  return (x, y) => cornerKind(map.tiles[y]?.[x]);
 }
 
-/** Builds all (cols+1)*(rows+1) cells, indexed `cy * (cols + 1) + cx`. W1. */
-export function buildDualCells(_map: GeneratedMap, _kindAt?: (x: number, y: number) => FloorKind): DualCell[] {
-  throw new Error('not implemented');
+/** Same rule as `renderTheme.ts` `kindAt`: the room type by `roomAt`, else `corridor` when the layout has void,
+ *  else `hall`. Only meaningful on floor/door tiles (the dual cell stores null for wall and void quadrants). */
+export function makeFloorKindAt(map: Pick<GeneratedMap, 'tiles' | 'rooms' | 'roomAt'>): FloorKindAt {
+  const hasVoid = map.tiles.some((row) => row.includes('void'));
+  const openFloorKind: FloorKind = hasVoid ? 'corridor' : 'hall';
+  const roomTypeById = new Map(map.rooms.map((r) => [r.id, r.type] as const));
+  return (x, y) => {
+    const id = map.roomAt[y]?.[x];
+    return id ? (roomTypeById.get(id) ?? 'hall') : openFloorKind;
+  };
 }
 
-/** True when all four quadrants share one corner kind (and floor kind): the cell draws nothing. W1. */
-export function isUniform(_cell: DualCell): boolean {
-  throw new Error('not implemented');
+/** The four corner kinds around the tile corner `(cx, cy)`, sampled through `kindAt`. */
+export function cornerKinds(kindAt: KindAt, cx: number, cy: number): Record<Quadrant, CornerKind> {
+  const at = (q: Quadrant): CornerKind => {
+    const t: Point = quadrantTile({ cx, cy }, q);
+    return kindAt(t.x, t.y);
+  };
+  return { tl: at('tl'), tr: at('tr'), bl: at('bl'), br: at('br') };
+}
+
+/** Mask of the quadrants whose kind is `kind`. */
+export function maskOf(kinds: Record<Quadrant, CornerKind>, kind: CornerKind): number {
+  let mask = 0;
+  for (const q of QUADRANTS) if (kinds[q] === kind) mask |= BIT[q];
+  return mask;
+}
+
+/** One cell: its four kinds, the masks that partition `0xf`, and the floor kind / room id per quadrant. */
+export function buildDualCell(
+  map: Pick<GeneratedMap, 'tiles' | 'roomAt'>,
+  cx: number,
+  cy: number,
+  kindAt: KindAt,
+  floorKindAt: FloorKindAt,
+): DualCell {
+  const kinds = cornerKinds(kindAt, cx, cy);
+  let doorMask = 0;
+  const floorKinds: Record<Quadrant, FloorKind | null> = { tl: null, tr: null, bl: null, br: null };
+  const roomIds: Record<Quadrant, string | null> = { tl: null, tr: null, bl: null, br: null };
+  for (const q of QUADRANTS) {
+    const t = quadrantTile({ cx, cy }, q);
+    if (kinds[q] !== 'floor') continue;
+    if (map.tiles[t.y]?.[t.x] === 'door') doorMask |= BIT[q];
+    floorKinds[q] = floorKindAt(t.x, t.y);
+    roomIds[q] = map.roomAt[t.y]?.[t.x] ?? null;
+  }
+  return {
+    cx,
+    cy,
+    kinds,
+    wallMask: maskOf(kinds, 'wall'),
+    floorMask: maskOf(kinds, 'floor'),
+    voidMask: maskOf(kinds, 'void'),
+    doorMask,
+    floorKinds,
+    roomIds,
+  };
+}
+
+/** Every cell, row-major (cy outer, cx inner): `(cols + 1) * (rows + 1)` entries, index `cy * (cols + 1) + cx`. */
+export function buildDualCells(map: Pick<GeneratedMap, 'cols' | 'rows' | 'tiles' | 'rooms' | 'roomAt'>): DualCell[] {
+  const kindAt = makeKindAt(map);
+  const floorKindAt = makeFloorKindAt(map);
+  const cells: DualCell[] = [];
+  for (let cy = 0; cy <= map.rows; cy++) {
+    for (let cx = 0; cx <= map.cols; cx++) cells.push(buildDualCell(map, cx, cy, kindAt, floorKindAt));
+  }
+  return cells;
+}
+
+/** All four quadrants the same kind (door counts as floor): the painters draw nothing on such a cell. */
+export function isUniform(cell: Pick<DualCell, 'wallMask' | 'floorMask' | 'voidMask'>): boolean {
+  return cell.wallMask === 0xf || cell.floorMask === 0xf || cell.voidMask === 0xf;
+}
+
+/** Bits of the face quadrants (back-wall.md): wall `tl` over floor/door `bl` (bit 8), wall `tr` over floor/door `br`
+ *  (bit 4). Those pixels belong to the back-wall face; the dual painters never touch them. */
+export function faceMask(cell: Pick<DualCell, 'wallMask' | 'floorMask'>): number {
+  let mask = 0;
+  if (cell.wallMask & BIT.tl && cell.floorMask & BIT.bl) mask |= BIT.tl;
+  if (cell.wallMask & BIT.tr && cell.floorMask & BIT.br) mask |= BIT.tr;
+  return mask;
 }

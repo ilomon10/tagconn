@@ -1,3 +1,4 @@
+import { coveredTiles, rectsIntersect } from '../procgen/geometry';
 import type { GeneratedMap, Point } from '../procgen/types';
 
 /**
@@ -39,7 +40,8 @@ export function pickReceptionistSpot(map: GeneratedMap): Point {
   const deskTiles = new Set<string>();
   for (const f of map.furniture) {
     if (f.roomId !== room.id || f.kind !== 'reception-desk') continue;
-    for (let x = f.x; x < f.x + f.w; x++) for (let y = f.y; y < f.y + f.h; y++) deskTiles.add(tileKey({ x, y }));
+    // M15: a half-offset (pinned) desk occupies every tile it touches, like `map.walkable` says.
+    for (const t of coveredTiles(f)) deskTiles.add(tileKey(t));
   }
 
   const blocked = roomTiles.filter((t) => map.walkable[t.y]?.[t.x] === 1 && !isSpawn(t));
@@ -61,5 +63,6 @@ function tileKey(p: Point): string {
 
 /** True when `spot` is a tile of a `reception-desk` item, i.e. the Receptionist sits "behind the counter". */
 export function isReceptionDeskTile(map: GeneratedMap, spot: Point): boolean {
-  return map.furniture.some((f) => f.kind === 'reception-desk' && spot.x >= f.x && spot.x < f.x + f.w && spot.y >= f.y && spot.y < f.y + f.h);
+  const tile = { x: spot.x, y: spot.y, w: 1, h: 1 };
+  return map.furniture.some((f) => f.kind === 'reception-desk' && rectsIntersect(f, tile));
 }

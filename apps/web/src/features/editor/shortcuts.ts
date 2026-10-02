@@ -1,3 +1,4 @@
+import { HALF_TILE } from '@tagconn/shared';
 import type { EditorTool } from '../../stores/editorStore';
 
 /**
@@ -19,6 +20,7 @@ export type ShortcutAction =
   | { type: 'help' }
   | { type: 'tool'; tool: EditorTool }
   | { type: 'room-type'; index: number } // 1..9 -> 0..8, 0 -> 9 (the picker's own hotkey list)
+  // `resize` is Alt: rooms resize, a locked furniture pin steps by half a tile instead (`pinNudgeDelta`).
   | { type: 'nudge'; dx: number; dy: number; resize: boolean };
 
 /** Structural shape of the bit of `e.target` we care about — matches a real DOM element. */
@@ -92,4 +94,13 @@ export function resolveShortcut(e: KeyLike): ShortcutAction | null {
   }
 
   return null;
+}
+
+/**
+ * The tile delta a `nudge` action applies to a locked furniture pin (M15, docs/design/navigation.md
+ * section 3.2): Alt (`resize`) means a half-tile step, Shift still x5, so Shift+Alt moves 2.5.
+ */
+export function pinNudgeDelta(action: Extract<ShortcutAction, { type: 'nudge' }>): { dx: number; dy: number } {
+  const step = action.resize ? HALF_TILE : 1;
+  return { dx: action.dx * step, dy: action.dy * step };
 }

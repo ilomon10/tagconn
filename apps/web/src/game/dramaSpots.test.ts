@@ -32,6 +32,21 @@ describe('gatherSpots', () => {
     expect(two[1]!.x).toBe(4);
   });
 
+  it('M15: rings the integer tiles a half-offset prop covers', () => {
+    const m = grid();
+    m.walkable[1]![4] = 1; // 3.5..4.5 covers tiles 3 and 4
+    const half = { x: 3.5, y: 1, w: 1, h: 1, roomId: 'r' };
+    const got = gatherSpots(m, half, 2, free);
+    expect(got).toHaveLength(2);
+    for (const p of got) {
+      const dx = p.x < 3 ? 3 - p.x : p.x > 4 ? p.x - 4 : 0;
+      const dy = p.y < 1 ? 1 - p.y : p.y > 1 ? p.y - 1 : 0;
+      expect(dx + dy, `${p.x},${p.y} is 4-adjacent to the covered rect`).toBe(1);
+    }
+    // Never a tile the half prop itself touches.
+    expect(got.some((p) => p.y === 1 && (p.x === 3 || p.x === 4))).toBe(false);
+  });
+
   it('skips tiles that are not free', () => {
     const m = grid();
     expect(gatherSpots(m, prop, 1, (p) => !(p.x === 2 && p.y === 1))[0]).not.toEqual({ x: 2, y: 1 });

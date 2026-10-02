@@ -5,6 +5,7 @@
 // when it can do so without cutting anything off. Mutates `furniture` and `tallColumnsByRoom`; pure otherwise.
 import type { RoomType } from '@tagconn/shared';
 import { TRIGGER_KINDS, TRIGGER_ORDER, TRIGGER_PLACE } from '../furnitureTriggers';
+import { cellKeys } from './geometry';
 import type { RecipeItem } from './recipes';
 import { rngFor } from './rng';
 import type { FurnitureAction, GeneratedRoom, Point, Rect, TileKind } from './types';
@@ -37,11 +38,8 @@ const DIRS = [
   [0, -1],
 ] as const;
 
-const cellsOf = (r: Rect): string[] => {
-  const out: string[] = [];
-  for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) out.push(`${x},${y}`);
-  return out;
-};
+/** Covered tiles (M15: a half-offset pin occupies every tile it touches). */
+const cellsOf = (r: Rect): string[] => cellKeys(r);
 
 /** Interior cells reachable from `starts` without crossing `blocked` (4-neighbour). */
 function reachFrom(interior: Rect, blocked: ReadonlySet<string>, starts: readonly Point[]): Set<string> {

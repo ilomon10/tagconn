@@ -28,11 +28,13 @@ import {
   type DoorSpan,
   type Side,
 } from './doors';
+import { coveredTileRect, rectCells } from './geometry';
 import { dedupePinIssues, resolvePins } from './pins';
 import { decorateRoom, furnishRoom, seatsFor, type FurnishOptions, type RecipeItem, type RecipeSeat } from './recipes';
 import { buildRegionAtGrid, buildRoomToRegion, findRegions, findVoidAreas, reachableFrom, regionCentroid, type Region } from './regions';
 import { rngFor, randInt } from './rng';
 import { assignTriggers } from './triggers';
+import { applyFurniture, buildNavGrid, walkableFromNav } from '../nav/grid';
 import type {
   DecorSlot,
   FurnitureAction,
@@ -69,12 +71,6 @@ function dedupeSeats(seats: readonly RecipeSeat[]): RecipeSeat[] {
 
 function grid<T>(cols: number, rows: number, fill: T): T[][] {
   return Array.from({ length: rows }, () => new Array<T>(cols).fill(fill));
-}
-
-function rectCells(r: Rect): Point[] {
-  const out: Point[] = [];
-  for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) out.push({ x, y });
-  return out;
 }
 
 function insideRect(p: Point, r: Rect): boolean {
@@ -646,8 +642,11 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     let recipeSeats = recipe.seats;
     if (droppedForPins.length) {
       // Recipe seats carry no owner, so a seat belongs to a seat-giving item standing cardinally next to it (or under it).
-      const supports = (it: Rect, s: Point) =>
-        (s.x >= it.x && s.x < it.x + it.w && s.y >= it.y - 1 && s.y <= it.y + it.h) || (s.y >= it.y && s.y < it.y + it.h && s.x >= it.x - 1 && s.x <= it.x + it.w);
+      // M15: a half-offset pin supports the ring around the tiles it covers (identity for integer rects).
+      const supports = (rect: Rect, s: Point) => {
+        const it = coveredTileRect(rect);
+        return (s.x >= it.x && s.x < it.x + it.w && s.y >= it.y - 1 && s.y <= it.y + it.h) || (s.y >= it.y && s.y < it.y + it.h && s.x >= it.x - 1 && s.x <= it.x + it.w);
+      };
       const givers = (items: readonly RecipeItem[]) => items.filter((it) => seatsFor(it.kind, it, interior).length > 0);
       const dropped = givers(droppedForPins);
       const kept = givers(keptItems);
@@ -781,14 +780,16 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       for (const item of appliances) {
         keptItems.push({ ...item, roomId: room.id, roomType: room.type });
         for (const c of rectCells({ x: item.x, y: item.y, w: item.w, h: item.h })) blocked.add(key(c));
-        for (let x = item.x; x < item.x + item.w; x++) tallColumns.add(x);
+        const cols = coveredTileRect(item);
+        for (let x = cols.x; x < cols.x + cols.w; x++) tallColumns.add(x);
       }
       flagAgainstNorthWall(keptItems, interior.y, tiles);
       for (const item of keptItems) {
         if (item.y !== interior.y || !item.againstNorthWall) continue;
         // Locked appliances / boards stand against the wall too, so wall decor must leave their columns.
         if (!TALL_AGAINST_WALL_KINDS.has(item.kind) && !(item.pinned && (item.kind in APPLIANCE_SPECS || item.kind === 'notice-board' || item.kind === 'roster-board'))) continue;
-        for (let x = item.x; x < item.x + item.w; x++) tallColumns.add(x);
+        const cols = coveredTileRect(item);
+        for (let x = cols.x; x < cols.x + cols.w; x++) tallColumns.add(x);
       }
     }
     tallColumnsByRoom.set(room.id, tallColumns);
@@ -825,11 +826,14 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     assignTriggers({ rooms: generatedRooms, furniture, tiles, apronsByRoom, tallColumnsByRoom, seed });
   }
 
-  // Apply blocking furniture to the walkable grid.
-  for (const item of furniture) {
-    if (!item.blocking) continue;
-    for (const c of rectCells({ x: item.x, y: item.y, w: item.w, h: item.h })) walkable[c.y]![c.x] = 1;
-  }
+  // M15 (navigation.md §2/§6): the nav grid is the collision source of truth. It rasterizes the tiles, keeps every
+  // tile the generator already closed (stairs/landings), applies blocking furniture per `KIND_SHAPE` (≡ KIND_BLOCKING
+  // this milestone, so a half-offset pin blocks every tile it touches), and computes true clearance. `walkable` is
+  // DERIVED from it: a tile is open only when all four cells are (conservative, so every tile flood fill is unchanged).
+  const furnitureBeforeDecor = furniture.length;
+  const nav = buildNavGrid({ cols, rows, tiles, furniture }, walkable);
+  const derivedWalkable = walkableFromNav(nav);
+  for (let y = 0; y < rows; y++) walkable[y] = derivedWalkable[y]!;
 
   // --- 10. spawn ---------------------------------------------------------------------------------
   let spawn: Point = { x: Math.floor(cols / 2), y: Math.floor(rows / 2) };
@@ -1060,6 +1064,9 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     unreachableRooms.push({ roomId: gr.id, reason, ...(suggestion && { suggestion }) });
   }
 
+  // Decor placed after the nav build is soft-only: flag its tiles (masks and clearance are untouched).
+  if (furniture.length > furnitureBeforeDecor) applyFurniture(nav, furniture.slice(furnitureBeforeDecor));
+
   return {
     layoutId: layout.id,
     seed,
@@ -1068,6 +1075,7 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     tileSize: TILE,
     tiles,
     walkable,
+    nav,
     walls,
     roomAt,
     zoneAt,

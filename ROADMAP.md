@@ -264,13 +264,13 @@ decisions (2026-10-02): keep the 16 px tile grid; the half tile (8 px) is the si
 copied); build both the offset "dual-grid" wall/floor rendering and a sub-tile collision/navigation layer; v0.8.0
 published first. Designs: `docs/design/dual-grid.md`, `docs/design/navigation.md`; ADR #29.
 
-- [ ] W0 designs + ADR #29 [Architect]; contract: pin positions in halves (`layout.ts`), `office.dualGrid`, theme dual hooks + `DualCtx`, `nav/{constants,classes,types}.ts`, `GeneratedMap.nav?` [Developer]
+- [x] W0 designs + ADR #29 [Architect]; contract: pin positions in halves (`layout.ts`), `office.dualGrid`, theme dual hooks + `DualCtx`, `nav/{constants,classes,types}.ts`, `GeneratedMap.nav?` [Developer]
 - Wave 1 (parallel)
-  - [ ] D0 dual-cell model `themes/dual/{dualGrid,dualGeom}.ts` + tests
-  - [ ] T1 nav core `nav/{grid,shapes}.ts` (nibble masks, true clearance + incremental) + `nav.perf.test.ts`
-  - [ ] T2 procgen half-tile: one rasterizer (`procgen/geometry.ts`), pins/triggers/seats/backWall/spots on covered tiles
-  - [ ] T3 editor: half-tile drag snap, Alt+arrow 0.5, half-cell hit test, Inspector
-  - [ ] PM: `generate.ts` emits `nav`, derives `walkable`; quick gate
+  - [x] D0 dual-cell model `themes/dual/{dualGrid,dualGeom}.ts` + tests
+  - [x] T1 nav core `nav/{grid,shapes}.ts` (nibble masks, true clearance + incremental) + `nav.perf.test.ts`
+  - [x] T2 procgen half-tile: one rasterizer (`procgen/geometry.ts`), pins/triggers/seats/backWall/spots on covered tiles
+  - [x] T3 editor: half-tile drag snap, Alt+arrow 0.5, half-cell hit test, Inspector
+  - [x] PM: `generate.ts` emits `nav`, derives `walkable` (152 files / 1765 web tests, perf green); [ ] quick gate
 - Wave 2 (parallel)
   - [ ] D1 modern / D2 guild / D3 rift dual painters (`paint/dual/*`)
   - [ ] T4 `nav/{heap,macro,adapter}.ts`: tile A*, `PathFinder` adapter, easystar parity on 300 seeds

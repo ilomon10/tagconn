@@ -1,4 +1,5 @@
 // M12 G1: where an idle antic's cast stands (docs/design/game-office.md section 2.3 step 3). Pure: no Phaser.
+import { coveredTileRect } from './procgen/geometry';
 import type { GeneratedMap, PlacedFurniture, Point } from './procgen/types';
 
 type Side = 'n' | 's' | 'e' | 'w';
@@ -9,9 +10,11 @@ const OPPOSITE: Record<Side, Side> = { n: 's', s: 'n', e: 'w', w: 'e' };
 /**
  * Up to `count` tiles to stand on for `prop`: walkable, 4-adjacent to its footprint, in the same room, and
  * `isFree`. Sorted by distance to the footprint centre then (y, x), so the result is deterministic. For a
- * pair the second spot prefers the opposite side, then an adjacent side, then the same side.
+ * pair the second spot prefers the opposite side, then an adjacent side, then the same side. M15: the ring
+ * goes around the integer tiles the prop covers (a half-offset pin blocks every tile it touches).
  */
-export function gatherSpots(map: Pick<GeneratedMap, 'walkable' | 'roomAt'>, prop: Pick<PlacedFurniture, 'x' | 'y' | 'w' | 'h' | 'roomId'>, count: 1 | 2, isFree: (p: Point) => boolean): Point[] {
+export function gatherSpots(map: Pick<GeneratedMap, 'walkable' | 'roomAt'>, footprint: Pick<PlacedFurniture, 'x' | 'y' | 'w' | 'h' | 'roomId'>, count: 1 | 2, isFree: (p: Point) => boolean): Point[] {
+  const prop = { ...coveredTileRect(footprint), roomId: footprint.roomId };
   const cands: Spot[] = [];
   const add = (x: number, y: number, side: Side) => {
     if (map.walkable[y]?.[x] !== 0 || map.roomAt[y]?.[x] !== prop.roomId) return;

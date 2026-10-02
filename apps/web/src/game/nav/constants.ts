@@ -7,6 +7,8 @@
 export const TILE_PX = 16;
 /** Cells per tile side. One unit for everything: the half tile. */
 export const SUB = 2;
+/** `log2(SUB)`: cell → tile is a shift. A test asserts it is an integer (SUB must be a power of two). */
+export const SUB_SHIFT = Math.log2(SUB);
 /** Pixel size of one nav cell. */
 export const CELL_PX = TILE_PX / SUB;
 /** Mask bits per tile: SUB*SUB cells in the low nibble of a `Uint8Array` entry. */
@@ -23,3 +25,5 @@ export const TILE_FLAG_FLOOR = 0x10;
 export const TILE_FLAG_DOOR = 0x20;
 /** Soft-blocking furniture (rugs, mats): walkable, but routing prefers to avoid it. */
 export const TILE_FLAG_SOFT = 0x40;
+/** The whole flag nibble (`masks[i] & TILE_FLAGS` = the tile's flags, `& FULL_MASK` = its cells). */
+export const TILE_FLAGS = ~FULL_MASK & 0xff;
