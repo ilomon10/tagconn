@@ -257,7 +257,7 @@ Design: `docs/design/battles.md`.
 - [x] Wave 3 wiring into OfficeGame/OfficeScene/OfficeView (demo battle end-to-end + Ignore, 0 console errors), results XP bar from real progress, 300 ms music stop fade, UI-sound close/open pairing + modal-aware hover, server-wide JSON `__proto__` guard [Developers]
 - [x] Gate: QA (all suites green; live demo walk passes encounter → picker → swirl → commands → win/loss/run → KO 💫/🩹 → skills/respec → title on plate → Ignore → reduced motion → phone; D1 layering, D2 no encounters under reduced motion, D3 heal unreachable, D4 phone labels) + review (5 Med: stale battle handle, skill-save 409s, no resolve retry/version dead-end, leave mid-entry, XP not backfilled → documented) + security (0 Med; Low: hook events with __proto__ dropped, 48-key test gap, party description) + guide `docs/guide/battles.md` → fixes [x] (skills-only stamp + migration 13, Retry incl. 408/429, version guard, keyed flow events, battle HUD under the top bar, phone grid, static reduced-motion NPC visits, encounter priority, coffee machine placed, hook bodies strip __proto__ by matched route, redaction re-parse hardened) → re-review [x] → v0.8.0
 
-## M15: Dual grid: offset rendering, half-tile furniture, sub-tile navigation → v0.9.0 [in progress]
+## M15: Dual grid: offset rendering, half-tile furniture, sub-tile navigation → v0.9.0 [released 2026-10-02]
 
 Plan: `~/.claude-sessions/profiles/edgar/plans/pasted-content-id-1097-tagconn-features-lucky-milner.md` (top section). User
 decisions (2026-10-02): keep the 16 px tile grid; the half tile (8 px) is the single sub-grid unit (spec adapted, not
@@ -277,8 +277,8 @@ published first. Designs: `docs/design/dual-grid.md`, `docs/design/navigation.md
 - Wave 3 (parallel)
   - [x] D4 `renderTheme.ts` dual pass + flag wiring + `renderTheme.perf.test.ts` + PreviewScene (fillRect ≈1.05×, 15–25 ms)
   - [x] T6 `nav/{micro,navigator}.ts` + `Character.walkNav`; PM wired `OfficeScene.walk` → Navigator; `navClass` set from the creature; easystarjs now a devDependency (parity test only)
-- [ ] W4 (optional): shape insets per kind, denser recipe pitches, painter audit for fractional sizes
-- [ ] Gate (QA demo walk + editor, review, security, docs) → v0.9.0
+- [→] W4 (optional): shape insets per kind, denser recipe pitches, painter audit for fractional sizes → moved to M16 (furniture harmony)
+- [x] Gate: QA (all suites green; frame-sampled walks smooth/any-angle, seats, toggle repaints with no reseat, half-tile editor, reduced motion, phone, zero writes) + review (1 Med: navigator repair returned null → teleport; lows) + security (no exploitable issues; Low: float-tolerant multipleOf) + docs → fixes [x] (give-up keeps last tile path, re-peek after arrive, exact half-step refine, door-frame corners square) → v0.9.0
 
 ## M16: Light, time and harmonious rooms → v0.10.0 [todo]
 
@@ -300,6 +300,7 @@ published first. Designs: `docs/design/dual-grid.md`, `docs/design/navigation.md
 - [ ] Flaky under load (full turbo run): server `runs.lifecycle.test.ts` "L7: when run:start is rejected…"; supervisor `service.test.ts` timing cases ("SIGTERM first… tree kill"); server `heroes.test.ts` "takes over a long-idle live subagent's hero…" failed once in the full turbo run (passes alone); procgen bsp 128x96 300-seed cases time out at 60 s when headless Chrome is left running
 - [ ] Desktop CI: a tag push starts two `desktop` runs; one Windows run failed only in `smoke-desktop` temp-dir cleanup (EPERM on the Temp dir after all checks passed, v0.7.0). Make cleanup retry/ignore EPERM and dedupe the trigger
 - [ ] M14 follow-ups: a free-standing infirmary coffee machine is still painted with the 6 px north-wall overdraw; layouts with no lounge/entrance (or no free slot) get no infirmary; remove the deprecated `baseUpdatedAt` skills field after one release; BattleScene.leave() during entry may flash the half-built stage
+- [ ] M15 follow-ups: phone first framing after a floor switch is off-centre until Fit (unclassified, may predate M15); guild dual-grid render perf has little headroom under load (315 ms vs 400 ms cap); live harness for the cat half-gap and NPC chase (unit-tested only); Multiverse realm-border cells take one realm's outline palette
 - [ ] Name plates of characters standing on the same tile (e.g. at a realm gate) overlap; plates are obstacles for bubbles but not for each other
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)
 

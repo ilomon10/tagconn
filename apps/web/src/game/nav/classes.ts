@@ -6,7 +6,11 @@ import type { CreatureId } from '../themes/types';
 
 export type NavClass = 'small' | 'person' | 'large';
 
-/** Side length in nav cells per class. */
+/**
+ * Side length in nav cells per class.
+ * `large` is reserved: its feet land at y = 16ty + 18, so Character.tile reports ty + 1. The anchor/feet
+ * convention must be reconciled with Character.tile before any creature maps to it.
+ */
 export const CLASS_K: Record<NavClass, number> = { small: 1, person: 2, large: 3 };
 
 const SMALL_CREATURES: ReadonlySet<CreatureId> = new Set<CreatureId>(['cat', 'dog', 'slime', 'familiar', 'astro-cat', 'void-blob']);

@@ -220,6 +220,17 @@ describe('modern dual painters', () => {
     });
   });
 
+  describe('door beside a convex corner', () => {
+    it('keeps the corner square: full-length outlines, no cut, no stepped pixel', () => {
+      for (const door of ['tl', 'tr', 'bl'] as const) {
+        const fills = paint(paintModernDualWall, withDoor(cellFrom('...#'), door));
+        expect(fills.length, door).toBeGreaterThan(0);
+        // Strips run the full half-edge (8 px) and nothing is cut or stepped.
+        expect(fills.every((f) => f.c === CAP_OUTLINE && (f.w === 8 || f.h === 8)), door).toBe(true);
+      }
+    });
+  });
+
   describe('inner corners', () => {
     it('rounds a void notch: trimmed strips, wall top on the centre pixel, outline closing the diagonal', () => {
       expect(paint(paintModernDualWall, cellFrom('### '))).toEqual([

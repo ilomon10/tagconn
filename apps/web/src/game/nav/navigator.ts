@@ -113,11 +113,17 @@ export class Navigator {
     const samePoint = from.x === to.x && from.y === to.y;
 
     let override: Set<number> | undefined;
-    let tiles: Point[] | null = null;
+    let tiles: Point[] = [];
     let repairs = 0;
     for (;;) {
-      tiles = this.macro.search(tFrom, tTo, cls, { allowBlockedStart: true, blockedOverride: override });
-      if (!tiles) return null;
+      const found = this.macro.search(tFrom, tTo, cls, { allowBlockedStart: true, blockedOverride: override });
+      if (!found) {
+        // First search failed: no route. A later one failing means a repair closed the only connection
+        // (a one-tile door): give up on the last good tile route instead of returning null.
+        if (repairs === 0) return null;
+        break;
+      }
+      tiles = found;
       if (samePoint) return new LazyNavPath(cls, from, to, tiles, repairs, true, [from], g, k);
       // Thread the hops: the real ends, per-class anchors of the tiles in between. A single-tile path
       // is one hop inside that tile.

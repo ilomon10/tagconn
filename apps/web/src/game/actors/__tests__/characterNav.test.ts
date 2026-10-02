@@ -143,7 +143,10 @@ describe('Character integration (the update loop as Character.update runs it)', 
         q.shift();
         step -= d;
         next = q.peek();
-        if (next === null) onArrive();
+        if (next === null) {
+          onArrive();
+          next = q.peek(); // a walk started inside onArrive keeps the rest of the step
+        }
       } else {
         pos.x += (dx / d) * step;
         pos.y += (dy / d) * step;
@@ -165,5 +168,19 @@ describe('Character integration (the update loop as Character.update runs it)', 
     expect(q.walking).toBe(false);
     // `Character.tile` of the landing point is the target tile.
     expect({ x: Math.floor(pos.x / 16), y: Math.floor((pos.y - 1) / 16) }).toEqual({ x: 5, y: 2 });
+  });
+
+  it('a walk started inside onArrive uses the rest of the same frame\'s step', () => {
+    const q = new WalkQueue();
+    q.setFeet([{ x: 10, y: 0 }]);
+    const pos = { x: 0, y: 0 };
+    let arrived = 0;
+    stepCharacter(pos, q, 14, () => {
+      arrived++;
+      q.setFeet([{ x: 100, y: 0 }]);
+    });
+    expect(arrived).toBe(1);
+    expect(pos).toEqual({ x: 14, y: 0 });
+    expect(q.walking).toBe(true);
   });
 });

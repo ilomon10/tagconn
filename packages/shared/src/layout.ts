@@ -155,11 +155,15 @@ export const HALF_TILE = 0.5;
  * placed before the procedural recipe runs and are never removed by the reachability retry. `kind` is
  * a web procgen furniture kind (validated by the web; unknown kinds are skipped at render time).
  */
+/** Exact half-tile check (`v * 2` is exact in IEEE doubles, unlike a float remainder). */
+const isHalfStep = (v: number): boolean => Number.isInteger(v * 2);
+
 export const PinnedFurnitureSchema = z.object({
   kind: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
   /** M15: positions snap to half tiles (`HALF_TILE`); a superset of the old integer grid, so stored rows keep parsing. */
-  x: z.number().multipleOf(HALF_TILE).min(0).max(LAYOUT_LIMITS.maxWidth),
-  y: z.number().multipleOf(HALF_TILE).min(0).max(LAYOUT_LIMITS.maxHeight),
+  // zod's float-tolerant multipleOf lets 2.500000000000001 through; doubling a float is exact, so this check is not.
+  x: z.number().min(0).max(LAYOUT_LIMITS.maxWidth).refine(isHalfStep, 'x must be a multiple of half a tile'),
+  y: z.number().min(0).max(LAYOUT_LIMITS.maxHeight).refine(isHalfStep, 'y must be a multiple of half a tile'),
   /** Sizes stay whole tiles this milestone (the furniture painters loop per integer tile). */
   w: z.number().int().min(1).max(8),
   h: z.number().int().min(1).max(8),

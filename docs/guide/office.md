@@ -32,6 +32,10 @@ onto in-scene stairs.
 | `?` | Show every keyboard shortcut (also **Keyboard shortcuts** in the menu). |
 | `Esc` | Close the panel on top (a Board/Log/Quests/Roles/Settings panel, Manage floors, the sessions popover, the shortcuts list, then the character drawer). |
 
+## Character movement
+
+Characters walk smooth, any-angle paths instead of tile-grid zigzags. Behind the scenes, they navigate on a half-tile collision grid: small creatures (cats, dogs, slimes) can slip through gaps that people cannot. A person always needs a full 16 px tile to stand in, so their movement and seating behavior is unchanged from earlier versions — they just get there by a straighter route. Characters move at the same speed; the smoother paths are a visual improvement, not a simulation change.
+
 ## The top bar and menu
 
 The top bar is small on purpose: the floor picker (with floor up/down), your connection and admin
@@ -203,9 +207,13 @@ either visual style before you save.
 
 Locked furniture (marked with a **padlock** 🔒 icon on the canvas) stays in place when you change
 the seed or regenerate. Generated furniture can be dragged to lock in place; once locked, locked
-furniture can be nudged with arrow keys or dragged to a new position. Positions snap to half tiles
-(a drag moves in 0.5 steps, Alt+Arrows nudges by 0.5; the inspector shows `2.5`), while sizes stay
-whole tiles. Reachability checking is shown as an overlay while a room is selected.
+furniture can be nudged with arrow keys or dragged to a new position.
+
+**Half-tile placement:** furniture positions are now multiples of 0.5 tiles (8 px). Dragging snaps to the half-tile grid; the inspector shows positions like `at 2.5, 1` (tile 2 plus half). Sizes stay whole tiles. A piece placed at `x = 2.5` with `w = 2` covers parts of tiles 2 and 3, and any footprint that overlaps a tile blocks navigation through that full tile — so a half-offset sofa still makes the tiles it touches unusable for standing and sitting.
+
+**Nudging:** arrow keys move by 1 tile; **Shift+Arrows** move by 5 tiles. **Alt+Arrows** move by half a tile (0.5) when a locked furniture item is selected. Shift+Alt = 2.5 tiles per step. Rooms and room-selection nudges ignore Alt (rooms stay on whole tiles).
+
+Reachability checking is shown as an overlay while a room is selected.
 
 ## Manage floors (`F`)
 

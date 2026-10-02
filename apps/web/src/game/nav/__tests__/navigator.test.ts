@@ -368,12 +368,14 @@ describe('Navigator edge cases', () => {
     expect(n2.findPath(from, to, 'person'), 'stale cache still blocks').toBeNull();
     n2.invalidate({ x0: 4, y0: 0, x1: 6, y1: 2 });
     expect(n2.findPath(from, to, 'person')).not.toBeNull();
-    // The other way round the LOS layer catches it even before invalidate (the cache can only lie "passable").
+    // The other way round the LOS layer catches it even before invalidate (the cache can only lie "passable"):
+    // the hop fails, the repair closes the only door, and the route degrades to the unpulled tile path.
     block(false);
-    expect(n2.findPath(from, to, 'person')).toBeNull();
+    const stale = n2.findPath(from, to, 'person');
+    expect(stale === null || (!stale.pulled && stale.repairs > 0)).toBe(true);
   });
 
-  it('null when a repair leaves no route; after MAX_REPAIRS failed re-routes the tile anchors are walked as they are', () => {
+  it('a repair that closes the only door falls back to the last tile route (never null); after MAX_REPAIRS failed re-routes the tile anchors are walked as they are', () => {
     // A checkerboard tile keeps its top-left and bottom-right cells: `small`-passable, and open on every
     // edge for the macro (a free cell pair exists), but its two cells do not connect inside the hop window
     // (both orthogonal cells are blocked), so the micro repair fails and the hop's tile gets marked.
@@ -382,11 +384,19 @@ describe('Navigator edge cases', () => {
       setCell(g, x * SUB, y * SUB + 1, false);
     };
     // One corridor with one checker tile: the first hop enters it at the top-left cell, the next hop
-    // must leave from the bottom-right one; marking the tile after it leaves no route: null.
+    // must leave from the bottom-right one; marking the tile closes the only door, so the re-run finds no
+    // route: the last good tile path is walked unpulled (null only when the FIRST search fails).
     const one = floorGrid(6, 1);
     checker(one, 1, 0);
     computeClearance(one);
-    expect(new Navigator(one).findPath(navPointOfTile({ x: 0, y: 0 }, 1), navPointOfTile({ x: 5, y: 0 }, 1), 'small')).toBeNull();
+    const oneTo = navPointOfTile({ x: 5, y: 0 }, 1);
+    const door = new Navigator(one).findPath(navPointOfTile({ x: 0, y: 0 }, 1), oneTo, 'small');
+    expect(door).not.toBeNull();
+    expect(door!.pulled).toBe(false);
+    expect(door!.repairs).toBeGreaterThan(0);
+    const doorPts = door!.toPoints();
+    expect(doorPts[doorPts.length - 1]).toEqual(oneTo);
+    expect(door!.tiles[door!.tiles.length - 1]).toEqual({ x: 5, y: 0 });
     // Five rows, a checker column: every re-route is another row until the budget is spent.
     const many = floorGrid(6, 5);
     for (let y = 0; y < 5; y++) checker(many, 1, y);

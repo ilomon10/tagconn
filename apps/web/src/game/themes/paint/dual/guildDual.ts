@@ -154,7 +154,8 @@ export function paintGuildDualWall(g: Phaser.GameObjects.Graphics, ctx: DualCtx,
   }
 
   const shape = shapeOf(cell.wallMask);
-  if (shape.kind === 'convex' && !(faces & BIT[shape.q])) {
+  // A door beside the corner keeps it square so the cap meets the door frame cleanly.
+  if (shape.kind === 'convex' && !(faces & BIT[shape.q]) && !(cell.doorMask & ~BIT[shape.q])) {
     const c = outsideColour(cell, DIAGONAL[shape.q]);
     for (const r of cornerCut(cell, shape.q, 1, size)) fill(rect, c, r);
   }

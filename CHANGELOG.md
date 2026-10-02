@@ -7,6 +7,15 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- **Dual-grid tile edges** (M15, v0.9.0): walls get a 1 px outline with rounded outer corners, floors cast a shadow where they meet a wall, and cliffs line the edges to the void. Every style draws edges in its own aesthetic (modern outlined and chamfered, guild lit with ashlar joints, rift with teal rims). Controlled by `office.dualGrid` (default `true`); off restores the flat per-tile look.
+- **Half-tile furniture placement** (M15, v0.9.0): locked furniture can now position at 0.5 tile boundaries (8 px grid). Drag snaps to halves; the Hall Planner shows positions like `at 2.5, 1`; Alt+arrow nudges by 0.5 tiles (Shift+Alt = 2.5). Sizes stay whole tiles. A half-offset footprint blocks navigation through every full tile it overlaps. Integer layouts are unchanged — old saved `.tagconn/office.json` files parse as-is.
+- **Smooth sub-tile movement** (M15, v0.9.0): characters walk straight lines through pixels instead of tile-centre zigzags. Small creatures (cats, dogs, slimes) are `k = 1` blocks that fit through half-tile gaps; people are `k = 2` (exactly one tile) and move the same as before visually, just via straighter routes. Navigation is collision-checked on a per-cell grid with true clearance; seats and reachability stay at the tile level, so no behavior changes.
+
+### Changed
+- **Pathfinding engine replaced** (M15): the old easystar library is replaced by macro A* with micro line-of-sight and string pulling. Paths are shorter and straighter because the new heuristic is admissible (the old one sometimes wasn't). Tile reachability is identical to before; any difference in movement is visual only (a straighter line to the same destination).
+- **`PinnedFurniture` schema** (M15): x/y fields now accept multiples of 0.5 (was `.int()`, a superset). Parsing is backward-compatible — integer pins keep their values. The `w/h` fields stay integers (sizes are whole tiles).
+
 ## [0.8.0] - 2026-10-01
 
 ### Added

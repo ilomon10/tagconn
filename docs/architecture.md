@@ -45,7 +45,9 @@ Core: config (layered), db (Drizzle/better-sqlite3, WAL), event-bus, di (awilix)
 ## Web (apps/web/src)
 `lib/socket.ts` (typed client) → `stores/officeStore.ts` (zustand) → React panels (`features/*`) and the
 Phaser game (`game/*`), which uses a procedurally generated map with zones, generated character textures,
-and easystar pathfinding. `?demo=1` runs a scripted simulation without a server.
+a half-tile navigation grid with true clearance and macro A* pathfinding, micro line-of-sight and string-pulled
+smooth sub-tile movement, and a dual-grid render pass for wall caps and floor shadows (behind `office.dualGrid`).
+`?demo=1` runs a scripted simulation without a server.
 
 ## Settings layering
 `SettingsSchema` defaults → `config/office.yaml` (`OFFICE_CONFIG`) → env `OFFICE_<SECTION>__<KEY_SNAKE>` (+ `OFFICE_HOOK_TOKEN`)

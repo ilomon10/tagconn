@@ -1048,7 +1048,11 @@ export class Character extends Phaser.GameObjects.Container {
           this.queue.shift();
           step -= d;
           next = this.queue.peek();
-          if (next === null) this.arrive();
+          if (next === null) {
+            this.arrive();
+            // arrive() may start a new walk (onArrive): keep walking with the rest of this frame's step.
+            next = this.queue.peek();
+          }
         } else {
           this.setPosition(this.x + (dx / d) * step, this.y + (dy / d) * step);
           if (Math.abs(dx) > 0.5) this.upper.scaleX = dx < 0 ? -1 : 1;

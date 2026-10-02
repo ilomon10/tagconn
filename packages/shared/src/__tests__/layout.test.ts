@@ -25,6 +25,14 @@ describe('PinnedFurnitureSchema (M15 half-tile positions)', () => {
     }
   });
 
+  it('rejects values just off the half grid that a float-tolerant multipleOf would accept', () => {
+    for (const v of [2.500000000000001, 0.5000000000000001, 0.49999999999999994, 1.0000000000000002, 63.50000000000001, 5e-324]) {
+      expect(PinnedFurnitureSchema.safeParse(pin({ x: v })).success, `x=${v}`).toBe(false);
+      expect(PinnedFurnitureSchema.safeParse(pin({ y: v })).success, `y=${v}`).toBe(false);
+    }
+    expect(PinnedFurnitureSchema.safeParse(pin({ x: -0 })).success).toBe(true);
+  });
+
   it('rejects quarter positions and negative ones', () => {
     for (const p of [pin({ x: 0.25 }), pin({ y: 1.75 }), pin({ x: 2.1 }), pin({ x: -0.5 })]) {
       expect(PinnedFurnitureSchema.safeParse(p).success, JSON.stringify(p)).toBe(false);

@@ -197,18 +197,17 @@ export class MacroPlanner {
     const a = this.cellsOf(i, start);
     const b = this.cellsOf(ni, start);
     const last = SUB - 1;
-    const has = (m: number, cx: number, cy: number): boolean => ((m >> bitOf(cx, cy)) & 1) === 1;
     if (dy === 0) {
       // E: a's last column against b's first; W: the mirror.
       const ca = dx > 0 ? last : 0;
       const cb = dx > 0 ? 0 : last;
-      for (let r = 0; r < SUB; r++) if (has(a, ca, r) && has(b, cb, r)) return true;
+      for (let r = 0; r < SUB; r++) if (hasCell(a, ca, r) && hasCell(b, cb, r)) return true;
       return false;
     }
     if (dx === 0) {
       const ra = dy > 0 ? last : 0;
       const rb = dy > 0 ? 0 : last;
-      for (let c = 0; c < SUB; c++) if (has(a, c, ra) && has(b, c, rb)) return true;
+      for (let c = 0; c < SUB; c++) if (hasCell(a, c, ra) && hasCell(b, c, rb)) return true;
       return false;
     }
     const cols = this.grid.cols;
@@ -216,9 +215,12 @@ export class MacroPlanner {
     const s = this.cellsOf((y + dy) * cols + x, start); // the orthogonal tile in y
     const ax = dx > 0 ? last : 0;
     const ay = dy > 0 ? last : 0;
-    return has(a, ax, ay) && has(b, last - ax, last - ay) && has(e, last - ax, ay) && has(s, ax, last - ay);
+    return hasCell(a, ax, ay) && hasCell(b, last - ax, last - ay) && hasCell(e, last - ax, ay) && hasCell(s, ax, last - ay);
   }
 }
+
+/** True when cell (cx, cy) of tile-mask `m` is free. */
+const hasCell = (m: number, cx: number, cy: number): boolean => ((m >> bitOf(cx, cy)) & 1) === 1;
 
 /** A planner over `g` (the name the Navigator and the adapter use). */
 export const createMacroSearch = (g: NavGrid): MacroPlanner => new MacroPlanner(g);

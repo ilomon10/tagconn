@@ -149,6 +149,13 @@ describe('guild dual painters', () => {
       expect(desksCut).toContainEqual(strip(GUILD_FLOOR_BASE.desks, CX, CY, 1, 1));
     });
 
+    it('keeps a convex corner square when a door is beside it', () => {
+      for (const door of ['tl', 'tr', 'bl'] as const) {
+        const fills = paint(paintGuildDualWall, withDoor(cellFrom('...#'), door));
+        expect(fills.filter((f) => f.w === 1 && f.h === 1), door).toHaveLength(0);
+      }
+    });
+
     it('leaves concave (inner) corners sharp', () => {
       // Three walls, floor br: tr is a face. Only strips, never a corner pixel.
       const fills = paint(paintGuildDualWall, cellFrom('###.'));

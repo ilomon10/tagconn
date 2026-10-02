@@ -251,7 +251,8 @@ export function paintModernDualWall(g: Phaser.GameObjects.Graphics, ctx: DualCtx
 
   // The quadrant whose centre corner gets rounded: the wall of an outer corner or the notch of an inner one.
   let corner: Quadrant | null = null;
-  if (shape.kind === 'convex' && !(faces & BIT[shape.q])) corner = shape.q;
+  // A door beside the corner keeps it square so the cap meets the door frame cleanly (invariant 8).
+  if (shape.kind === 'convex' && !(faces & BIT[shape.q]) && !(cell.doorMask & ~BIT[shape.q])) corner = shape.q;
   else if (shape.kind === 'concave' && roundsNotch(cell, shape.notch)) corner = shape.notch;
 
   for (const side of boundaryHalfEdges(cell.wallMask)) {

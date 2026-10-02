@@ -138,7 +138,8 @@ export function paintRiftDualWall(g: Phaser.GameObjects.Graphics, ctx: DualCtx, 
 
   const shape = shapeOf(cell.wallMask);
   if (shape.kind === 'convex') {
-    if (faces & BIT[shape.q]) return;
+    // A door beside the corner keeps it square so the rim meets the door frame cleanly.
+    if (faces & BIT[shape.q] || cell.doorMask & ~BIT[shape.q]) return;
     const outside = diagonalOf(shape.q);
     const color = cell.kinds[outside] === 'floor' ? floorBase(cell.floorKinds[outside]) : VOID_BASE;
     const cuts = cornerCut(cell, shape.q, 2, cellT);

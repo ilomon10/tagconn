@@ -178,6 +178,16 @@ describe('rift dual painters', () => {
     expect(at(room, cx, cy).at(-1)?.color).toBe(CRYSTAL_BASE);
   });
 
+  it('convex wall corner beside a door stays square: no cut, no stepped rim pixel', () => {
+    for (const door of ['tl', 'tr', 'bl'] as const) {
+      const rects = paintBoth(withDoor(cellFrom('...#'), door), true);
+      for (const [x, y] of [[cx, cy], [cx + 1, cy], [cx, cy + 1]] as const) {
+        expect(at(rects, x, y).at(-1)?.color, `${door}: (${x - cx}, ${y - cy})`).not.toBe(BRIDGE_BASE);
+      }
+      expect(at(rects, cx + 1, cy + 1).at(-1)?.color, `${door}: step pixel`).not.toBe(RIFT_CAP_RIM);
+    }
+  });
+
   it('concave corner: the notch pixel turns obsidian, except on a door or under a face band', () => {
     const voidNotch = paintBoth(cellFrom('### '), true);
     expect(at(voidNotch, cx, cy).at(-1)?.color).toBe(OBSIDIAN);
