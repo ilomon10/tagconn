@@ -7,6 +7,7 @@ import { navClassForCreature, type NavClass } from '../nav/classes';
 import { FEET_DY } from '../nav/constants';
 import { navPointOfTile } from '../nav/grid';
 import type { NavPath } from '../nav/navigator';
+import type { CastShadow } from '../lighting/types';
 import type { Point } from '../procgen/types';
 import type { Size } from '../labels';
 import { HAIR_COLORS, HAIR_STYLES, KO_FRAMES, SKIN_TONES } from '../textures';
@@ -96,6 +97,10 @@ function crisp<T extends Phaser.GameObjects.Text>(t: T): T {
  * live agent currently driving it, and is mutable: it changes on a rebind (a new subagent takes over
  * a resting hero, or a new session becomes the Guild Master) with no new sprite created.
  */
+/** 'ch-shadow-cast' is 10 px square and painted at this alpha; plan alpha is taken relative to it (capped at the texture's own). */
+const CAST_SHADOW_SIZE = 10;
+const CAST_SHADOW_ALPHA = 0.22;
+
 export class Character extends Phaser.GameObjects.Container {
   readonly key: ActorKey;
   /** The live agent this actor is currently drawing (null while resting/leaving with nobody bound). */
@@ -110,6 +115,8 @@ export class Character extends Phaser.GameObjects.Container {
   /** M8 8c actor lifecycle (`game/actorLifecycle.ts`); the scene reads/writes this every `setOfficeState`. */
   lifecycleFrame: LifecycleFrame = INITIAL_LIFECYCLE;
   private shadow: Phaser.GameObjects.Image;
+  /** M16: skewed cast shadow from the dominant light (hidden in blob mode). */
+  private castShadow: Phaser.GameObjects.Image;
   private legs: Phaser.GameObjects.Image;
   private upper: Phaser.GameObjects.Container;
   private body_: Phaser.GameObjects.Image;
@@ -250,6 +257,7 @@ export class Character extends Phaser.GameObjects.Container {
 
     this.canvasGlow = scene.add.graphics().setVisible(false);
     this.shadow = scene.add.image(0, 1, 'ch-shadow').setOrigin(0.5, 1);
+    this.castShadow = scene.add.image(0, 1, 'ch-shadow-cast').setOrigin(0.5, 1).setVisible(false);
     this.legs = scene.add.image(0, 0, 'ch-legs-0').setOrigin(0.5, 1);
     this.body_ = scene.add.image(0, -3, 'ch-body').setOrigin(0.5, 1);
     this.badge = scene.add.image(2, -6, 'ch-badge').setOrigin(0.5, 0.5);
@@ -284,7 +292,7 @@ export class Character extends Phaser.GameObjects.Container {
     this.strainFx = scene.add.container(0, -8);
     this.koIcon = scene.add.image(-7, -17, KO_FRAMES[0]).setOrigin(0.5, 1).setVisible(false);
     this.creatureImg = scene.add.image(0, 0, creatureTextureKey('dog', 0)).setOrigin(0.5, 1).setVisible(false);
-    this.add([this.canvasGlow, this.shadow, this.legs, this.upper, this.creatureImg, this.icon, this.strainIcon, this.koIcon, this.fx, this.strainFx]);
+    this.add([this.canvasGlow, this.shadow, this.castShadow, this.legs, this.upper, this.creatureImg, this.icon, this.strainIcon, this.koIcon, this.fx, this.strainFx]);
 
     this.plateBack = scene.add.graphics();
     this.plate = scene.add.container(0, PLATE_BOTTOM_Y, [this.plateBack]).setVisible(false);
@@ -1298,6 +1306,18 @@ export class Character extends Phaser.GameObjects.Container {
       this.leaderLine.lineTo(bx, by);
       this.leaderLine.strokePath();
     }
+  }
+
+  /** M16: skewed shadow from the dominant light. `len`/`dx`/`dy` in px; `alpha` 0 hides it (blob mode / no light). Allocation-free. */
+  setCastShadow(s: Readonly<CastShadow>): void {
+    const img = this.castShadow;
+    if (!(s.alpha > 0) || !(s.len > 0)) {
+      if (img.visible) img.setVisible(false);
+      return;
+    }
+    // The image extends up (-y) from its feet origin; rotate that axis onto (dx, dy).
+    img.setRotation(Math.atan2(s.dx, -s.dy)).setScale(1, s.len / CAST_SHADOW_SIZE).setAlpha(Math.min(1, s.alpha / CAST_SHADOW_ALPHA));
+    if (!img.visible) img.setVisible(true);
   }
 
   destroyAll() {

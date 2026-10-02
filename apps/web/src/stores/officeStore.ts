@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { ClockSync } from '../game/lighting/clock';
 import { MULTIVERSE_FLOOR_ID, type Agent, type OfficeEvent, type OfficeSnapshot, type Project, type Session, type Task } from '@tagconn/shared';
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'demo';
@@ -28,6 +29,8 @@ export interface OfficeData {
   /** M8 8b: project id → agent id pinned as Guild Master from the GM sessions popover ("Pin as
    *  Guild Master"), overriding the usual hysteresis until that session ends (auto-pruned below). */
   pinnedPrimary: Record<string, string>;
+  /** M16: host-clock skew measured at the last snapshot ack / resync (`syncClock`); absent until the first one. */
+  clockSync?: ClockSync;
 }
 
 const byId = <T extends { id: string }>(items: T[]): Record<string, T> => Object.fromEntries(items.map((i) => [i.id, i]));
@@ -200,6 +203,7 @@ export interface OfficeActions {
   pinPrimary(projectId: string, agentId: string): void;
   /** Un-pins early (the popover also offers this); pruning otherwise handles it once the session ends. */
   unpinPrimary(projectId: string): void;
+  setClockSync(sync: ClockSync): void;
   reset(): void;
 }
 
@@ -221,8 +225,10 @@ export const useOfficeStore = create<OfficeState>()((set) => ({
   setConnection: (connection, connectionError) => set({ connection, connectionError }),
   pinPrimary: (projectId, agentId) => set((s) => reducers.pinPrimary(s, projectId, agentId)),
   unpinPrimary: (projectId) => set((s) => reducers.unpinPrimary(s, projectId)),
+  setClockSync: (clockSync) => set({ clockSync }),
+  // The clock sync outlives a reset: it describes the host, not the floor data.
   reset: () =>
-    set((s) => ({ ...initialOfficeData(), selectedProjectId: s.selectedProjectId, eventLimit: s.eventLimit, connection: s.connection })),
+    set((s) => ({ ...initialOfficeData(), selectedProjectId: s.selectedProjectId, eventLimit: s.eventLimit, connection: s.connection, ...(s.clockSync ? { clockSync: s.clockSync } : {}) })),
 }));
 
 /** Filter helper: does an item belong to the selected floor? */

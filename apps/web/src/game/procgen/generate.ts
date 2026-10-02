@@ -8,6 +8,7 @@ import {
   validateLayout,
   ZONES,
   type DoorSpec,
+  type Facing,
   type LayoutIssue,
   type LayoutRoom,
   type OfficeLayout,
@@ -29,6 +30,7 @@ import {
   type Side,
 } from './doors';
 import { coveredTileRect, rectCells } from './geometry';
+import { OccupancyGrid, CELL_BLOCKING, CELL_RESERVED, CELL_SOFT, relocate } from './harmony';
 import { dedupePinIssues, resolvePins } from './pins';
 import { decorateRoom, furnishRoom, seatsFor, type FurnishOptions, type RecipeItem, type RecipeSeat } from './recipes';
 import { buildRegionAtGrid, buildRoomToRegion, findRegions, findVoidAreas, reachableFrom, regionCentroid, type Region } from './regions';
@@ -515,10 +517,30 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
   // M8 8p: wall-row (interior.y - 1) columns each room's appliances/tall against-wall items occupy,
   // consumed by step 13's planNorthWall below.
   const tallColumnsByRoom = new Map<string, Set<number>>();
+  const wallSidesByRoom = new Map<string, Set<Facing>>();
   for (const ep of entryPoints) {
     const set = apronsByRoom.get(ep.roomId) ?? new Set<string>();
     set.add(key(ep.tile));
     apronsByRoom.set(ep.roomId, set);
+  }
+  // M16: also every interior tile standing next to a door that belongs to the neighbour (or to a corridor mouth): the group
+  // recipe keeps `aprons` clear, and a counter in front of someone else's door seals the room (found by the Multiverse perf test).
+  for (const room of rooms) {
+    const ir = room.interior;
+    const next = (x: number, y: number, dx: number, dy: number) => {
+      if (tiles[y + dy]?.[x + dx] !== 'door') return;
+      const set = apronsByRoom.get(room.id) ?? new Set<string>();
+      set.add(key({ x, y }));
+      apronsByRoom.set(room.id, set);
+    };
+    for (let x = ir.x; x < ir.x + ir.w; x++) {
+      next(x, ir.y, 0, -1);
+      next(x, ir.y + ir.h - 1, 0, 1);
+    }
+    for (let y = ir.y; y < ir.y + ir.h; y++) {
+      next(ir.x, y, -1, 0);
+      next(ir.x + ir.w - 1, y, 1, 0);
+    }
   }
 
   for (const room of rooms) {
@@ -609,13 +631,32 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       ...(furnish?.seats !== undefined && { seatsTarget: furnish.seats }),
     };
     const roomRand = rngFor(seed, furnish?.seed !== undefined ? `room:${room.id}:${furnish.seed}` : `room:${room.id}`);
-    const recipe = furnishRoom(room.type, interior, roomRand, opts);
+    // M12: locked furniture goes first, into `keptItems`/`blocked`, and its cells (blocking or soft) are
+    // off limits to the recipe. M16: the pins also tell the group engine which slots they took (`fromSlot`,
+    // suppressed ghosts included), so a dragged generated item is placed once, as the pin.
+    const pins = spec ? resolvePins(spec, interior, reserved) : { items: [], consumed: new Set<string>(), issues: [] };
+    issues.push(...pins.issues);
+    const wallSolid = (tx: (i: number) => TileKind | undefined, n: number) => {
+      for (let i = 0; i < n; i++) {
+        const t = tx(i);
+        if (t !== 'wall' && t !== 'door') return false;
+      }
+      return true;
+    };
+    const wallSides = new Set<Facing>();
+    wallSidesByRoom.set(room.id, wallSides);
+    if (wallSolid((i) => tiles[interior.y - 1]?.[interior.x + i], interior.w)) wallSides.add('n');
+    if (wallSolid((i) => tiles[interior.y + interior.h]?.[interior.x + i], interior.w)) wallSides.add('s');
+    if (wallSolid((i) => tiles[interior.y + i]?.[interior.x - 1], interior.h)) wallSides.add('w');
+    if (wallSolid((i) => tiles[interior.y + i]?.[interior.x + interior.w], interior.h)) wallSides.add('e');
+    const recipe = furnishRoom(room.type, interior, roomRand, opts, {
+      aprons: reserved,
+      wallSides,
+      pinned: pins.items.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h })),
+      consumedSlots: pins.consumed,
+    });
     const blocked = new Set<string>();
     const keptItems: PlacedItem[] = [];
-    // M12: locked furniture goes first, into `keptItems`/`blocked`, and its cells (blocking or soft) are
-    // off limits to the recipe.
-    const pins = spec ? resolvePins(spec, interior, reserved) : { items: [], issues: [] };
-    issues.push(...pins.issues);
     const pinnedCells = new Set<string>();
     const pinSeats: RecipeSeat[] = [];
     for (const pin of pins.items) {
@@ -624,21 +665,47 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
         pinnedCells.add(key(c));
         if (pin.blocking) blocked.add(key(c));
       }
-      pinSeats.push(...seatsFor(pin.kind, pin, interior));
+      pinSeats.push(...seatsFor(pin.kind, pin, interior, pin.facing));
     }
     if (pins.items.length) pinnedRoomIds.add(room.id);
-    // Recipe items a pin displaced: their recipe seats go too, else a chair would face a missing desk.
+    // Recipe items a pin displaced: their recipe seats go too, else a chair would face a missing desk. M16: a displaced
+    // item is slid along its row/wall first (`relocate`); only when nothing within 3 tiles fits is it dropped.
     const droppedForPins: RecipeItem[] = [];
+    const relocatedSeats: RecipeSeat[] = [];
+    let moveGrid: OccupancyGrid | undefined;
+    const fitsAt = (item: RecipeItem) => {
+      if (!(item.w > 0 && item.h > 0)) return false;
+      return rectCells({ x: item.x, y: item.y, w: item.w, h: item.h }).every(
+        (c) => insideRect(c, interior) && !reserved.has(key(c)) && !blocked.has(key(c)) && !pinnedCells.has(key(c)),
+      );
+    };
     for (const item of recipe.furniture) {
-      const cells = rectCells({ x: item.x, y: item.y, w: item.w, h: item.h });
-      if (pinnedCells.size && cells.some((c) => pinnedCells.has(key(c)))) droppedForPins.push(item);
-      const fits =
-        item.w > 0 &&
-        item.h > 0 &&
-        cells.every((c) => insideRect(c, interior) && !reserved.has(key(c)) && !blocked.has(key(c)) && !pinnedCells.has(key(c)));
-      if (!fits) continue;
-      keptItems.push({ ...item, roomId: room.id, roomType: room.type });
-      if (item.blocking) for (const c of cells) blocked.add(key(c));
+      let placed: RecipeItem = item;
+      if (!fitsAt(item)) {
+        // Only rejected-by-pin/apron items are worth moving; the grid holds everything already kept plus the aprons and pins.
+        if (!moveGrid) {
+          moveGrid = new OccupancyGrid(interior);
+          for (const k of reserved) {
+            const [ax, ay] = k.split(',').map(Number);
+            moveGrid.mark({ x: ax!, y: ay!, w: 1, h: 1 }, CELL_RESERVED, 0);
+          }
+          for (const k of keptItems) moveGrid.mark(k, k.blocking ? CELL_BLOCKING : CELL_SOFT, 0);
+        }
+        const g = moveGrid;
+        const moved = item.blocking
+          ? (['x', 'y'] as const).map((axis) => relocate([item], axis, g)?.[0]).find((m) => m && fitsAt(m))
+          : undefined;
+        droppedForPins.push(item);
+        if (!moved) continue;
+        placed = moved;
+        relocatedSeats.push(...seatsFor(moved.kind, moved, interior, moved.facing));
+      }
+      keptItems.push({ ...placed, roomId: room.id, roomType: room.type });
+      const cells = rectCells({ x: placed.x, y: placed.y, w: placed.w, h: placed.h });
+      if (placed.blocking) {
+        for (const c of cells) blocked.add(key(c));
+        moveGrid?.mark(placed, CELL_BLOCKING, 0);
+      }
     }
     let recipeSeats = recipe.seats;
     if (droppedForPins.length) {
@@ -653,7 +720,8 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       const kept = givers(keptItems);
       recipeSeats = recipeSeats.filter((s) => !(dropped.some((it) => supports(it, s)) && !kept.some((it) => supports(it, s))));
     }
-    let seats: Seat[] = (pinSeats.length ? dedupeSeats([...recipeSeats, ...pinSeats]) : recipeSeats)
+    const extraSeats = [...pinSeats, ...relocatedSeats];
+    let seats: Seat[] = (extraSeats.length ? dedupeSeats([...recipeSeats, ...extraSeats]) : recipeSeats)
       .filter((s) => insideRect(s, interior) && !reserved.has(key(s)) && !blocked.has(key(s)))
       .map((s) => ({ x: s.x, y: s.y, zone: isZoneRoomType(room.type) ? room.type : 'entrance', roomId: room.id, kind: s.kind }));
 
@@ -778,6 +846,18 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
         recipeSeatCount: seats.length,
         rand: applianceRand,
       });
+      // M16: chairs are real soft items now, so a row of seats can sit between a wall appliance and a desk; the placer counts
+      // those chair tiles as occupied (not free) and cannot see it enclose them. Drop the last appliance while any tile that
+      // was reachable loses its way out (same flood fill as the retry above).
+      while (appliances.length) {
+        const probe = new Set(blocked);
+        for (const item of appliances) for (const c of rectCells(item)) probe.add(key(c));
+        const probeReach = localReach(probe, reachStarts);
+        let sealed = false;
+        for (const k of finalReach) if (!probe.has(k) && !probeReach.has(k)) { sealed = true; break; }
+        if (!sealed) break;
+        appliances.pop();
+      }
       for (const item of appliances) {
         keptItems.push({ ...item, roomId: room.id, roomType: room.type });
         for (const c of rectCells({ x: item.x, y: item.y, w: item.w, h: item.h })) blocked.add(key(c));
@@ -975,18 +1055,27 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     }
   }
 
+  // Per-room index of the furniture placed so far (decor appends to `furniture` but only for the room being decorated).
+  const furnitureByRoom = new Map<string, PlacedItem[]>();
+  for (const f of furniture) {
+    const list = furnitureByRoom.get(f.roomId);
+    if (list) list.push(f);
+    else furnitureByRoom.set(f.roomId, [f]);
+  }
   for (const gr of generatedRooms) {
     if (gr.type === 'stairs' || gr.type === 'hall') continue;
     const roomDecorRand = rngFor(seed, `decor:${gr.id}`);
     const count = randInt(roomDecorRand, 0, 2);
     const takenCells = new Set<string>();
-    for (const f of furniture) if (f.roomId === gr.id) for (const c of rectCells({ x: f.x, y: f.y, w: f.w, h: f.h })) takenCells.add(key(c));
+    for (const f of furnitureByRoom.get(gr.id) ?? []) for (const c of rectCells({ x: f.x, y: f.y, w: f.w, h: f.h })) takenCells.add(key(c));
     const apron = apronsByRoom.get(gr.id) ?? new Set<string>();
     const seatCells = new Set(gr.seats.map(key));
     const free = gr.tiles.filter((t) => !takenCells.has(key(t)) && !apron.has(key(t)) && !seatCells.has(key(t)));
+    const scattered = new Set<string>();
     for (let i = 0; i < count && free.length; i++) {
       const idx = Math.floor(roomDecorRand() * free.length);
       const t = free.splice(idx, 1)[0]!;
+      scattered.add(key(t));
       decor.push({ x: t.x, y: t.y, kind: 'floor-scatter', roomId: gr.id, variant: randInt(roomDecorRand, 0, 3) });
     }
     // Density-scaled decor furniture (M8 8n): plants/rugs/lamps/crates/banners/wall-art/bins along
@@ -994,8 +1083,14 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     // `free` cells, so it can never be the thing that seals off a seat or a door apron.
     const spec = roomSpecById.get(gr.id);
     const decorAmount = spec?.furnish?.decor ?? layout.furnishDefaults?.decor ?? 0.35;
-    const stillFree = free.filter((t) => !decor.some((d) => d.roomId === gr.id && d.x === t.x && d.y === t.y));
-    const decorItems = decorateRoom(gr.interior, stillFree, decorAmount, roomDecorRand);
+    const stillFree = free.filter((t) => !scattered.has(key(t)));
+    const gi = gr.interior;
+    const decorItems = decorateRoom(gr.interior, stillFree, decorAmount, `${seed}:decor:${gr.id}`, {
+      wallSides: wallSidesByRoom.get(gr.id) ?? new Set<Facing>(),
+      seats: seatCells,
+      corners: [{ x: gi.x, y: gi.y }, { x: gi.x + gi.w - 1, y: gi.y }, { x: gi.x, y: gi.y + gi.h - 1 }, { x: gi.x + gi.w - 1, y: gi.y + gi.h - 1 }],
+      aprons: apron,
+    });
     for (const item of decorItems) furniture.push({ ...item, roomId: gr.id, roomType: gr.type });
   }
 

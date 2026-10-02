@@ -13,6 +13,11 @@ export function makeStubGraphics(calls: string[] = []): { g: Phaser.GameObjects.
     'lineStyle',
     'strokeCircle',
     'strokeEllipse',
+    'save',
+    'restore',
+    'translateCanvas',
+    'rotateCanvas',
+    'scaleCanvas',
     'generateTexture',
     'destroy',
   ] as const;

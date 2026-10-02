@@ -1,6 +1,7 @@
 import type * as Phaser from 'phaser';
 import type { FurnitureKind, PlacedFurniture } from '../../procgen/types';
 import { paintForFacing } from './facing';
+import { isSeatKind, paintSeatView, type SeatPalette } from './furniture';
 import { lighten, rectFn, type RectFn } from './util';
 
 type Painter = (g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn) => void;
@@ -282,6 +283,17 @@ const RIFT: Record<FurnitureKind, Painter> = {
   cage: paintCrystalAppliance,
 };
 
+/** Crystal seats facing n/e/w: a void-dark back, a crystal cushion and a glow stripe on the facing edge. */
+const RIFT_SEATS: Record<'chair' | 'armchair' | 'sofa', SeatPalette> = {
+  chair: { back: VOID_DARK, cushion: CRYSTAL, arm: 0x1a2447, glow: CRYSTAL_EDGE },
+  armchair: { back: VOID_DARK, cushion: CRYSTAL, arm: 0x1a2447, glow: CRYSTAL_EDGE },
+  sofa: { back: VOID_DARK, cushion: CRYSTAL, arm: 0x1a2447, glow: CRYSTAL_EDGE },
+};
+
 export function paintRiftFurniture(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number): void {
+  if (f.facing && f.facing !== 's' && isSeatKind(f.kind)) {
+    const pal = { ...RIFT_SEATS[f.kind], glow: pick(RIFT_ACCENTS, f.variant) };
+    return paintSeatView(rectFn(g), f, T, pal, f.kind);
+  }
   paintForFacing(g, f, T, (gg, ff, TT) => RIFT[ff.kind](gg, ff, TT, rectFn(gg)));
 }

@@ -11,3 +11,6 @@ export * from './visibility';
 export * from './sources';
 export * from './plan';
 export * from './shadows';
+export * from './LightmapLayer';
+export * from './ShadowLayer';
+export * from './LightingController';

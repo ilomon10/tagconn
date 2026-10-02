@@ -6,6 +6,7 @@ import type { DecorSlot } from '../../procgen/types';
 export const GUILD_TORCH = 'guild-torch';
 export const GUILD_GLOW = 'guild-glow';
 export const GUILD_WINDOW = 'guild-window';
+export const GUILD_CHANDELIER = 'guild-chandelier';
 export const guildBanner = (variant: number): string => `guild-banner-${variant % 3}`;
 // Style pass: a more vivid heraldic red (reference art's north-wall banners), keeping the blue
 // variant for contrast.
@@ -105,9 +106,39 @@ function paintClock(scene: Phaser.Scene, key: string): void {
   g.destroy();
 }
 
+/** M16: a hanging iron ring with six candles and warm flames (lighting.md section 1.6); drawn in code, 28x28. */
+function paintChandelier(scene: Phaser.Scene): void {
+  if (scene.textures.exists(GUILD_CHANDELIER)) return;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  // Chain up to the ceiling.
+  g.fillStyle(0x3a3a46, 1);
+  for (let y = 0; y < 8; y += 2) g.fillRect(13, y, 2, 1);
+  // Iron ring with a darker underside, and a hanging finial.
+  g.fillStyle(0x23232b, 1);
+  g.fillRect(4, 17, 20, 3);
+  g.fillStyle(0x4a4a58, 1);
+  g.fillRect(4, 16, 20, 2);
+  g.fillRect(12, 20, 4, 3);
+  g.fillRect(13, 23, 2, 2);
+  // Candles (wax) with flames and a soft warm halo.
+  for (const x of [5, 9, 13, 17, 21]) {
+    g.fillStyle(0xffb84a, 0.25);
+    g.fillCircle(x + 0.5, 9, 3);
+    g.fillStyle(0xf4ecd4, 1);
+    g.fillRect(x, 11, 2, 5);
+    g.fillStyle(0xff9a3a, 1);
+    g.fillRect(x, 8, 2, 3);
+    g.fillStyle(0xffe08a, 1);
+    g.fillRect(x, 9, 1, 2);
+  }
+  g.generateTexture(GUILD_CHANDELIER, 28, 28);
+  g.destroy();
+}
+
 export function paintGuildDecorTextures(scene: Phaser.Scene): void {
   paintTorch(scene);
   paintGlow(scene);
+  paintChandelier(scene);
   BANNER_EMBLEM.forEach((shape, i) => paintBannerVariant(scene, guildBanner(i), BANNER_CLOTH[i % BANNER_CLOTH.length]!, shape));
   // An arched, warm-glowing window (reference: "arched windows with warm glow" on the north wall).
   paintWindow(scene, GUILD_WINDOW, 0xffb84a, 0x3a2e1c, 0x2e283c);

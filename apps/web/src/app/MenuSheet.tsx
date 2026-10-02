@@ -9,6 +9,8 @@ import { useModalFocus } from '../lib/useModalFocus';
 import { officeNavBus } from '../game/OfficeGame';
 import { cx } from '../components/ui';
 import { MENU_HOTKEYS, type MenuActionId } from './menuHotkeys';
+import { useLightingPrefs } from '../features/office/useLightingPrefs';
+import { sfxBus } from '../game/sfxBus';
 import { SoundRow } from '../features/office/audio/SoundRow';
 import { useScreenEffect, type useMenuActions } from './useMenuActions';
 
@@ -104,6 +106,79 @@ function ScreenEffectRow() {
   );
 }
 
+/** Time of day (M16): follow the office clock, or pin this browser's sun to an hour. */
+function TimeOfDayRow() {
+  const t = useLightingPrefs();
+  const click = (): void => sfxBus.emit({ id: 'ui-click' });
+  return (
+    <div className="rounded-lg px-2.5 py-1.5">
+      <div className="flex min-h-11 items-center gap-3 coarse:min-h-0">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={t.following}
+          onClick={() => {
+            if (t.following) t.now();
+            else t.follow();
+            click();
+          }}
+          className="flex min-h-11 flex-1 items-center gap-3 text-left"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-ink-100">Time of day</span>
+            <span className="block truncate text-[11px] text-ink-400">
+              {t.following ? 'Following the office clock' : `${t.label}, ${t.phase}`}
+              {t.zone ? ` · ${t.zone}` : ''}
+            </span>
+          </span>
+          <span className={cx('relative h-5 w-9 shrink-0 rounded-full transition-colors', t.following ? 'bg-cozy' : 'bg-ink-600')} aria-hidden="true">
+            <span className={cx('absolute left-0.5 top-0.5 size-4 rounded-full bg-ink-100 transition-transform', t.following && 'translate-x-4')} />
+          </span>
+        </button>
+      </div>
+      {!t.following && (
+        <div className="mt-1 flex items-center gap-2">
+          <input
+            type="range"
+            min={0}
+            max={24}
+            step={0.25}
+            value={t.hour}
+            aria-label="Time of day"
+            aria-valuetext={`${t.label}, ${t.phase}`}
+            onChange={(e) => t.setHour(Number(e.target.value))}
+            onPointerUp={click}
+            className="min-h-8 flex-1 accent-cozy coarse:min-h-11"
+          />
+          <span className="w-12 shrink-0 text-right font-pixel text-[10px] text-ink-300">{t.label}</span>
+          <button
+            type="button"
+            onClick={() => {
+              t.now();
+              click();
+            }}
+            className="min-h-8 rounded-md px-2 text-[11px] text-ink-400 hover:text-ink-100 coarse:min-h-11"
+            title="Jump to the office's current hour"
+          >
+            Now
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              t.follow();
+              click();
+            }}
+            className="min-h-8 rounded-md px-2 text-[11px] text-ink-400 hover:text-ink-100 coarse:min-h-11"
+            title="Follow the office clock again"
+          >
+            Default
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Floor up/down for narrow screens, where the top bar has no room for the floor indicator. */
 function FloorRow({ onPick }: { onPick: () => void }) {
   const projects = useOfficeStore((s) => s.projects);
@@ -162,6 +237,7 @@ export function MenuSheet({ actions, onClose, onHelp }: { actions: ReturnType<ty
         </Group>
         <Group title="This browser">
           <ScreenEffectRow />
+          <TimeOfDayRow />
           <SoundRow />
           {notificationsSupported() && perm === 'default' && (
             <button

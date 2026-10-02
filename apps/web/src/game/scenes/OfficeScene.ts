@@ -51,6 +51,8 @@ import { ReducedMotionWatcher } from '../camera/reducedMotion';
 import { receptionistLookKey } from '../receptionistLook';
 import { counterScale, labelVisible, layoutLabels, type LabelSubject, type Rect as LabelRect } from '../labels';
 import { PostFxController } from '../postfx/PostFxController';
+import { LightingController } from '../lighting/LightingController';
+import type { ClockSync, LightingOverride } from '../lighting/clock';
 import { DramaDirector } from './dramaDirector';
 import { CosmeticClaims } from '../cosmetic/claims';
 import { LifeDirector } from '../life/lifeDirector';
@@ -134,6 +136,10 @@ export interface OfficeState {
   /** M9: this browser's monitor screen effect (the per-browser toggle over the server default,
    *  resolved in OfficeView). Omitted = follow `office.shaders.screen`. */
   screenFx?: { on: boolean; effect: 'crt' | 'lcd' | 'vhs' };
+  /** M16: host clock skew/zone from the snapshot (`officeStore.clockSync`); omitted = browser clock. */
+  clock?: ClockSync;
+  /** M16: this browser's time-of-day override (`resolveLightingOverride`); omitted = follow the host. */
+  lightingOverride?: LightingOverride;
 }
 
 const parseColor = (c: string | undefined, fallback = 0x8e8e9e) => {
@@ -315,7 +321,7 @@ export class OfficeScene extends Phaser.Scene {
    *  keeps a pinch (and the finger lifted after it) from reading as a click or a pan. */
   private pinch: { dist: number; userZoom: number } | null = null;
   private pinchGuard = false;
-  private night!: Phaser.GameObjects.Rectangle;
+  private lighting!: LightingController;
   private state?: OfficeState;
   /** `layout.id + updatedAt` (+ the Multiverse plan's own key) — a full geometry rebuild only
    *  happens when this changes (D2: a style switch alone re-skins the same geometry, so seats and
@@ -335,7 +341,6 @@ export class OfficeScene extends Phaser.Scene {
   private panned = false;
   private drag: { x: number; y: number; sx: number; sy: number; moved: boolean } | null = null;
   private inputLocked = false;
-  private themeTimer?: Phaser.Time.TimerEvent;
   /** The safe-region insets currently applied to the camera (animated toward whatever React last reported). */
   private insets: SafeInsets = { ...ZERO_INSETS };
   private insetsTween?: Phaser.Tweens.Tween;
@@ -396,6 +401,20 @@ export class OfficeScene extends Phaser.Scene {
     // here, before the first `buildWorld` — its `renderVisuals()` already tries to seed the light
     // layer (a no-op until `setOfficeState`'s first pass has settings to read).
     this.postFx = new PostFxController(this);
+    // M16: host-clock sun, lightmap, furniture + character shadows (docs/design/lighting.md §7).
+    this.lighting = new LightingController(this, {
+      map: () => this.map,
+      theme: () => this.theme,
+      regions: () => this.regions,
+      style: () => this.appliedStyle ?? this.theme.id,
+      characters: () => this.shadowCasters(),
+      quality: () => (this.postFx.resolvedQuality === 'low' ? 'low' : 'high'),
+      webgl: () => this.postFx.available,
+      reducedMotion: () => this.reducedMotion.value,
+      now: () => Date.now(),
+      onPhase: (phase) =>
+        sfxBus.setAmbient({ style: this.theme.id === 'modern' ? 'modern' : this.theme.id === 'guild' ? 'guild' : 'rift', night: phase === 'night' }),
+    });
     this.drama = new DramaDirector({
       map: () => this.map,
       finder: () => this.finder,
@@ -447,7 +466,7 @@ export class OfficeScene extends Phaser.Scene {
         reducedMotion: () => this.reducedMotion.value,
         lowQuality,
         isMultiverse: () => this.multiversePlan !== null,
-        hour: () => new Date().getHours(),
+        hour: () => Math.floor(this.lighting.sun.hour), // M16: the host's (or overridden) hour, not the browser's
         claims: () => this.claims,
         spawnNpc: (key, at) => this.spawnNpc(key, at),
         emit: (e) => this.events.emit('encounter', e),
@@ -463,16 +482,14 @@ export class OfficeScene extends Phaser.Scene {
       styleFor: (f) => this.regions.find((r) => f.x >= r.rect.x && f.y >= r.rect.y && f.x < r.rect.x + r.rect.w && f.y < r.rect.y + r.rect.h)?.theme.id ?? this.theme.id,
     });
     this.buildWorld(DEFAULT_LAYOUT, 'guild', null);
-    this.night = this.add.rectangle(0, 0, this.worldW, this.worldH, 0x0b1030, 0).setOrigin(0).setDepth(90_000);
     this.setupCamera();
-    this.themeTimer = this.time.addEvent({ delay: 60_000, loop: true, callback: () => this.applyLighting() });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (this.tooltip.visible) this.placeTooltip(p);
     });
     this.scale.on('resize', () => this.fitCamera());
     window.addEventListener('blur', this.endDragOnBlur);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.themeTimer?.remove();
+      this.lighting.destroy();
       window.removeEventListener('blur', this.endDragOnBlur);
       this.reducedMotion.destroy();
       this.postFx.destroy();
@@ -521,7 +538,7 @@ export class OfficeScene extends Phaser.Scene {
     // waiting for the next zoom change.
     this.updateZoneHitSizes(this.cameras.main.zoom);
     this.rebuildReceptionist();
-    if (this.night) this.night.setSize(this.worldW, this.worldH);
+    this.lighting.setMap();
   }
 
   private buildRegions(plan: MultiversePlan): ThemeRegion[] {
@@ -549,6 +566,7 @@ export class OfficeScene extends Phaser.Scene {
     this.refreshStairsAvailability();
     this.rebuildReceptionist();
     this.triggers.setStyle(style);
+    this.lighting.setMap();
   }
 
   /** W3b/M12: (re)creates the floor's Receptionist at `pickReceptionistSpot`'s tile — on a full
@@ -1153,14 +1171,11 @@ export class OfficeScene extends Phaser.Scene {
 
   // ---------------------------------------------------------------- state
 
-  private applyLighting() {
-    if (!this.theme) return;
-    const mode = this.state?.settings.office.theme ?? 'auto';
-    const hour = new Date().getHours();
-    const isNight = mode === 'night' || (mode === 'auto' && (hour >= 19 || hour < 7));
-    const lighting = this.theme.lighting;
-    this.night.setFillStyle(lighting.nightTint, isNight ? lighting.nightAlpha : 0);
-    sfxBus.setAmbient({ style: this.theme.id === 'modern' ? 'modern' : this.theme.id === 'guild' ? 'guild' : 'rift', night: isNight });
+  /** Everything that casts a character shadow: the cast, live NPCs and the Receptionist. */
+  private *shadowCasters(): Iterable<Character> {
+    yield* this.characters.values();
+    yield* this.npcs.npcs().values();
+    if (this.receptionist) yield this.receptionist;
   }
 
   holdNpc(id: string): boolean {
@@ -1237,8 +1252,8 @@ export class OfficeScene extends Phaser.Scene {
     }
     this.refreshStairsAvailability();
     if (prevZoom !== office.zoom) this.fitCamera();
-    this.applyLighting();
     this.postFx.applySettings(office.shaders, effectiveStyle, prefersReducedMotion(), state.screenFx);
+    this.lighting.applySettings(office, state.clock, state.lightingOverride); // after postFx: quality is resolved
     this.applyReceptionistLook();
     this.triggers.setEnabled(office.furnitureTriggers ?? true);
 
@@ -1781,6 +1796,7 @@ export class OfficeScene extends Phaser.Scene {
     this.drama.update(time, delta);
     this.life.update(time, delta);
     this.npcs.update(time, delta, speed);
+    this.lighting.update(time, delta);
     this.koTimer -= delta;
     if (this.koTimer <= 0) {
       this.koTimer = KO_REFRESH_MS;

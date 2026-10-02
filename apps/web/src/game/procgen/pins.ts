@@ -4,7 +4,8 @@
 // which kinds may be pinned, whether a kind blocks walking, and the absolute-coordinate pins one room
 // contributes to `generate.ts`'s room loop. Pins are placed before the procedural recipe and are never
 // removed by the reachability retry.
-import type { LayoutIssue, LayoutRoom } from '@tagconn/shared';
+import type { Facing, LayoutIssue, LayoutRoom } from '@tagconn/shared';
+import { facingSupported } from './facingSpec';
 import { cellKeys, isHalfAligned, overlapsAny } from './geometry';
 import type { RecipeItem } from './recipes';
 import type { FurnitureKind, Rect } from './types';
@@ -71,6 +72,8 @@ export function isPinnableKind(kind: string): kind is FurnitureKind {
 
 export interface ResolvedPins {
   items: (RecipeItem & { pinned: true })[];
+  /** M16: every `fromSlot` the room's pins name (suppressed ghosts included): the recipe must not place those slots again. */
+  consumed: Set<string>;
   issues: LayoutIssue[];
 }
 
@@ -82,6 +85,10 @@ export interface ResolvedPins {
  * share a tile without overlapping). A blocking pin covering a door apron (explicit or automatic) is skipped
  * with a `pinned-blocks` warning, so locked furniture can never seal a room; conservative with half tiles (any
  * covered apron tile seals). Emitted items keep their fractional `x`/`y` and whole `w`/`h`. Never throws.
+ *
+ * M16 (furnishing.md 3.4): a blocking pin over an apron is KEPT and reported `pinned-blocks` (the reachability report
+ * shows what it seals) instead of skipped. `fromSlot` is collected into `consumed`; a `suppressed` pin is validated for kind
+ * only, consumes its slot and is never placed. An unsupported `facing` falls back silently (no issue).
  */
 export function resolvePins(
   room: Pick<LayoutRoom, 'id' | 'name' | 'type' | 'furniture'>,
@@ -90,13 +97,18 @@ export function resolvePins(
 ): ResolvedPins {
   const items: ResolvedPins['items'] = [];
   const issues: LayoutIssue[] = [];
+  const consumed = new Set<string>();
   const pins = room.furniture;
-  if (!pins?.length) return { items, issues };
+  if (!pins?.length) return { items, consumed, issues };
   const name = room.name ?? room.type;
   const taken: Rect[] = [];
   for (const f of pins) {
     if (!isPinnableKind(f.kind)) {
       issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} is not a known furniture kind and was skipped.`, roomIds: [room.id] });
+      continue;
+    }
+    if (f.suppressed) {
+      if (f.fromSlot) consumed.add(f.fromSlot);
       continue;
     }
     if (!isHalfAligned(f) || f.w < 1 || f.h < 1) {
@@ -112,16 +124,17 @@ export function resolvePins(
       issues.push({ severity: 'warning', code: 'pinned-invalid', message: `${name}: a locked ${f.kind} overlaps another locked item and was skipped.`, roomIds: [room.id] });
       continue;
     }
-    // A blocking pin on a door apron (explicit OR automatic door) would seal the room: skip it. Covered tiles, so a
-    // half-offset pin touching the apron counts.
+    // A blocking pin on a door apron (explicit OR automatic door) may seal the room: it is kept (the user placed it) and
+    // reported; the global verify then flags any room it cuts off. Covered tiles, so a half-offset pin touching the apron counts.
     if (KIND_BLOCKING[f.kind] && cellKeys(abs).some((c) => aprons.has(c))) {
-      issues.push({ severity: 'warning', code: 'pinned-blocks', message: `${name}: a locked ${f.kind} covers a door and was skipped.`, roomIds: [room.id] });
-      continue;
+      issues.push({ severity: 'warning', code: 'pinned-blocks', message: `${name}: a locked ${f.kind} covers a door.`, roomIds: [room.id] });
     }
     taken.push(abs);
-    items.push({ kind: f.kind, ...abs, blocking: KIND_BLOCKING[f.kind], variant: f.variant ?? 0, pinned: true });
+    if (f.fromSlot) consumed.add(f.fromSlot);
+    const facing: Facing | undefined = f.facing && f.facing !== 's' && facingSupported(f.kind, f.facing) ? f.facing : undefined;
+    items.push({ kind: f.kind, ...abs, blocking: KIND_BLOCKING[f.kind], variant: f.variant ?? 0, ...(facing && { facing }), pinned: true });
   }
-  return { items, issues };
+  return { items, consumed, issues };
 }
 
 /** One pin issue per room + code (a bad pin is otherwise reported by both `validateLayout` and `resolvePins`); other issues pass through. */

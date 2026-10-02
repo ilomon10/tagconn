@@ -6,7 +6,8 @@ import { registerProgressEvents, useProgressStore } from '../stores/progressStor
 import { startDemoProgression } from '../features/battle/demoProgression';
 import { useReceptionistStore } from '../stores/receptionistStore';
 import { emitWithAck, getSocket, heroSocket } from './socket';
-import { startDemo } from './mock';
+import { demoClock, startDemo } from './mock';
+import { syncClock, type ClockSync } from '../game/lighting/clock';
 import { DEFAULT_ROLES } from './defaultRoles';
 import { defaultSettings } from '@tagconn/shared';
 
@@ -41,6 +42,8 @@ function wireLive() {
   // 'office:subscribe' (handled in `resync()` below). Kept for any future/alternate server that does.
   s.on('snapshot', (snap) => {
     office().applySnapshot(snap);
+    const at = Date.now();
+    office().setClockSync(syncClock(snap.clock, at, at));
     if (snap.layouts) useLayoutStore.getState().setLayouts(snap.layouts);
     if (snap.heroes) useHeroStore.getState().setHeroes(snap.heroes);
     useProgressStore.getState().setAll(snap.progress ?? []);
@@ -76,14 +79,21 @@ function wireLive() {
 /** Fetch everything after (re)connecting. We subscribe to all floors and filter client-side. */
 async function resync() {
   try {
+    // M16: skew = serverNow minus the midpoint of the subscribe round trip, re-measured on every (re)connect.
+    const sentAt = Date.now();
+    let sync: ClockSync | undefined;
     const [snap, settings, roles] = await Promise.all([
-      emitWithAck('office:subscribe', ALL_FLOORS),
+      emitWithAck('office:subscribe', ALL_FLOORS).then((r) => {
+        sync = syncClock(r.clock, sentAt, Date.now());
+        return r;
+      }),
       emitWithAck('settings:get'),
       emitWithAck('roles:list'),
     ]);
     useSettingsStore.getState().setSettings(settings);
     useSettingsStore.getState().setRoles(roles);
     useOfficeStore.getState().applySnapshot(snap);
+    if (sync) useOfficeStore.getState().setClockSync(sync);
     // M7: layouts are global (not per project), so the snapshot carries all of them (7b). Pre-M7
     // servers and test fixtures omit the field; `layoutForProject` falls back to `DEFAULT_LAYOUT`.
     useLayoutStore.getState().setLayouts(snap.layouts ?? []);
@@ -114,6 +124,8 @@ export function enterDemo() {
   const cfg = useSettingsStore.getState();
   if (!cfg.settingsLoaded) cfg.setSettings(defaultSettings());
   if (!cfg.rolesLoaded) cfg.setRoles(DEFAULT_ROLES);
+  const at = Date.now();
+  useOfficeStore.getState().setClockSync(syncClock(demoClock(at), at, at));
   const stopMock = startDemo();
   const stopProgression = startDemoProgression();
   stopDemoFn = () => {

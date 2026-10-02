@@ -7,7 +7,7 @@ import { onFloor, useOfficeStore } from '../../stores/officeStore';
 import { useHeroStore } from '../../stores/heroStore';
 import { useHeroPanelStore } from '../heroes/store';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { resolveScreenFx, useDisplayPrefsStore } from '../../stores/displayPrefsStore';
+import { resolveLightingOverride, resolveScreenFx, useDisplayPrefsStore } from '../../stores/displayPrefsStore';
 import { useReceptionistStore } from '../../stores/receptionistStore';
 import { useReceptionistUiStore } from '../receptionist/uiStore';
 import { useFloorAgents, useThemedRoleLookup } from '../../lib/hooks';
@@ -118,6 +118,9 @@ function useGameBridge(game: OfficeGame | null) {
         // layered over `settings.office.shaders.screen` (docs/decisions.md #25) — see
         // `resolveScreenFx`. `OfficeScene` passes this straight through to `postFx.applySettings`.
         screenFx: resolveScreenFx(settings.office.shaders.screen, useDisplayPrefsStore.getState()),
+        // M16: host clock skew/zone (measured per snapshot) and this browser's time-of-day override.
+        clock: useOfficeStore.getState().clockSync,
+        lightingOverride: resolveLightingOverride(useDisplayPrefsStore.getState()),
       });
     };
     push();
@@ -128,7 +131,8 @@ function useGameBridge(game: OfficeGame | null) {
         s.selectedProjectId !== p.selectedProjectId ||
         s.projects !== p.projects ||
         s.lastLiveAt !== p.lastLiveAt ||
-        s.pinnedPrimary !== p.pinnedPrimary
+        s.pinnedPrimary !== p.pinnedPrimary ||
+        s.clockSync !== p.clockSync
       )
         push();
     });
@@ -148,7 +152,7 @@ function useGameBridge(game: OfficeGame | null) {
     // M9: the top bar's Screen toggle/menu writes here — re-push so the scene picks up the new
     // override immediately, without waiting for some unrelated store to change first.
     const unsubDisplayPrefs = useDisplayPrefsStore.subscribe((s, p) => {
-      if (s.screenOn !== p.screenOn || s.screenEffect !== p.screenEffect) push();
+      if (s.screenOn !== p.screenOn || s.screenEffect !== p.screenEffect || s.lightingHour !== p.lightingHour) push();
     });
     return () => {
       unsubOffice();

@@ -231,6 +231,7 @@ export const riftTheme: ThemeDefinition = {
   drama: guildTheme.drama,
   life: RIFT_LIFE,
   npcs: RIFT_NPCS,
-  lighting: { dayTint: 0xd6d0ff, nightTint: 0x0b0820, nightAlpha: 0.55, glowAtNight: true },
+  lighting: { dayTint: 0xd6d0ff, nightTint: 0x0b0820, nightAlpha: 0.55, glowAtNight: true,
+    dawnTint: 0xd0b0ff, duskTint: 0xb080ff, moonTint: 0x30206a, sunColor: 0xa8f0ff, moonColor: 0x7ef0e8, roomLight: 0x9fd8ff, shadowAlpha: 0.2 },
   floorLabel: () => 'The Multiverse',
 };

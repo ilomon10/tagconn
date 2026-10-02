@@ -2,7 +2,7 @@ import { HERO_HAIR_COLORS, HERO_HAIR_STYLE_COUNT, HERO_SKIN_TONES } from '@tagco
 import { describe, expect, it } from 'vitest';
 import { POSE_PROP } from './actors/poses';
 import { DIZZY_FRAMES, EMOTE_ICON, STRAIN_ICON } from './drama';
-import { CHARACTER_BITMAPS, HAIR_COLORS, HAIR_STYLES, hexToNumber, KO_FRAMES, SKIN_TONES } from './textures';
+import { BITMAP_ALPHA, CHARACTER_BITMAPS, HAIR_COLORS, HAIR_STYLES, hexToNumber, KO_FRAMES, SKIN_TONES } from './textures';
 
 // W4 acceptance: the web palettes stay equal to the shared `HERO_*` vocabulary (packages/shared/src/heroes.ts).
 describe('palettes match the shared HERO_* vocabulary', () => {
@@ -71,5 +71,16 @@ describe('M14 KO icons', () => {
       }
     }
     expect(CHARACTER_BITMAPS['icon-ko']!.rows.join()).not.toEqual(CHARACTER_BITMAPS['icon-ko-2']!.rows.join());
+  });
+});
+
+describe('ch-shadow-cast (M16)', () => {
+  it('is a 10 x 10 blob painted at alpha 0.22, next to the existing ellipse', () => {
+    const b = CHARACTER_BITMAPS['ch-shadow-cast']!;
+    expect(b.rows).toHaveLength(10);
+    for (const r of b.rows) expect(r).toHaveLength(10);
+    expect(b.outline).toBeUndefined();
+    expect(BITMAP_ALPHA['ch-shadow-cast']).toBe(0.22);
+    expect(BITMAP_ALPHA['ch-shadow']).toBe(0.28);
   });
 });

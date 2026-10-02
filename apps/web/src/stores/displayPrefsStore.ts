@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ScreenEffect } from '@tagconn/shared';
+import type { LightingOverride } from '../game/lighting/clock';
 
 /**
  * Per-browser display preferences (M9, docs/decisions.md #25): the monitor screen effect
@@ -22,9 +23,16 @@ interface StoredDisplayPrefs {
   /** `null` = follow the server's `office.shaders.screen` (falling back to `'crt'` if the server
    *  itself is off — see `OfficeView`'s `push()`). */
   screenEffect: ScreenEffectPref | null;
+  /** M16: `null` = follow the office clock; otherwise the host-local decimal hour this browser pins the sun to. */
+  lightingHour: number | null;
 }
 
-const EMPTY_PREFS: StoredDisplayPrefs = { screenOn: null, screenEffect: null };
+const EMPTY_PREFS: StoredDisplayPrefs = { screenOn: null, screenEffect: null, lightingHour: null };
+
+/** A usable override hour: finite and within [0, 24]. NaN, 25 and strings all mean "follow the server". */
+function validHour(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 24 ? v : null;
+}
 
 function isScreenEffectPref(v: unknown): v is ScreenEffectPref {
   return typeof v === 'string' && (SCREEN_EFFECT_PREFS as readonly string[]).includes(v);
@@ -42,6 +50,7 @@ export function readDisplayPrefs(): StoredDisplayPrefs {
     return {
       screenOn: typeof p.screenOn === 'boolean' ? p.screenOn : null,
       screenEffect: isScreenEffectPref(p.screenEffect) ? p.screenEffect : null,
+      lightingHour: validHour(p.lightingHour),
     };
   } catch {
     return EMPTY_PREFS;
@@ -59,8 +68,11 @@ function writeDisplayPrefs(prefs: StoredDisplayPrefs): void {
 export interface DisplayPrefsState {
   screenOn: boolean | null;
   screenEffect: ScreenEffectPref | null;
+  lightingHour: number | null;
   setScreenOn(on: boolean | null): void;
   setScreenEffect(effect: ScreenEffectPref | null): void;
+  /** Pins the sun to a host-local hour for this browser; `null` (or an invalid hour) follows the server. */
+  setLightingHour(hour: number | null): void;
   /** Back to "follow the server default" for both fields (the top bar's "Use server default"). */
   reset(): void;
 }
@@ -70,20 +82,28 @@ const initial = readDisplayPrefs();
 export const useDisplayPrefsStore = create<DisplayPrefsState>()((set, get) => ({
   screenOn: initial.screenOn,
   screenEffect: initial.screenEffect,
+  lightingHour: initial.lightingHour,
 
   setScreenOn: (on) => {
     set({ screenOn: on });
-    writeDisplayPrefs({ screenOn: on, screenEffect: get().screenEffect });
+    writeDisplayPrefs({ screenOn: on, screenEffect: get().screenEffect, lightingHour: get().lightingHour });
   },
 
   setScreenEffect: (effect) => {
     set({ screenEffect: effect });
-    writeDisplayPrefs({ screenOn: get().screenOn, screenEffect: effect });
+    writeDisplayPrefs({ screenOn: get().screenOn, screenEffect: effect, lightingHour: get().lightingHour });
   },
 
+  setLightingHour: (hour) => {
+    const lightingHour = validHour(hour);
+    set({ lightingHour });
+    writeDisplayPrefs({ screenOn: get().screenOn, screenEffect: get().screenEffect, lightingHour });
+  },
+
+  // The screen-effect "Use server default": the time-of-day row has its own Default button.
   reset: () => {
     set({ screenOn: null, screenEffect: null });
-    writeDisplayPrefs(EMPTY_PREFS);
+    writeDisplayPrefs({ ...EMPTY_PREFS, lightingHour: get().lightingHour });
   },
 }));
 
@@ -98,4 +118,10 @@ export function resolveScreenFx(serverScreen: ScreenEffect, prefs: Pick<DisplayP
   const on = prefs.screenOn ?? serverScreen !== 'off';
   const effect = prefs.screenEffect ?? (serverScreen !== 'off' ? serverScreen : 'crt');
   return { on, effect };
+}
+
+/** The per-browser sun override for `OfficeState.lightingOverride`; `undefined` = follow the server. */
+export function resolveLightingOverride(prefs: Pick<DisplayPrefsState, 'lightingHour'>): LightingOverride | undefined {
+  const hour = validHour(prefs.lightingHour);
+  return hour === null ? undefined : { hour };
 }

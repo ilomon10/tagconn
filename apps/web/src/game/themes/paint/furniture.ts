@@ -1,6 +1,6 @@
 import type * as Phaser from 'phaser';
 import type { FurnitureKind, PlacedFurniture } from '../../procgen/types';
-import { paintForFacing } from './facing';
+import { paintForFacing, paintRotated } from './facing';
 import { darken, lighten, rectFn, type RectFn } from './util';
 
 type Painter = (g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn) => void;
@@ -14,6 +14,82 @@ const BANNER_COLORS_MODERN = [0xff5a5a, 0x5fb8ff, 0x6cf08a];
 /** Deterministic per-item variety without a shared RNG stream (furniture has no `rand` argument). */
 function pick<T>(arr: readonly T[], seed: number): T {
   return arr[((seed % arr.length) + arr.length) % arr.length]!;
+}
+
+// ==================================================================== seat views (M16 F6, furnishing.md section 5.3)
+
+/** Colours of one seat (chair / armchair / sofa) for the n/e/w views; `s` keeps each style's own south art untouched. */
+export interface SeatPalette {
+  back: number;
+  cushion: number;
+  arm: number;
+  /** Rift: a glow stripe along the facing edge. */
+  glow?: number;
+}
+
+/** Per-kind drawing box inset (px, each side), the backrest depth in the side views and the arm thickness (0 = no arms). */
+const SEAT_GEOM = {
+  chair: { ix: 4, iy: 3, back: 3, arm: 0 },
+  armchair: { ix: 1, iy: 1, back: 4, arm: 2 },
+  sofa: { ix: 0, iy: 1, back: 4, arm: 2 },
+} as const;
+export type SeatKind = keyof typeof SEAT_GEOM;
+export const isSeatKind = (k: FurnitureKind): k is SeatKind => Object.hasOwn(SEAT_GEOM, k);
+
+/** A seat drawn facing n/e/w, inside the (already rotated) footprint. `n` shows the back (backrest panel nearest the viewer,
+ *  the cushion peeking over it); `e`/`w` are a side profile: backrest strip on the far side, cushion, arms at both ends. */
+export function paintSeatView(rect: RectFn, f: PlacedFurniture, T: number, pal: SeatPalette, kind: SeatKind): void {
+  const facing = f.facing ?? 's';
+  const geom = SEAT_GEOM[kind];
+  const bx = f.x * T + geom.ix;
+  const by = f.y * T + geom.iy;
+  const bw = f.w * T - 2 * geom.ix;
+  const bh = f.h * T - 2 * geom.iy;
+  const edge = lighten(pal.back, 0.3);
+  rect(0x000000, bx + 1, by + bh - 1, bw - 2, 1, 0.22);
+  const hh = bh - 1;
+  if (facing === 'n') {
+    const seatH = Math.max(2, Math.floor(hh * 0.4));
+    rect(pal.cushion, bx + geom.arm, by, bw - 2 * geom.arm, seatH);
+    rect(pal.back, bx, by + seatH, bw, hh - seatH);
+    rect(edge, bx + 1, by + seatH, bw - 2, 1);
+    if (kind === 'sofa') for (let i = 1; i * T < bw; i++) rect(pal.arm, bx + i * T, by + seatH + 1, 1, hh - seatH - 1);
+    if (geom.arm) {
+      rect(pal.arm, bx, by, geom.arm, hh);
+      rect(pal.arm, bx + bw - geom.arm, by, geom.arm, hh);
+    }
+    if (pal.glow !== undefined) rect(pal.glow, bx + 1, by, bw - 2, 1, 0.8);
+    return;
+  }
+  const east = facing === 'e';
+  const bd = Math.min(geom.back, Math.floor(bw * 0.4));
+  const backX = east ? bx : bx + bw - bd;
+  rect(pal.cushion, bx, by, bw, hh);
+  rect(pal.back, backX, by, bd, hh);
+  rect(edge, east ? bx : bx + bw - 1, by, 1, hh);
+  if (kind === 'sofa') for (let i = 1; i * T < hh; i++) rect(pal.arm, east ? bx + bd : bx, by + i * T - geom.iy, bw - bd, 1);
+  if (geom.arm) {
+    rect(pal.arm, bx, by, bw, geom.arm);
+    rect(pal.arm, bx, by + hh - geom.arm, bw, geom.arm);
+  } else {
+    const fx = east ? bx + bw - 2 : bx;
+    rect(pal.arm, fx, by, 2, 2);
+    rect(pal.arm, fx, by + hh - 2, 2, 2);
+  }
+  if (pal.glow !== undefined) rect(pal.glow, east ? bx + bw - 1 : bx, by + 1, 1, hh - 2, 0.8);
+}
+
+/** Booth facing n shows the back panel (`drawBack`); e/w are the south art rotated about the footprint centre. */
+function paintBoothFacing(
+  g: Phaser.GameObjects.Graphics,
+  f: PlacedFurniture,
+  T: number,
+  drawSouth: Painter,
+  drawBack: Painter,
+): void {
+  const draw = f.facing === 'n' ? drawBack : drawSouth;
+  if (f.facing === 'n') draw(g, f, T, rectFn(g));
+  else paintRotated(g, f, T, (gg, ff, TT) => drawSouth(gg, ff, TT, rectFn(gg)));
 }
 
 // ==================================================================== modern (port of renderMap.ts)
@@ -669,7 +745,30 @@ function paintModernStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T
   }
 }
 
+const MODERN_SEATS: Record<SeatKind, SeatPalette> = {
+  chair: { back: 0x3a4a5a, cushion: 0x51697c, arm: 0x2a2e35 },
+  armchair: { back: 0x2a5a6a, cushion: 0x3b7a8a, arm: 0x1f4450 },
+  sofa: { back: 0x6a2a3a, cushion: 0x8a3b4a, arm: 0x4e1d2a },
+};
+
+/** Booth seen from behind: the screen's dark back and a solid panel in place of the cushion. */
+const modernBoothBack: Painter = (g, f, T, rect) => {
+  const x = f.x * T;
+  const y = f.y * T;
+  const w = f.w * T;
+  const h = f.h * T;
+  rect(0x3a2e52, x - 2, y - 2, 2, h + 4);
+  rect(0x3a2e52, x + w, y - 2, 2, h + 4);
+  rect(0x4a3e6a, x, y + 3, w, 10);
+  rect(0x5a4c7c, x, y + 3, w, 1);
+  rect(0x15171c, x + 3, y - 2, 10, 7);
+};
+
 export function paintModernFurniture(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number): void {
+  if (f.facing && f.facing !== 's') {
+    if (isSeatKind(f.kind)) return paintSeatView(rectFn(g), f, T, MODERN_SEATS[f.kind], f.kind);
+    if (f.kind === 'booth') return paintBoothFacing(g, f, T, MODERN.booth, modernBoothBack);
+  }
   paintForFacing(g, f, T, (gg, ff, TT) => MODERN[ff.kind](gg, ff, TT, rectFn(gg)));
 }
 
@@ -1400,6 +1499,30 @@ function paintGuildStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T:
   g.strokeEllipse(x + w / 2, y + 9, w - 2, 10);
 }
 
+const GUILD_SEATS: Record<SeatKind, SeatPalette> = {
+  chair: { back: WOOD_DARK, cushion: WOOD, arm: 0x3a2412 },
+  armchair: { back: 0x3a2050, cushion: 0x6b3f8a, arm: 0x28163a },
+  sofa: { back: WOOD_DARK, cushion: WOOD, arm: 0x3a2412 },
+};
+
+/** The lectern from behind: a closed tome cover instead of the open pages. */
+const guildBoothBack: Painter = (g, f, T, rect) => {
+  const x = f.x * T;
+  const y = f.y * T;
+  const w = f.w * T;
+  rect(0x4a2c14, x + 2, y + 6, w - 4, 8);
+  rect(0x6b4424, x + 3, y + 2, w - 6, 6);
+  rect(0x3a2210, x + 4, y + 3, w - 8, 4);
+  rect(0xffd84a, x + w - 4, y, 1, 1);
+  rect(0xf2ecd8, x + w - 4, y + 1, 1, 2);
+};
+
 export function paintGuildFurniture(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number): void {
+  if (f.facing && f.facing !== 's') {
+    // the lounge armchair is a round stool: the same from every side
+    const stool = f.kind === 'armchair' && f.roomType === 'lounge';
+    if (isSeatKind(f.kind) && !stool) return paintSeatView(rectFn(g), f, T, GUILD_SEATS[f.kind], f.kind);
+    if (f.kind === 'booth') return paintBoothFacing(g, f, T, GUILD.booth, guildBoothBack);
+  }
   paintForFacing(g, f, T, (gg, ff, TT) => GUILD[ff.kind](gg, ff, TT, rectFn(gg)));
 }

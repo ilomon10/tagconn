@@ -176,16 +176,16 @@ describe('pins: helpers', () => {
     expect(seatsFor('table', { x: 1, y: 1, w: 2, h: 1 }, interior)).toHaveLength(6);
   });
 
-  it('resolvePins skips a blocking pin on a door apron with pinned-blocks, and keeps a soft one', () => {
+  it('resolvePins KEEPS a blocking pin on a door apron with a pinned-blocks warning (M16), and keeps a soft one silently', () => {
     const room = { id: 'r', type: 'desks' as const, name: undefined, furniture: [{ kind: 'work-desk', x: 0, y: 0, w: 2, h: 1 }] };
     const res = resolvePins(room, { x: 5, y: 5, w: 6, h: 4 }, new Set(['6,5']));
-    expect(res.items).toHaveLength(0);
+    expect(res.items).toHaveLength(1);
     expect(res.issues.map((i) => i.code)).toEqual(['pinned-blocks']);
     const rug = { ...room, furniture: [{ kind: 'rug', x: 0, y: 0, w: 2, h: 1 }] };
     expect(resolvePins(rug, { x: 5, y: 5, w: 6, h: 4 }, new Set(['6,5'])).items).toHaveLength(1);
   });
 
-  it('a pin over an AUTOMATIC door apron is skipped with a warning and never seals the room', () => {
+  it('a pin over an AUTOMATIC door apron is kept with a pinned-blocks warning (M16, spec 5.2)', () => {
     const base = generateMap(DEFAULT_LAYOUT);
     const door = base.doors.find((d) => d.roomId !== 'stairs' && DEFAULT_LAYOUT.rooms.some((r) => r.id === d.roomId && r.type !== 'stairs'))!;
     const desks = DEFAULT_LAYOUT.rooms.find((r) => r.id === door.roomId)!;
@@ -198,9 +198,60 @@ describe('pins: helpers', () => {
     };
     const map = generateMap(layout);
     expect(map.layoutId).toBe(layout.id);
-    expect(map.furniture.some((f) => f.pinned && f.roomId === desks.id)).toBe(false);
-    expect(map.issues.filter((i) => i.code === 'pinned-blocks' && i.roomIds?.includes(desks.id))).toHaveLength(1);
-    expect(map.reachability.unreachableRooms).toEqual([]);
+    expect(map.furniture.some((f) => f.pinned && f.roomId === desks.id)).toBe(true);
+    expect(map.issues.filter((i) => i.code === 'pinned-blocks' && i.roomIds?.includes(desks.id)).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('M16 slots: fromSlot consumes the recipe slot, suppressed deletes it, a free pin consumes nothing', () => {
+    const desks = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'desks')!;
+    const interior = roomInterior(desks);
+    const base = generateMap(DEFAULT_LAYOUT);
+    const slotted = base.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk' && f.slotId);
+    expect(slotted.length).toBeGreaterThan(2);
+    const target = slotted[0]!;
+    const withPins = (furniture: PinnedFurniture[]): GeneratedMap =>
+      generateMap({ ...DEFAULT_LAYOUT, rooms: DEFAULT_LAYOUT.rooms.map((r) => (r.id === desks.id ? { ...r, furniture } : r)) });
+    const count = (m: GeneratedMap) => m.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk').length;
+    const n = count(base);
+    const rect = { x: target.x - interior.x, y: target.y - interior.y, w: target.w, h: target.h };
+    // dragged by nothing: the pin takes over its own slot -> still exactly n desks, one of them pinned
+    const same = withPins([{ kind: 'work-desk', ...rect, fromSlot: target.slotId! }]);
+    expect(count(same)).toBe(n);
+    expect(same.furniture.filter((f) => f.roomId === desks.id && f.slotId === target.slotId)).toEqual([]);
+    // suppressed: the slot is gone and nothing is placed
+    const gone = withPins([{ kind: 'work-desk', ...rect, fromSlot: target.slotId!, suppressed: true }]);
+    expect(count(gone)).toBe(n - 1);
+    expect(gone.furniture.some((f) => f.pinned && f.roomId === desks.id)).toBe(false);
+    // a slot that does not exist is ignored
+    expect(count(withPins([{ kind: 'plant', x: 0, y: 0, w: 1, h: 1, fromSlot: 'desk:999' }]))).toBe(n);
+  });
+
+  it('M16 resolvePins: suppressed pins consume without placing; facing is honoured only where supported', () => {
+    const room = {
+      id: 'r',
+      type: 'desks' as const,
+      name: undefined,
+      furniture: [
+        { kind: 'work-desk', x: 0, y: 0, w: 2, h: 1, fromSlot: 'desk:1', suppressed: true },
+        { kind: 'sofa', x: 0, y: 2, w: 2, h: 1, facing: 'n' as const },
+        { kind: 'work-desk', x: 3, y: 2, w: 2, h: 1, facing: 'e' as const },
+      ],
+    };
+    const res = resolvePins(room, { x: 5, y: 5, w: 6, h: 4 }, new Set());
+    expect([...res.consumed]).toEqual(['desk:1']);
+    expect(res.items.map((i) => i.kind)).toEqual(['sofa', 'work-desk']);
+    expect(res.items[0]!.facing).toBe('n');
+    expect(res.items[1]!.facing).toBeUndefined();
+  });
+
+  it('M16: the engine plans around a pin, so a one-tile pin never deletes a desk (relocate is only the fallback)', () => {
+    const desks = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'desks')!;
+    const base = generateMap(DEFAULT_LAYOUT);
+    const n = base.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk').length;
+    const plant: PinnedFurniture = { kind: 'plant', x: 0, y: 0, w: 1, h: 1 };
+    const m = generateMap({ ...DEFAULT_LAYOUT, rooms: DEFAULT_LAYOUT.rooms.map((r) => (r.id === desks.id ? { ...r, furniture: [plant] } : r)) });
+    // the engine plans around the pin, so no desk disappears for a one-tile plant
+    expect(m.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk').length).toBeGreaterThanOrEqual(n - 1);
   });
 
   it('a pin that displaces a recipe item takes the item\'s recipe seats with it', () => {

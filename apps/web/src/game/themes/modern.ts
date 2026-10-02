@@ -186,7 +186,8 @@ export const modernTheme: ThemeDefinition = {
   drama: MODERN_DRAMA,
   life: MODERN_LIFE,
   npcs: MODERN_NPCS,
-  lighting: { dayTint: 0xffffff, nightTint: 0x0b1030, nightAlpha: 0.42, glowAtNight: false },
+  lighting: { dayTint: 0xffffff, nightTint: 0x0b1030, nightAlpha: 0.42, glowAtNight: false,
+    dawnTint: 0xffd9b0, duskTint: 0xffb080, moonTint: 0x3a4a80, sunColor: 0xfff2c8, moonColor: 0x9ab0ff, roomLight: 0xfff4dc, shadowAlpha: 0.22 },
   floorLabel: (index, projectName) => `Floor ${index + 1} — ${projectName}`,
 };
 

@@ -1,6 +1,10 @@
 // M15 T2 (docs/design/navigation.md section 5, property 2): integer layouts stay byte-identical across the
 // half-tile rasterizer swap. The fixture was captured on `main` BEFORE geometry.ts replaced the local integer
 // loops (`M15_PARITY_CAPTURE=1 vitest run parity.m15`), and every later change must reproduce it exactly.
+//
+// M16 F5: RE-CAPTURED ONCE, on purpose. generate.ts now furnishes rooms from the group engine (harmony.ts: real chairs,
+// slot ids, facings, half-tile gaps, per-item decor positions), so furniture and seats change by design. From this capture
+// on, the same exact-reproduction rule applies again.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

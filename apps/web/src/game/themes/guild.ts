@@ -1,7 +1,7 @@
 import type { RoomType, Zone } from '@tagconn/shared';
 import type * as Phaser from 'phaser';
 import type { GeneratedMap } from '../procgen/types';
-import { GUILD_GLOW, GUILD_TORCH, guildDecorFor, paintGuildDecorTextures } from './paint/decor';
+import { GUILD_CHANDELIER, GUILD_GLOW, GUILD_TORCH, guildDecorFor, paintGuildDecorTextures } from './paint/decor';
 import { paintGuildFloor } from './paint/floors';
 import { paintGuildFurniture } from './paint/furniture';
 import { paintGuildWallDecor } from './paint/wallDecor';
@@ -96,6 +96,9 @@ const ACTIVITY_FX: ThemeDefinition['activityFx'] = {
   done: 'sparkles',
 };
 
+/** Above every actor (y-sorted, below the beacon boost) and under the lighting layer (95_000). */
+const CHANDELIER_DEPTH = 20_000;
+
 function animate(scene: Phaser.Scene, map: GeneratedMap, opts: { ambient: boolean }): Phaser.GameObjects.GameObject[] {
   paintGuildDecorTextures(scene);
   const T = map.tileSize;
@@ -137,6 +140,13 @@ function animate(scene: Phaser.Scene, map: GeneratedMap, opts: { ambient: boolea
       const flame = scene.add.image(cx, cy - T / 2 - 2, 'icon-sparkle').setTint(0xff8a3a).setScale(0.7).setDepth(f.y * T + f.h * T + 2);
       created.push(flame);
       torchFlicker(scene, flame, true);
+    }
+  }
+
+  // M16: one chandelier per procgen room light (lighting.md section 1.6); ambient-only, drawn over the characters.
+  if (enabled) {
+    for (const l of map.lights ?? []) {
+      created.push(scene.add.image(l.x * T + T / 2, l.y * T + T / 2, GUILD_CHANDELIER).setDepth(CHANDELIER_DEPTH));
     }
   }
 
@@ -287,6 +297,7 @@ export const guildTheme: ThemeDefinition = {
   drama: GUILD_DRAMA,
   life: GUILD_LIFE,
   npcs: GUILD_NPCS,
-  lighting: { dayTint: 0xfff1d6, nightTint: 0x1b1030, nightAlpha: 0.5, glowAtNight: true },
+  lighting: { dayTint: 0xfff1d6, nightTint: 0x1b1030, nightAlpha: 0.5, glowAtNight: true,
+    dawnTint: 0xffc890, duskTint: 0xff9a60, moonTint: 0x4a3a80, sunColor: 0xffd89a, moonColor: 0xa090ff, roomLight: 0xffb060, shadowAlpha: 0.28 },
   floorLabel: (index, projectName) => `Floor ${index + 1} · ${projectName}`,
 };

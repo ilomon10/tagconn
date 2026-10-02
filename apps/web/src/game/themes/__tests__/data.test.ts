@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { ACTIVITIES, ROOM_TYPES, ZONES, type Activity } from '@tagconn/shared';
 import { guildTheme } from '../guild';
 import { modernTheme } from '../modern';
+import { riftTheme } from '../rift';
+import { lightingColours } from '../../lighting/palette';
 import type { ThemeDefinition } from '../types';
 
 const THEMES: [string, ThemeDefinition][] = [
@@ -91,6 +93,17 @@ describe('guild theme flavour', () => {
 
   it('renders night torches and runes brighter (glowAtNight)', () => {
     expect(guildTheme.lighting.glowAtNight).toBe(true);
+  });
+});
+
+describe('theme lighting colours (M16)', () => {
+  it('every theme sets the optional palette fields, matching the palette defaults', () => {
+    for (const t of [modernTheme, guildTheme, riftTheme]) {
+      const c = lightingColours(t);
+      for (const k of ['dawnTint', 'duskTint', 'moonTint', 'sunColor', 'moonColor', 'roomLight', 'shadowAlpha'] as const) {
+        expect(t.lighting[k], `${t.id}.${k}`).toBe(c[k]);
+      }
+    }
   });
 });
 

@@ -279,3 +279,13 @@ describe('useOfficeStore', () => {
     expect(r.lastLiveAt).toEqual({});
   });
 });
+
+describe('clockSync (M16)', () => {
+  it('is stored by setClockSync and survives reset', () => {
+    const sync = { skewMs: 1200, tzOffsetMin: 420, tz: 'Asia/Jakarta', measuredAt: 5 };
+    useOfficeStore.getState().setClockSync(sync);
+    expect(useOfficeStore.getState().clockSync).toEqual(sync);
+    useOfficeStore.getState().reset();
+    expect(useOfficeStore.getState().clockSync).toEqual(sync);
+  });
+});

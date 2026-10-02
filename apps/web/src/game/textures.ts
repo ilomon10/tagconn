@@ -49,6 +49,11 @@ export const CHARACTER_BITMAPS: Record<string, Bitmap> = {
   'ch-hair-5': { rows: ['      ', ' h  h '], palette: { h: W } },
   'ch-hair-6': { rows: [' hhhh ', 'hhhhhh', 'hh  hh', 'h    h', 'hh  hh'], palette: { h: W } },
   'ch-shadow': { rows: [' ssssssss ', 'ssssssssss', ' ssssssss '], palette: { s: 0x000000 } },
+  // M16: the cast-shadow blob (10 x 10, rounded; stretched along the light direction by Character#setCastShadow).
+  'ch-shadow-cast': {
+    rows: ['  ssssss  ', ' ssssssss ', 'ssssssssss', 'ssssssssss', 'ssssssssss', 'ssssssssss', 'ssssssssss', 'ssssssssss', ' ssssssss ', '  ssssss  '],
+    palette: { s: 0x000000 },
+  },
   'ch-badge': { rows: ['ww', 'wd'], palette: { w: W, d: DARK_SHADE } },
   px: { rows: ['ww', 'ww'], palette: { w: W } },
 
@@ -133,6 +138,9 @@ export function withOutline(b: Bitmap): string[] {
   return out;
 }
 
+/** Per-texture alpha for the soft shadow blobs; every other bitmap paints opaque. */
+export const BITMAP_ALPHA: Readonly<Record<string, number>> = { 'ch-shadow': 0.28, 'ch-shadow-cast': 0.22 };
+
 export function paintBitmap(scene: Phaser.Scene, key: string, b: Bitmap) {
   if (scene.textures.exists(key)) return;
   const rows = withOutline(b);
@@ -143,7 +151,7 @@ export function paintBitmap(scene: Phaser.Scene, key: string, b: Bitmap) {
     for (let x = 0; x < row.length; x++) {
       const c = palette[row[x]!];
       if (c === undefined) continue;
-      g.fillStyle(c, key === 'ch-shadow' ? 0.28 : 1);
+      g.fillStyle(c, BITMAP_ALPHA[key] ?? 1);
       g.fillRect(x, y, 1, 1);
     }
   });

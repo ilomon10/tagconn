@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { PinnedFurnitureSchema, validateLayout, type LayoutRoom, type OfficeLayout } from '@tagconn/shared';
-import { DEFAULT_LAYOUT } from '@tagconn/shared';
+import { DEFAULT_LAYOUT, roomInterior } from '@tagconn/shared';
+import { generateMap } from '../game/procgen/generate';
 import { genRoomId, useEditorStore } from './editorStore';
 
 const room = (over: Partial<LayoutRoom> = {}): LayoutRoom => ({ id: 'a', type: 'desks', x: 0, y: 0, w: 6, h: 5, ...over });
@@ -804,7 +805,24 @@ describe('editorStore M16 furnishing: slots, ghosts, rotate, palette', () => {
     expect(s().history).toHaveLength(1);
   });
   // Needs the generator to skip consumed slots (F5, wave 2): generateMap(draft) must keep the same number of work-desks after a drag.
-  it.todo('dragging a work-desk of the desks room by a tile does not duplicate it (enabled with F5)');
+  it('dragging a work-desk of the desks room by a tile does not duplicate it', () => {
+    const desks = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'desks')!;
+    const base = generateMap(DEFAULT_LAYOUT);
+    const count = (m: ReturnType<typeof generateMap>) => m.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk').length;
+    const desk = base.furniture.find((f) => f.roomId === desks.id && f.kind === 'work-desk' && f.slotId)!;
+    const interior = roomInterior(desks);
+    s().load({ ...DEFAULT_LAYOUT, builtin: false });
+    s().beginGesture();
+    const idx = s().pinDirect(desks.id, { kind: 'work-desk', x: desk.x - interior.x, y: desk.y - interior.y, w: desk.w, h: desk.h, fromSlot: desk.slotId! });
+    s().setPinPos(desks.id, idx, { x: desk.x - interior.x, y: desk.y - interior.y + 1 });
+    s().endGesture();
+    const after = generateMap({ ...s().draft!, background: 'hall', corridorWidth: 2, id: 'drag', builtin: false, createdAt: 0, updatedAt: 0 });
+    expect(after.furniture.filter((f) => f.pinned && f.roomId === desks.id && f.kind === 'work-desk')).toHaveLength(1);
+    // never a duplicate: the slot is not placed again; the pin may push a neighbour out of the way (at most one desk lost)
+    expect(after.furniture.some((f) => f.roomId === desks.id && !f.pinned && f.slotId === desk.slotId)).toBe(false);
+    expect(count(after)).toBeLessThanOrEqual(count(base));
+    expect(count(after)).toBeGreaterThanOrEqual(count(base) - 2);
+  });
 
   it('suppressSlot adds a ghost in one commit; undo removes it; a repeat is refused', () => {
     load();
