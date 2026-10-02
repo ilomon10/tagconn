@@ -7,5 +7,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.perf.test.ts'],
+    // One file at a time: parallel files compete for the CPU and make every wall-clock budget meaningless.
+    fileParallelism: false,
   },
 });

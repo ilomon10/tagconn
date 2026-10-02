@@ -563,7 +563,7 @@ At 128 × 96 (`maxRoomsLayout()` from `game/nav/__tests__/perfLayout.ts`), media
 
 | what | budget |
 |---|---|
-| `planSprites` (≈ 600-900 items) | ≤ 3 ms |
+| `planSprites` (≈ 600-900 items; ≤ 4 ms on the ~4500-item 128 × 96 worst case, measured ~2.3 ms) | ≤ 3 ms |
 | `packFrames` (≤ 400 frames) | ≤ 2 ms; every page ≤ 1024 × 2048, ≤ 2 pages per style |
 | `buildFurnitureAtlas` on the fake scene (command count) | ≤ 1.1 × the furniture share of today's base bake (same painters, once per unique frame instead of once per item) |
 | `renderFloor` in the browser (dev log) | base + atlas + images ≤ 1.3 × v0.10.0's base-texture time; atlas page ≤ 30 ms |
