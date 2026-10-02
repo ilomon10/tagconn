@@ -14,11 +14,11 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 - **Guild chandeliers** (M16): guild rooms hang a candle chandelier at each room light.
 - **Furniture harmony engine** (M16): Generated furniture now forms functional groups: chairs face desks, sofas come with tables and rugs, bookcases stand against walls, plants take corners. The generator tries multiple arrangements and picks the best one. Furniture pieces have **facing** (N/E/S/W) for asymmetric kinds; chairs face desks, benches face tables. Facing is shown in the Hall Planner with a small triangle and can be rotated with `R`.
 - **Pinned furniture with slot identity and facing** (M16): Locked furniture pieces now keep their identity across rerolls by slot id (`fromSlot`), and support rotation and facing art. `suppressed` pins consume a slot without placing anything, useful for keeping layouts stable.
-- **Hall Planner rotate, delete, palette and snap guides** (M16): `R` rotates a selected furniture item (N/E/S/W; refused if it won't fit). `Delete` removes a locked piece or restores a ghosted one. **Add furniture** palette lets you place custom pieces. Drags snap to walls and neighbouring pieces with cyan guides (hold `Alt` for free placement).
+- **Hall Planner rotate, delete, palette and snap guides** (M16): `R` rotates a selected furniture item (N/E/S/W; refused if it won't fit). `Delete` removes a generated piece (it stays as a dashed ghost; `Delete` again restores it) or a locked one. **Add furniture** palette lets you place custom pieces. Drags snap to walls and neighbouring pieces with cyan guides (hold `Alt` for free placement).
 - **Half-tile sizes and kind glyphs** (M16): furniture sizes may now be halves (e.g. 1.5 tiles), and the Hall Planner shows each piece's icon and name.
 
 ### Changed
-- **REQUIRED compatibility note**: Layouts that use half-tile furniture sizes, facing, `fromSlot` or `suppressed` pins are not readable by v0.9 and older — keep backups before downgrading.
+- **Compatibility:** layouts that use half-tile furniture sizes, facing, `fromSlot` or `suppressed` pins are not readable by v0.9 and older — keep backups before downgrading.
 - Procgen room furnishing changed: existing generated rooms look different when their layout is regenerated (pinned items are preserved; unpinned items reflect the new harmony engine).
 
 ### Fixed
