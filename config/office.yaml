@@ -158,6 +158,8 @@ office: {}
   # floorOrder: "created"            # created | name | recent. Stair order between floors.
   # floorTransitionMs: 600           # 0..3000. Stairs transition duration; 0 = instant.
   # ambientEffects: true             # dust motes, torch flicker, sparkles (guild style)
+  # dualGrid: true                   # M15 dual-grid tile edges: real corners and wall outlines.
+  #                                  # false = flat per-tile paint (the pre-M15 look).
   # pmMode: "single"                 # single | per-session (M8 8b). single: one Guild Master
   #                                  # sprite per floor + a session count chip; per-session:
   #                                  # today's behaviour (one sprite per main session).

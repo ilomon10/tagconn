@@ -257,7 +257,30 @@ Design: `docs/design/battles.md`.
 - [x] Wave 3 wiring into OfficeGame/OfficeScene/OfficeView (demo battle end-to-end + Ignore, 0 console errors), results XP bar from real progress, 300 ms music stop fade, UI-sound close/open pairing + modal-aware hover, server-wide JSON `__proto__` guard [Developers]
 - [x] Gate: QA (all suites green; live demo walk passes encounter → picker → swirl → commands → win/loss/run → KO 💫/🩹 → skills/respec → title on plate → Ignore → reduced motion → phone; D1 layering, D2 no encounters under reduced motion, D3 heal unreachable, D4 phone labels) + review (5 Med: stale battle handle, skill-save 409s, no resolve retry/version dead-end, leave mid-entry, XP not backfilled → documented) + security (0 Med; Low: hook events with __proto__ dropped, 48-key test gap, party description) + guide `docs/guide/battles.md` → fixes [x] (skills-only stamp + migration 13, Retry incl. 408/429, version guard, keyed flow events, battle HUD under the top bar, phone grid, static reduced-motion NPC visits, encounter priority, coffee machine placed, hook bodies strip __proto__ by matched route, redaction re-parse hardened) → re-review [x] → v0.8.0
 
-## M15: Light, time and harmonious rooms → v0.9.0 [todo]
+## M15: Dual grid: offset rendering, half-tile furniture, sub-tile navigation → v0.9.0 [in progress]
+
+Plan: `~/.claude-sessions/profiles/edgar/plans/pasted-content-id-1097-tagconn-features-lucky-milner.md` (top section). User
+decisions (2026-10-02): keep the 16 px tile grid; the half tile (8 px) is the single sub-grid unit (spec adapted, not
+copied); build both the offset "dual-grid" wall/floor rendering and a sub-tile collision/navigation layer; v0.8.0
+published first. Designs: `docs/design/dual-grid.md`, `docs/design/navigation.md`; ADR #29.
+
+- [ ] W0 designs + ADR #29 [Architect]; contract: pin positions in halves (`layout.ts`), `office.dualGrid`, theme dual hooks + `DualCtx`, `nav/{constants,classes,types}.ts`, `GeneratedMap.nav?` [Developer]
+- Wave 1 (parallel)
+  - [ ] D0 dual-cell model `themes/dual/{dualGrid,dualGeom}.ts` + tests
+  - [ ] T1 nav core `nav/{grid,shapes}.ts` (nibble masks, true clearance + incremental) + `nav.perf.test.ts`
+  - [ ] T2 procgen half-tile: one rasterizer (`procgen/geometry.ts`), pins/triggers/seats/backWall/spots on covered tiles
+  - [ ] T3 editor: half-tile drag snap, Alt+arrow 0.5, half-cell hit test, Inspector
+  - [ ] PM: `generate.ts` emits `nav`, derives `walkable`; quick gate
+- Wave 2 (parallel)
+  - [ ] D1 modern / D2 guild / D3 rift dual painters (`paint/dual/*`)
+  - [ ] T4 `nav/{heap,macro,adapter}.ts`: tile A*, `PathFinder` adapter, easystar parity on 300 seeds
+- Wave 3 (parallel)
+  - [ ] D4 `renderTheme.ts` dual pass + flag wiring + `renderTheme.perf.test.ts` + PreviewScene
+  - [ ] T6 `nav/{micro,navigator}.ts` + `Character.walkNav`; PM wires `OfficeScene.walk`, NPC `navClass`; remove easystarjs
+- [ ] W4 (optional): shape insets per kind, denser recipe pitches, painter audit for fractional sizes
+- [ ] Gate (QA demo walk + editor, review, security, docs) → v0.9.0
+
+## M16: Light, time and harmonious rooms → v0.10.0 [todo]
 
 - [ ] Host-clock sun cycle (server time + tz, dawn/dusk ramps, fixed/accelerated modes, HUD slider)
 - [ ] Lightmap with wall occlusion (visibility polygons), room-filling lights, window sun shafts, furniture + character shadows
@@ -265,7 +288,7 @@ Design: `docs/design/battles.md`.
 - [ ] Furniture editor: no duplicate on drag (slot consumption), stable decor, displaced items move, labels/icons, rotate/delete/palette
 - [ ] Gate → v0.9.0
 
-## M16: Deep 3/4 RPG renderer (2.5D) → v1.0.0 [todo]
+## M17: Deep 3/4 RPG renderer (2.5D) → v1.0.0 [todo]
 
 - [ ] ADR + spike: y-sorted furniture sprites (walk behind), height map → shadows, see-through walls
 - [ ] 4-direction characters, follow camera, optional perspective shader, editor preview on the sprite path

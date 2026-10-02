@@ -7,6 +7,7 @@ import type { Activity, MULTIVERSE_THEME_ID, NpcKind, OfficeStyle, RoomType, Zon
 import type * as Phaser from 'phaser';
 import type { SfxId } from '../sfxBus';
 import type { DecorSlot, FurnitureKind, GeneratedMap, PlacedFurniture, WallDecorSlot } from '../procgen/types';
+import type { DualCell } from './dual/dualGrid';
 
 /** Particle effects on a character. M12 adds `streak` (on a roll). Used by ThemeDefinition, fx.ts and Character.ts. */
 export type ActivityFxKind = 'sparkles' | 'bubbles' | 'rune' | 'channel' | 'streak' | 'none';
@@ -139,6 +140,20 @@ export interface BackWallCtx {
   bandPx: number;
 }
 
+/** M15 dual grid: one offset cell handed to `paintDualFloor` / `paintDualWall` (docs/design/dual-grid.md). */
+export interface DualCtx {
+  cell: DualCell;
+  /** Top-left pixel of the cell (`cellOrigin`): half a tile up and left of the tile corner. Never pass it to `tileOf`. */
+  px: number;
+  py: number;
+  T: number;
+  /** The theme's back-wall numbers (`backWall`, 0 when absent): the cap outline lives in the top `capPx`. */
+  capPx: number;
+  bandPx: number;
+  /** True on the second call, after the back-wall faces: only face-adjacent art (the cap outline) may draw then. */
+  facePass: boolean;
+}
+
 export interface ThemeDefinition {
   /** Widened for the Multiverse's web-only `rift` theme (M8 8h), which is never a user-selectable
    *  `OfficeStyle` — see `MULTIVERSE_THEME_ID` and `game/themes/rift.ts`. */
@@ -148,6 +163,16 @@ export interface ThemeDefinition {
   paintFloor(g: Phaser.GameObjects.Graphics, kind: RoomType | 'corridor', px: number, py: number, rand: () => number): void;
   paintWall(g: Phaser.GameObjects.Graphics, px: number, py: number, faceVisible: boolean, rand: () => number): void;
   paintVoid(g: Phaser.GameObjects.Graphics, px: number, py: number, rand: () => number): void;
+  /**
+   * M15 dual grid: the wall top WITHOUT the per-tile edge line (the dual pass draws the outline). Used
+   * instead of `paintWall` when `office.dualGrid` is on. MUST consume the same `rand()` draws as
+   * `paintWall`, so the per-tile seed stream stays identical for everything painted after it.
+   */
+  paintWallBase?(g: Phaser.GameObjects.Graphics, px: number, py: number, rand: () => number): void;
+  /** M15: edge/corner/cliff art of one dual cell over floor quadrants. Uniform cells draw nothing. */
+  paintDualFloor?(g: Phaser.GameObjects.Graphics, ctx: DualCtx, rand: () => number): void;
+  /** M15: wall-cap outline and rounded corners of one dual cell. Never paints a face quadrant (wall with floor/door south). */
+  paintDualWall?(g: Phaser.GameObjects.Graphics, ctx: DualCtx, rand: () => number): void;
   /** M8 8p: per-theme back-wall face numbers (docs/design/back-wall.md). Optional so rift/tests
    *  compile until painted; a theme without it renders exactly as before (no tall face). */
   backWall?: BackWallStyle;

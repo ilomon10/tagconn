@@ -63,6 +63,11 @@ describe('KEY_HINTS', () => {
     expect(M14_LEAVES.filter((path) => !KEY_HINTS[path])).toEqual([]);
   });
 
+  it('covers the M15 dual-grid switch', () => {
+    expect(leafPaths).toContain('office.dualGrid');
+    expect(KEY_HINTS['office.dualGrid']).toBeTruthy();
+  });
+
   it('covers every office.shaders key (M8 8o)', () => {
     const missing = nestedLeafPaths.filter((path) => !KEY_HINTS[path]);
     expect(missing).toEqual([]);

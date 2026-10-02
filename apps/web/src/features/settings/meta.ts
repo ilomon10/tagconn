@@ -103,6 +103,7 @@ export const KEY_HINTS: Record<string, string> = {
   'office.floorOrder': 'Stair order of floors: oldest project first (ground floor), alphabetically by name, or most recently active first.',
   'office.floorTransitionMs': 'How long the stairs fade takes when moving between floors (0 = instant; also instant under reduced motion).',
   'office.ambientEffects': 'Torch flicker, sparkles and drifting motes. Off = static art (also off automatically under reduced motion).',
+  'office.dualGrid': 'Dual-grid tile edges: real corners and wall outlines on walls and floors. Off = flat per-tile paint.',
   'office.zones': 'Deprecated since M7 — draw floors in the office editor instead. Kept only as a fallback and ignored by the layout renderer.',
   'office.focusDim': 'How much non-selected characters dim while one is selected (0 disables focus mode).',
   'office.maxBubbles': 'Cap on simultaneous speech bubbles; extra ones collapse to a small "…" badge (expands on hover).',

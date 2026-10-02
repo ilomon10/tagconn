@@ -144,15 +144,23 @@ export const DoorSpecSchema = z.object({
 export type DoorSpec = z.infer<typeof DoorSpecSchema>;
 
 /**
+ * M15 dual grid: the sub-grid unit for furniture placement, in tiles. Pin positions are multiples
+ * of it; sizes stay whole tiles. One tile = 2 x 2 half-tile cells (docs/design/navigation.md).
+ */
+export const HALF_TILE = 0.5;
+
+/**
  * M12: a furniture item the user moved in the Hall Planner, locked in place. Coordinates are
- * relative to the room's INTERIOR top-left, in tiles. Pinned items are placed before the procedural
- * recipe runs and are never removed by the reachability retry. `kind` is a web procgen furniture kind
- * (validated by the web; unknown kinds are skipped at render time).
+ * relative to the room's INTERIOR top-left, in tiles (M15: positions in half tiles). Pinned items are
+ * placed before the procedural recipe runs and are never removed by the reachability retry. `kind` is
+ * a web procgen furniture kind (validated by the web; unknown kinds are skipped at render time).
  */
 export const PinnedFurnitureSchema = z.object({
   kind: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
-  x: z.number().int().min(0).max(LAYOUT_LIMITS.maxWidth),
-  y: z.number().int().min(0).max(LAYOUT_LIMITS.maxHeight),
+  /** M15: positions snap to half tiles (`HALF_TILE`); a superset of the old integer grid, so stored rows keep parsing. */
+  x: z.number().multipleOf(HALF_TILE).min(0).max(LAYOUT_LIMITS.maxWidth),
+  y: z.number().multipleOf(HALF_TILE).min(0).max(LAYOUT_LIMITS.maxHeight),
+  /** Sizes stay whole tiles this milestone (the furniture painters loop per integer tile). */
   w: z.number().int().min(1).max(8),
   h: z.number().int().min(1).max(8),
   /** Paint variant index, as generated. */
@@ -287,6 +295,26 @@ export function roomInterior(room: Pick<LayoutRoom, 'type' | 'walled' | 'x' | 'y
 export const rectsIntersect = (a: TileRect, b: TileRect): boolean =>
   a.w > 0 && a.h > 0 && b.w > 0 && b.h > 0 && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
+/**
+ * M15: the integer tile rect a (possibly half-tile-offset) rect touches: floor of the start edge to
+ * ceil of the end edge, so any partial overlap counts the whole tile ("any overlap blocks the tile").
+ * An integer rect maps to itself; an empty rect stays empty.
+ */
+export function coveredTileRect(r: TileRect): TileRect {
+  if (r.w <= 0 || r.h <= 0) return { x: Math.floor(r.x), y: Math.floor(r.y), w: 0, h: 0 };
+  const x = Math.floor(r.x);
+  const y = Math.floor(r.y);
+  return { x, y, w: Math.ceil(r.x + r.w) - x, h: Math.ceil(r.y + r.h) - y };
+}
+
+/** M15: every integer tile `coveredTileRect(r)` spans, row-major (y outer, x inner). */
+export function coveredTiles(r: TileRect): { x: number; y: number }[] {
+  const c = coveredTileRect(r);
+  const out: { x: number; y: number }[] = [];
+  for (let y = c.y; y < c.y + c.h; y++) for (let x = c.x; x < c.x + c.w; x++) out.push({ x, y });
+  return out;
+}
+
 const label = (r: Pick<LayoutRoom, 'id' | 'type' | 'name'>) => (r.name ? `"${r.name}"` : `${r.type} (${r.id})`);
 
 /**
@@ -417,10 +445,12 @@ export function validateLayout(layout: LayoutGeometry): LayoutIssue[] {
   return issues;
 }
 
-/** True when a pin (interior-relative) covers the interior tile just inside an explicit door. */
+/** True when a pin (interior-relative) covers the interior tile just inside an explicit door.
+ *  Conservative with half-tile positions: any covered apron tile seals the door (`coveredTileRect`). */
 function pinOnDoorApron(r: LayoutRoom, f: PinnedFurniture): boolean {
   const iw = Math.max(0, r.w - 2);
   const ih = Math.max(0, r.h - 2);
+  const c = coveredTileRect(f);
   for (const d of r.doors ?? []) {
     const width = d.width ?? 1;
     for (let k = 0; k < width; k++) {
@@ -428,7 +458,7 @@ function pinOnDoorApron(r: LayoutRoom, f: PinnedFurniture): boolean {
       const along = d.offset + k - 1;
       const tile =
         d.side === 'n' ? { x: along, y: 0 } : d.side === 's' ? { x: along, y: ih - 1 } : d.side === 'w' ? { x: 0, y: along } : { x: iw - 1, y: along };
-      if (tile.x >= f.x && tile.x < f.x + f.w && tile.y >= f.y && tile.y < f.y + f.h) return true;
+      if (tile.x >= c.x && tile.x < c.x + c.w && tile.y >= c.y && tile.y < c.y + c.h) return true;
     }
   }
   return false;

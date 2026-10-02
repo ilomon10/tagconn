@@ -4,6 +4,7 @@
 // 7d (themes) can import it the moment it lands. `generateMap` and `generateRandomLayout` are
 // declared in generate.ts and bsp.ts respectively and re-exported from index.ts.
 import type { DoorSide, DoorSpec, LayoutIssue, RoomType, Zone } from '@tagconn/shared';
+import type { NavGrid } from '../nav/types';
 
 export interface Point {
   x: number;
@@ -170,7 +171,9 @@ export interface GeneratedMap {
   rows: number;
   tileSize: number;
   tiles: TileKind[][]; // [y][x]
-  walkable: number[][]; // [y][x] 0 = walkable, 1 = blocked (easystar)
+  walkable: number[][]; // [y][x] 0 = walkable, 1 = blocked (easystar); M15: derived from `nav`
+  /** M15: the sub-tile collision grid (docs/design/navigation.md). Optional until W1 makes `generateMap` emit it. */
+  nav?: NavGrid;
   walls: boolean[][]; // tiles === 'wall'
   roomAt: (string | null)[][]; // room id for floor tiles; null = hall/corridor
   zoneAt: (Zone | null)[][];
