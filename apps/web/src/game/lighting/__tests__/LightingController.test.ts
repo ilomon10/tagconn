@@ -223,4 +223,29 @@ describe('LightingController', () => {
     c.destroy();
     expect(() => c.destroy()).not.toThrow();
   });
+  it('applyDepth: wallShadows adds day wall quads, a change re-bakes (throttled), night has none', () => {
+    const quads = (wall: boolean, hour: number) => {
+      const { scene, log } = stubScene();
+      const t = { now: 1_700_000_000_000 - (1_700_000_000_000 % 86_400_000) + hour * HOUR };
+      const c = new LightingController(scene, makeHost({ t }).host);
+      c.setMap();
+      c.applyDepth({ wallShadows: wall });
+      c.applySettings(lighting(), clock, undefined);
+      return { n: log['g.fillPoints'] ?? 0, c, t, log };
+    };
+    expect(quads(true, 12).n).toBeGreaterThan(quads(false, 12).n);
+    expect(quads(true, 1).n).toBe(quads(false, 1).n);
+
+    const { c, t, log } = quads(true, 12);
+    const before = c.bakes;
+    c.applyDepth({ wallShadows: true });
+    expect(c.bakes).toBe(before); // unchanged value: no bake
+    t.now += MIN_BAKE_INTERVAL_MS + 1;
+    const fills = log['g.fillPoints']!;
+    c.applyDepth({ wallShadows: false });
+    expect(c.bakes).toBe(before + 1);
+    expect(log['g.fillPoints']! - fills).toBeLessThan(fills);
+    expect(c.heights?.cols).toBe(12);
+  });
+
 });

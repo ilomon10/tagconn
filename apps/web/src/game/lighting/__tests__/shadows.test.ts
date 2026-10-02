@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { characterShadow, buildLightIndex, furnitureShadows } from '../shadows';
+import { buildOccluders } from '../occluders';
+import { characterShadow, buildLightIndex, furnitureShadows, wallShadows } from '../shadows';
 import { sunShadowVector } from '../sun';
 import type { CastShadow } from '../types';
 import { EVENING, MORNING, NIGHT, NOON, T, furn, light, mapFrom, walledRows } from './lightingFixtures';
@@ -122,5 +123,64 @@ describe('characterShadow / buildLightIndex', () => {
     expect(bad.items).toHaveLength(0);
     const o = characterShadow({ x: 3.5 * T, y: 3 * T }, NIGHT, idx, 'cast', out());
     expect(o.dx).toBeGreaterThan(0); // nearest is the first light (west of the feet)
+  });
+});
+
+describe('wallShadows', () => {
+  const m = () => mapFrom(walledRows(10, 6));
+  const run = (sun: typeof NOON, map = m(), a = 0.25) => wallShadows(map, buildOccluders(map), sun, a);
+  const tileOf = (map: ReturnType<typeof m>, p: { x: number; y: number }) => map.tiles[Math.floor(p.y / T)]?.[Math.floor(p.x / T)];
+
+  it('nothing at night or with zero alpha', () => {
+    expect(run(NIGHT)).toEqual([]);
+    expect(run(NOON, m(), 0)).toEqual([]);
+  });
+
+  it('quads start on a wall/floor boundary, lie on floor, and follow sunShadowVector(…, 16)', () => {
+    const map = m();
+    const qs = run(MORNING, map);
+    expect(qs.length).toBeGreaterThan(0);
+    const v = sunShadowVector(MORNING, 16, T);
+    for (const q of qs) {
+      const [a, b, c, d] = q.points;
+      // The near edge sits on the boundary between a wall tile and a floor tile.
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const horizontal = a.y === b.y;
+      const side = horizontal ? [{ x: mid.x, y: mid.y - 1 }, { x: mid.x, y: mid.y + 1 }] : [{ x: mid.x - 1, y: mid.y }, { x: mid.x + 1, y: mid.y }];
+      expect(side.map((p) => tileOf(map, p)).sort()).toEqual(['floor', 'wall']);
+      // Shortened at most to a quarter of the vector; same direction.
+      const ex = c.x - b.x;
+      const ey = c.y - b.y;
+      expect(ex * v.y).toBeCloseTo(ey * v.x, 5);
+      expect(ey).toBeLessThanOrEqual(v.y + 1e-6);
+      expect(ey).toBeGreaterThan(0);
+      const fm = { x: (c.x + d.x) / 2, y: (c.y + d.y) / 2 };
+      const inset = (p: { x: number; y: number }) => ({ x: p.x + Math.sign(fm.x - p.x) * 0.5, y: p.y + Math.sign(fm.y - p.y) * 0.5 });
+      for (const p of [inset(c), inset(d), fm]) expect(tileOf(map, p)).toBe('floor');
+      expect(q.alpha).toBeCloseTo(0.25 * 0.8 * MORNING.daylight, 6);
+    }
+  });
+
+  it('the north wall always casts; the side wall depends on the skew sign', () => {
+    const north = (qs: ReturnType<typeof run>) => qs.filter((q) => q.points[0].y === q.points[1].y).length;
+    const east = (qs: ReturnType<typeof run>, dir: 1 | -1) => qs.filter((q) => q.points[0].x === q.points[1].x && Math.sign(q.points[2].x - q.points[1].x) === dir).length;
+    expect(north(run(NOON))).toBe(1);
+    expect(east(run(MORNING), 1)).toBe(1);
+    expect(east(run(MORNING), -1)).toBe(0);
+    expect(east(run(EVENING), -1)).toBe(1);
+    expect(east(run(NOON), 1) + east(run(NOON), -1)).toBe(0);
+  });
+
+  it('a wall with a wall behind its shadow is shortened or dropped, never climbs a wall', () => {
+    const map = mapFrom(walledRows(4, 1));
+    for (const q of run(NOON, map)) {
+      const [, , c, d] = q.points;
+      expect(tileOf(map, { x: (c.x + d.x) / 2, y: c.y - 0.5 })).toBe('floor');
+    }
+  });
+
+  it('furnitureShadows is unchanged by the wall pass', () => {
+    const map = room();
+    expect(furnitureShadows(map, MORNING, [], 'cast', 0.25)).toHaveLength(1);
   });
 });

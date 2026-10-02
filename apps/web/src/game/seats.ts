@@ -1,4 +1,5 @@
-import { resolveZone, type RoomType, type Zone } from '@tagconn/shared';
+import { coveredTileRect, resolveZone, type Facing, type RoomType, type Zone } from '@tagconn/shared';
+import { isSitInKind } from './depth/tables';
 import type { GeneratedMap, Point } from './procgen/types';
 
 const key = (p: Point) => `${p.x},${p.y}`;
@@ -138,4 +139,17 @@ export class SeatAllocator {
     }
     return undefined;
   }
+}
+
+/**
+ * M17: facing of the sit-in item (chair, armchair, sofa, booth, bench, reception-desk) covering `tile`, else `'s'`
+ * (docs/design/depth-25d.md section 6.3). A seated Character shows the view of this facing. Pure.
+ */
+export function seatFacingAt(map: Pick<GeneratedMap, 'furniture'>, tile: Point): Facing {
+  for (const f of map.furniture) {
+    if (!isSitInKind(f.kind)) continue;
+    const c = coveredTileRect(f);
+    if (tile.x >= c.x && tile.x < c.x + c.w && tile.y >= c.y && tile.y < c.y + c.h) return f.facing ?? 's';
+  }
+  return 's';
 }

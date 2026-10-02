@@ -10,7 +10,7 @@ import type { NavPath } from '../nav/navigator';
 import type { CastShadow } from '../lighting/types';
 import type { Point } from '../procgen/types';
 import type { Size } from '../labels';
-import { HAIR_COLORS, HAIR_STYLES, KO_FRAMES, SKIN_TONES } from '../textures';
+import { HAIR_COLORS, HAIR_STYLES, KO_FRAMES, SKIN_TONES, viewTexture } from '../textures';
 import { CLOAK_TEXTURE, GOGGLES_TEXTURE, createActivityFx, hatTextureKey, prefersReducedMotion, staffTextureKey, type ActivityFxKind, type Costume, type DramaEmote, type StrainKind } from '../themes';
 import type { CreatureId, LifePose } from '../themes/types';
 import { SHADES_TEXTURE, creatureTextureKey } from '../npc/types';
@@ -18,7 +18,8 @@ import { clipDisplayText } from '../../lib/displayText';
 import { PIXEL_FONT_KEYS, ensurePixelFonts, hasGlyphs } from '../text/pixelFont';
 import { PIXEL_METRICS, layoutPlate, pixelMeasure, plateGlyphScale, taskVisible, type MeasureFn, type PlateLayout, type PlateOptions, type PlateStyle } from './namePlate';
 import { POSE_ANIM, POSE_PROP } from './poses';
-import { facingOf, feetOfNavPoint, WalkQueue, type Facing } from './walkQueue';
+import { VIEW_OFFSETS } from './views';
+import { facingOf, feetOfNavPoint, viewOf, WalkQueue, type Facing, type View } from './walkQueue';
 
 export interface CharacterLook {
   color: number;
@@ -178,8 +179,19 @@ export class Character extends Phaser.GameObjects.Container {
   private onArrive?: () => void;
   /** Routing class (docs/design/navigation.md section 4.6); `setCreature` sets it, humans are `person`. */
   navClass: NavClass = 'person';
-  /** M17 hook: direction of the current walk segment; today only `upper.scaleX` flips with it. */
+  /** Direction of the current walk segment (M17: picks the walking view, see `animate`). */
   facing: Facing = 's';
+  /** M17: the drawn view and what `applyView` last applied (`'w'` = `e` flipped); the view is applied only when it changes. */
+  private view: View = 's';
+  private viewKey: 's' | 'n' | 'e' | 'w' = 's';
+  /** M17: `office.depth.fourDirections`; false = the legacy single front view + horizontal flip. */
+  private fourDirections = true;
+  /** M17: facing of the chair while seated (`seatFacingAt`); null = `s`. */
+  private seatFacing: Facing | null = null;
+  private hairStyle = 0;
+  private legsKey = 'ch-legs-0';
+  private costumeGoggles = false;
+  private costumeShades = false;
   private activity: Activity = 'idle';
   private status: AgentStatus = 'active';
   private seated = false;
@@ -331,7 +343,7 @@ export class Character extends Phaser.GameObjects.Container {
     this.lookKey = k;
     this.body_.setTint(look.color);
     this.badge.setTint(lighten(look.color, 0.6));
-    this.hair.setTexture(`ch-hair-${Math.abs(look.sprite) % HAIR_STYLES}`);
+    this.setHairStyle(Math.abs(look.sprite) % HAIR_STYLES);
   }
 
   // ---------------------------------------------------------------- M13: name plate
@@ -448,8 +460,10 @@ export class Character extends Phaser.GameObjects.Container {
     else this.cloak.setVisible(false);
     if (costume.hat && costume.hat !== 'none') this.hat.setTexture(hatTextureKey(costume.hat)).setTint(costume.hatColor ?? roleColor).setVisible(true);
     else this.hat.setVisible(false);
-    this.goggles.setVisible(!!costume.goggles);
-    this.shades.setVisible(!!costume.shades);
+    this.costumeGoggles = !!costume.goggles;
+    this.goggles.setVisible(this.costumeGoggles && VIEW_OFFSETS[this.view].face);
+    this.costumeShades = !!costume.shades;
+    this.shades.setVisible(this.costumeShades && VIEW_OFFSETS[this.view].face);
     this.costumeProp = costume.staff && costume.staff !== 'none' ? staffTextureKey(costume.staff) : null;
   }
 
@@ -465,7 +479,8 @@ export class Character extends Phaser.GameObjects.Container {
     this.handL.setTint(look.skin);
     this.handR.setTint(look.skin);
     const style = ((look.hairStyle % HAIR_STYLES) + HAIR_STYLES) % HAIR_STYLES;
-    this.hair.setTexture(`ch-hair-${style}`).setTint(look.hair);
+    this.setHairStyle(style);
+    this.hair.setTint(look.hair);
   }
 
   /** Particle effect for the current activity (docs/design/guild-hall.md "Magic activity effects"). */
@@ -648,6 +663,49 @@ export class Character extends Phaser.GameObjects.Container {
     this.legs.setVisible(!id);
     this.creatureImg.setVisible(!!id);
     if (id) this.creatureImg.setTexture(creatureTextureKey(id, 0));
+  }
+
+  private setHairStyle(style: number): void {
+    this.hairStyle = style;
+    this.hair.setTexture(viewTexture(`ch-hair-${style}`, this.view));
+  }
+
+  /** M17: shows the chair's view while seated (`seatFacingAt`); null = the front view. */
+  setSeatFacing(f: Facing | null): void {
+    this.seatFacing = f;
+  }
+
+  /** M17: `office.depth.fourDirections`; false returns to the single front view + horizontal flip (v0.10). */
+  setFourDirections(on: boolean): void {
+    if (on === this.fourDirections) return;
+    this.fourDirections = on;
+    if (!on) {
+      this.applyView('s', false);
+      this.upper.scaleX = 1;
+    }
+  }
+
+  /** Applies a view (textures, overlay offsets, flip), only when it differs from the one applied (docs/design/depth-25d.md section 6.2). */
+  private applyView(view: View, flip: boolean): void {
+    const key = flip ? 'w' : view;
+    if (key === this.viewKey) return;
+    this.viewKey = key;
+    this.view = view;
+    const vo = VIEW_OFFSETS[view];
+    this.body_.setTexture(viewTexture('ch-body', view));
+    this.head.setTexture(viewTexture('ch-head', view));
+    this.hair.setTexture(viewTexture(`ch-hair-${this.hairStyle}`, view));
+    this.badge.setVisible(vo.badge);
+    this.handL.setVisible(vo.handL !== null);
+    this.hat.x = vo.hatDx;
+    this.goggles.x = vo.hatDx;
+    this.shades.x = vo.hatDx;
+    this.goggles.setVisible(this.costumeGoggles && vo.face);
+    this.shades.setVisible(this.costumeShades && vo.face);
+    // From behind the cloak hangs over the back; otherwise it is a strip behind the body.
+    this.upper.moveTo(this.cloak, vo.cloakOver ? this.upper.getIndex(this.head) - 1 : 0);
+    this.upper.scaleX = flip ? -1 : 1;
+    this.legs.setFlipX(flip);
   }
 
   /** Face toward a world x while standing (null = default); survives animate()'s scaleX reset. */
@@ -1063,7 +1121,7 @@ export class Character extends Phaser.GameObjects.Container {
           }
         } else {
           this.setPosition(this.x + (dx / d) * step, this.y + (dy / d) * step);
-          if (Math.abs(dx) > 0.5) this.upper.scaleX = dx < 0 ? -1 : 1;
+          if (!this.fourDirections && Math.abs(dx) > 0.5) this.upper.scaleX = dx < 0 ? -1 : 1;
           step = 0;
         }
       }
@@ -1079,12 +1137,27 @@ export class Character extends Phaser.GameObjects.Container {
     }
   }
 
+  /** Sets the legs frame (`ch-legs-<0|1|2|sit>`) in the current view; the texture changes only when the key does. */
+  private setLegs(base: string): void {
+    const key = viewTexture(base, this.view);
+    if (key === this.legsKey) return;
+    this.legsKey = key;
+    this.legs.setTexture(key);
+  }
+
   private animate(now: number) {
     const t = now / 1000 + this.phase * 10;
     const walking = this.walking;
     const pose = !walking && !this.isWaiting ? this.pose : null;
     const poseAnim = pose ? POSE_ANIM[pose] : null;
     const sitting = !walking && (pose === 'sit' || (this.seated && SIT_ACTIVITIES.has(this.activity)));
+    if (this.fourDirections) {
+      // Walking: the step direction; seated: the chair's; standing: front, or profile toward `faceX`.
+      const fx = this.faceX === null ? 0 : this.faceX - this.x;
+      const v = walking ? viewOf(this.facing) : sitting ? viewOf(this.seatFacing ?? 's') : Math.abs(fx) > 0.5 ? viewOf(fx < 0 ? 'w' : 'e') : viewOf('s');
+      this.applyView(v.view, v.flip);
+    }
+    const vo = VIEW_OFFSETS[this.view];
     let bob = 0;
     let icon: string | null = null;
     let prop: string | null = null;
@@ -1092,25 +1165,27 @@ export class Character extends Phaser.GameObjects.Container {
     let propY = -3;
     let handLY = -4;
     let handRY = -4;
-    let handLX = -4;
-    let handRX = 4;
+    let handLX = vo.handL?.[0] ?? -4;
+    let handRX = vo.handR?.[0] ?? 4;
     let iconY = -19;
     let iconAlpha = 1;
     let shakeX = 0;
 
     if (walking) {
       const f = Math.floor(t * 8) % 4;
-      this.legs.setTexture(f === 1 ? 'ch-legs-1' : f === 3 ? 'ch-legs-2' : 'ch-legs-0');
+      this.setLegs(f === 1 ? 'ch-legs-1' : f === 3 ? 'ch-legs-2' : 'ch-legs-0');
       bob = f % 2 === 1 ? -1 : 0;
       handLY = -4 + (f === 1 ? -1 : 0);
       handRY = -4 + (f === 3 ? -1 : 0);
     } else {
-      this.legs.setTexture(sitting ? 'ch-legs-sit' : 'ch-legs-0');
+      this.setLegs(sitting ? 'ch-legs-sit' : 'ch-legs-0');
       bob = sitting ? 1 : Math.sin(t * 2) > 0.95 ? -1 : 0;
-      if (this.faceX === null) this.upper.scaleX = 1;
-      else {
-        const fx = this.faceX - this.x;
-        if (Math.abs(fx) > 0.5) this.upper.scaleX = fx < 0 ? -1 : 1;
+      if (!this.fourDirections) {
+        if (this.faceX === null) this.upper.scaleX = 1;
+        else {
+          const fx = this.faceX - this.x;
+          if (Math.abs(fx) > 0.5) this.upper.scaleX = fx < 0 ? -1 : 1;
+        }
       }
       if (poseAnim && pose) {
         const flick = Math.floor(t * 5) % 2;
@@ -1264,9 +1339,10 @@ export class Character extends Phaser.GameObjects.Container {
     }
     this.handL.setPosition(handLX, handLY);
     this.handR.setPosition(handRX, handRY);
+    if (prop && !vo.prop) prop = null;
     if (prop) {
       if (this.prop.texture.key !== prop) this.prop.setTexture(prop).setFlipX(false);
-      this.prop.setVisible(true).setPosition(propX, propY);
+      this.prop.setVisible(true).setPosition(propX + vo.propDx, propY);
     } else this.prop.setVisible(false);
     if (icon) {
       if (this.icon.texture.key !== icon) this.icon.setTexture(icon);

@@ -6,10 +6,11 @@ import type { GeneratedMap } from '../../procgen/types';
 import { maxRoomsLayout, toLayout } from '../../nav/__tests__/perfLayout';
 import { buildOccluders } from '../occluders';
 import { bakePolygons, planLightmap } from '../plan';
-import { buildLightIndex, characterShadow, furnitureShadows } from '../shadows';
+import { buildHeightMap } from '../heightmap';
+import { buildLightIndex, characterShadow, furnitureShadows, wallShadows } from '../shadows';
 import { LIGHTMAP_MAX_LIGHTS, lightmapSources } from '../sources';
 import type { CastShadow } from '../types';
-import { NIGHT, NOON, theme } from './lightingFixtures';
+import { NIGHT, NOON, mapFrom, theme } from './lightingFixtures';
 
 function median(fn: () => void, n = 9): number {
   fn();
@@ -60,6 +61,29 @@ describe('perf budget: lighting (128 x 96)', () => {
       console.log(`[perf] furnitureShadows ${sun.phase} (${map.furniture.length} items) ${ms.toFixed(2)} ms`);
       expect(ms).toBeLessThanOrEqual(4);
     }
+  });
+
+  it('buildHeightMap <= 2 ms (M17)', () => {
+    const ms = median(() => buildHeightMap(map));
+    console.log(`[perf] buildHeightMap ${ms.toFixed(2)} ms`);
+    expect(ms).toBeLessThanOrEqual(2);
+  });
+
+  it('wallShadows <= 3 ms on a 128 x 96 grid of walled rooms (M17)', () => {
+    // The generated perf layout has few walls; this one has a wall every 8 tiles each way (a worst-case room grid with doors).
+    const rows: string[] = [];
+    for (let y = 0; y < 96; y++) {
+      let row = '';
+      for (let x = 0; x < 128; x++) row += x % 8 === 0 || y % 8 === 0 ? (x % 8 === 4 || y % 8 === 4 ? 'D' : '#') : '.';
+      rows.push(row);
+    }
+    const grid = mapFrom(rows, { room: { x: 1, y: 1, w: 6, h: 6 } });
+    const occ = buildOccluders(grid);
+    const ms = median(() => wallShadows(grid, occ, NOON, 0.25));
+    const n = wallShadows(grid, occ, NOON, 0.25).length;
+    console.log(`[perf] wallShadows ${ms.toFixed(2)} ms (${n} quads)`);
+    expect(n).toBeGreaterThan(100);
+    expect(ms).toBeLessThanOrEqual(3);
   });
 
   it('characterShadow x 60 <= 0.3 ms per frame', () => {

@@ -172,3 +172,33 @@ describe('anonymousAppearance', () => {
     expect(anonymousAppearance('agent:z', 1)).toEqual(anonymousAppearance('agent:z', 1));
   });
 });
+
+describe('paintHeroPreview views (M17)', () => {
+  const base = { appearance: anonymousAppearance('agent:v', 2), themeCostume: {} as Costume, roleColor: 0x4488cc, scale: 2 };
+  const calls = (view?: 's' | 'n' | 'e') => {
+    const { ctx, fake } = fakeCtx();
+    paintHeroPreview(ctx, { ...base, view });
+    return fake.calls;
+  };
+
+  it('defaults to the front view', () => {
+    expect(calls()).toEqual(calls('s'));
+  });
+
+  it('every view paints, and the back and side views differ from the front', () => {
+    const s = calls('s');
+    for (const v of ['n', 'e'] as const) {
+      const c = calls(v);
+      expect(c.length).toBeGreaterThan(20);
+      expect(c).not.toEqual(s);
+    }
+  });
+
+  it('hero skin, hair and outfit colours reach every view', () => {
+    const look = base.appearance;
+    for (const v of ['s', 'n', 'e'] as const) {
+      const colors = new Set(calls(v).map((c) => c.color));
+      expect(colors.has(`#${hexToNumber(look.skin).toString(16).padStart(6, '0')}`), `${v} skin`).toBe(true);
+    }
+  });
+});

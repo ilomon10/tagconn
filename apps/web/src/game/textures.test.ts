@@ -2,7 +2,7 @@ import { HERO_HAIR_COLORS, HERO_HAIR_STYLE_COUNT, HERO_SKIN_TONES } from '@tagco
 import { describe, expect, it } from 'vitest';
 import { POSE_PROP } from './actors/poses';
 import { DIZZY_FRAMES, EMOTE_ICON, STRAIN_ICON } from './drama';
-import { BITMAP_ALPHA, CHARACTER_BITMAPS, HAIR_COLORS, HAIR_STYLES, hexToNumber, KO_FRAMES, SKIN_TONES } from './textures';
+import { BITMAP_ALPHA, CHARACTER_BITMAPS, generateTextures, HAIR_COLORS, HAIR_STYLES, hexToNumber, KO_FRAMES, SKIN_TONES, viewTexture } from './textures';
 
 // W4 acceptance: the web palettes stay equal to the shared `HERO_*` vocabulary (packages/shared/src/heroes.ts).
 describe('palettes match the shared HERO_* vocabulary', () => {
@@ -82,5 +82,22 @@ describe('ch-shadow-cast (M16)', () => {
     expect(b.outline).toBeUndefined();
     expect(BITMAP_ALPHA['ch-shadow-cast']).toBe(0.22);
     expect(BITMAP_ALPHA['ch-shadow']).toBe(0.28);
+  });
+});
+
+describe('M17 character views', () => {
+  it('generateTextures makes every view key at the §6.1 size', () => {
+    const made = new Map<string, [number, number]>();
+    const g = { fillStyle() {}, fillRect() {}, generateTexture: (k: string, w: number, h: number) => made.set(k, [w, h]), destroy() {} };
+    const scene = { textures: { exists: () => false }, make: { graphics: () => g } } as unknown as Parameters<typeof generateTextures>[0];
+    generateTextures(scene);
+    expect(made.get('ch-body-n')).toEqual([8, 6]);
+    expect(made.get('ch-body-e')).toEqual([6, 6]);
+    expect(made.get('ch-legs-n-sit')).toEqual([8, 3]);
+    expect(made.get('ch-legs-e-2')).toEqual([6, 3]);
+    expect(made.get('ch-head-n')).toEqual([6, 5]);
+    expect(made.get('ch-head-e')).toEqual([6, 5]);
+    for (let i = 0; i < HAIR_STYLES; i++) for (const v of ['n', 'e'] as const) expect(made.has(viewTexture(`ch-hair-${i}`, v))).toBe(true);
+    for (const v of ['s', 'n', 'e'] as const) for (const f of ['0', '1', '2', 'sit']) expect(made.has(viewTexture(`ch-legs-${f}`, v))).toBe(true);
   });
 });

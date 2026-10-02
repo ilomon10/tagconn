@@ -1,8 +1,10 @@
 import type { HeroAppearance } from '@tagconn/shared';
 import { HERO_HAIR_COLORS, HERO_SKIN_TONES } from '@tagconn/shared';
+import { VIEW_OFFSETS } from './actors/views';
+import type { View } from './actors/walkQueue';
 import { dramaHash } from './drama';
 import { resolveHeroCostume } from './heroLook';
-import { CHARACTER_BITMAPS, HAIR_STYLES, type Bitmap } from './textures';
+import { CHARACTER_BITMAPS, HAIR_STYLES, viewTexture, type Bitmap } from './textures';
 import { CLOAK_BITMAP, GOGGLES_BITMAP, HAT_BITMAPS, STAFF_BITMAPS } from './themes/costumes';
 import type { Costume } from './themes/types';
 
@@ -24,6 +26,8 @@ export interface HeroPreviewOptions {
   /** Canvas-space feet position. Defaults to a frame centered at (16, 22) * scale. */
   originX?: number;
   originY?: number;
+  /** M17: the drawn view (front `s` by default; `n` back, `e` profile facing right). The editor shows `s`; a turnaround can pass the others. */
+  view?: View;
 }
 
 interface Part {
@@ -88,24 +92,30 @@ export function paintHeroPreview(ctx: CanvasRenderingContext2D, opts: HeroPrevie
   const originY = opts.originY ?? 22 * scale;
   const { costume, skin, hair, hairStyle, outfit } = resolveHeroCostume(opts.themeCostume, opts.appearance, opts.roleColor);
 
+  const view = opts.view ?? 's';
+  const vo = VIEW_OFFSETS[view];
+  const bm = (key: string): Bitmap => CHARACTER_BITMAPS[viewTexture(key, view)]!;
+
   const parts: Part[] = [
     { bitmap: CHARACTER_BITMAPS['ch-shadow']!, x: 0, y: 1, anchorX: 0.5, anchorY: 1, alpha: 0.28 },
-    { bitmap: CHARACTER_BITMAPS['ch-legs-0']!, x: 0, y: 0, anchorX: 0.5, anchorY: 1 },
+    { bitmap: bm('ch-legs-0'), x: 0, y: 0, anchorX: 0.5, anchorY: 1 },
   ];
-  if (costume.cloak !== undefined) parts.push({ bitmap: CLOAK_BITMAP, x: 0, y: -2, anchorX: 0.5, anchorY: 1, tint: costume.cloak });
+  const cloak: Part | null = costume.cloak !== undefined ? { bitmap: CLOAK_BITMAP, x: 0, y: -2, anchorX: 0.5, anchorY: 1, tint: costume.cloak } : null;
+  if (cloak && !vo.cloakOver) parts.push(cloak);
+  parts.push({ bitmap: bm('ch-body'), x: 0, y: -3, anchorX: 0.5, anchorY: 1, tint: outfit });
+  if (cloak && vo.cloakOver) parts.push(cloak);
   parts.push(
-    { bitmap: CHARACTER_BITMAPS['ch-body']!, x: 0, y: -3, anchorX: 0.5, anchorY: 1, tint: outfit },
-    { bitmap: CHARACTER_BITMAPS['ch-head']!, x: 0, y: -9, anchorX: 0.5, anchorY: 1, tint: skin },
-    { bitmap: CHARACTER_BITMAPS[`ch-hair-${hairStyle}`]!, x: 0, y: -15, anchorX: 0.5, anchorY: 0, tint: hair },
+    { bitmap: bm('ch-head'), x: 0, y: -9, anchorX: 0.5, anchorY: 1, tint: skin },
+    { bitmap: bm(`ch-hair-${hairStyle}`), x: 0, y: -15, anchorX: 0.5, anchorY: 0, tint: hair },
   );
   if (costume.hat && costume.hat !== 'none') {
     const bitmap = HAT_BITMAPS[costume.hat];
-    if (bitmap) parts.push({ bitmap, x: 0, y: -15, anchorX: 0.5, anchorY: 1, tint: costume.hatColor ?? outfit });
+    if (bitmap) parts.push({ bitmap, x: vo.hatDx, y: -15, anchorX: 0.5, anchorY: 1, tint: costume.hatColor ?? outfit });
   }
-  if (costume.goggles) parts.push({ bitmap: GOGGLES_BITMAP, x: 0, y: -12, anchorX: 0.5, anchorY: 0.5 });
-  if (costume.staff && costume.staff !== 'none') {
+  if (costume.goggles && vo.face) parts.push({ bitmap: GOGGLES_BITMAP, x: vo.hatDx, y: -12, anchorX: 0.5, anchorY: 0.5 });
+  if (costume.staff && costume.staff !== 'none' && vo.prop) {
     const bitmap = STAFF_BITMAPS[costume.staff];
-    if (bitmap) parts.push({ bitmap, x: 0, y: -3, anchorX: 0.5, anchorY: 1 });
+    if (bitmap) parts.push({ bitmap, x: vo.propDx, y: -3, anchorX: 0.5, anchorY: 1 });
   }
 
   for (const part of parts) blit(ctx, part, scale, originX, originY);

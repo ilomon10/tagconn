@@ -12,10 +12,11 @@ import type { ThemeRegion } from '../themes/renderTheme';
 import { cycleHour, effectiveSunStep, MIN_BAKE_INTERVAL_MS, resolveCycle, sunStep, type ClockSync, type LightingOverride, type ResolvedCycle } from './clock';
 import { overlayPlan } from './fallback';
 import { LightmapLayer, LIGHTMAP_DEPTH } from './LightmapLayer';
+import { buildHeightMap, type HeightMap } from './heightmap';
 import { buildOccluders, type Occluders } from './occluders';
 import { lightingColours } from './palette';
 import { bakePolygons, lightmapSize, planLightmap, type PlanRegion } from './plan';
-import { buildLightIndex, characterShadow, furnitureShadows, type LightIndex } from './shadows';
+import { buildLightIndex, characterShadow, furnitureShadows, wallShadows, type LightIndex } from './shadows';
 import { lightmapSources } from './sources';
 import { ShadowLayer } from './ShadowLayer';
 import { sunAt } from './sun';
@@ -105,6 +106,8 @@ export class LightingController {
 
   private mode: LightingMode = resolveLightingMode(false, 'high', defaultLighting(), false);
   private occluders: Occluders | null = null;
+  private heightMap: HeightMap | null = null;
+  private wallShadowsOn = true;
   private sources: LightmapLight[] = [];
   private polygons = new Map<LightmapLight, Point[]>();
   private index: LightIndex | null = null;
@@ -175,6 +178,19 @@ export class LightingController {
     this.lastWebgl = this.host.webgl();
     this.dirty = true;
     this.tryBake(this.host.now());
+  }
+
+  /** M17: `office.depth.wallShadows` (walls cast day shadows). A change re-bakes (throttled), like any other lighting setting. */
+  applyDepth(depth: Pick<OfficeSettings['depth'], 'wallShadows'>): void {
+    if (depth.wallShadows === this.wallShadowsOn) return;
+    this.wallShadowsOn = depth.wallShadows;
+    this.dirty = true;
+    if (this.lighting) this.tryBake(this.host.now());
+  }
+
+  /** The per-tile visual heights of the current map (built with the geometry); null before the first bake. */
+  get heights(): HeightMap | null {
+    return this.heightMap;
   }
 
   /** Every frame: sun step check (re-bake on change), character cast shadows, flicker. */
@@ -265,7 +281,9 @@ export class LightingController {
       });
       this.lightmap.bake(plan);
       if (this.shadows) {
-        this.shadows.draw(this.mode.furniture === 'none' ? [] : furnitureShadows(map, sun, this.sources, this.mode.furniture, colours.shadowAlpha));
+        const quads = this.mode.furniture === 'none' ? [] : furnitureShadows(map, sun, this.sources, this.mode.furniture, colours.shadowAlpha);
+        if (this.wallShadowsOn && this.mode.furniture === 'cast' && this.occluders) for (const q of wallShadows(map, this.occluders, sun, colours.shadowAlpha)) quads.push(q);
+        this.shadows.draw(quads);
       }
       this.syncFlickers(plan.lights.filter((p) => p.light.flicker).map((p) => p.light));
     }
@@ -287,6 +305,7 @@ export class LightingController {
     this.mode = resolveLightingMode(this.host.webgl(), quality, lighting, this.host.reducedMotion());
     this.destroyLayers();
     const T = map.tileSize;
+    this.heightMap = buildHeightMap(map);
     const regions = this.regions();
     const themeAt = (x: number, y: number): ThemeDefinition => {
       for (const r of regions) if (x >= r.rect.x && y >= r.rect.y && x < r.rect.x + r.rect.w && y < r.rect.y + r.rect.h) return r.theme as ThemeDefinition;

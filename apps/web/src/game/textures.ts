@@ -1,4 +1,5 @@
 import type * as Phaser from 'phaser';
+import type { View } from './actors/walkQueue';
 import { HERO_HAIR_COLORS, HERO_HAIR_STYLE_COUNT, HERO_SKIN_TONES } from '@tagconn/shared';
 
 /**
@@ -48,6 +49,42 @@ export const CHARACTER_BITMAPS: Record<string, Bitmap> = {
   'ch-hair-4': { rows: [' hhhhh', 'hhhhhh', 'hhh   '], palette: { h: W } },
   'ch-hair-5': { rows: ['      ', ' h  h '], palette: { h: W } },
   'ch-hair-6': { rows: [' hhhh ', 'hhhhhh', 'hh  hh', 'h    h', 'hh  hh'], palette: { h: W } },
+  // M17 (docs/design/depth-25d.md section 6.1): the back (`n`) and side (`e`, west = flipped) views. The unsuffixed keys above are the
+  // front (`s`) view. Same palettes, so every tint slot (role colour, skin, hair) works in every view.
+  'ch-body-n': {
+    rows: [' wwwwww ', 'wwwswwww', 'swwswwws', 'swwswwws', 'swwswwws', ' ssssss '],
+    palette: { w: W, s: SHADE },
+  },
+  'ch-body-e': {
+    rows: [' swwww', 'swwwww', 'swwwww', 'swwwww', 'swwwww', ' sssss'],
+    palette: { w: W, s: SHADE },
+  },
+  'ch-legs-n-0': { rows: [' pp  pp ', ' pp  pp ', ' kk  kk '], palette: { p: 0x2d3142, k: 0x15151c } },
+  'ch-legs-n-1': { rows: [' pp  pp ', ' pp  kk ', ' kk     '], palette: { p: 0x2d3142, k: 0x15151c } },
+  'ch-legs-n-2': { rows: [' pp  pp ', ' kk  pp ', '     kk '], palette: { p: 0x2d3142, k: 0x15151c } },
+  'ch-legs-n-sit': { rows: ['        ', ' pppppp ', ' pp  pp '], palette: { p: 0x2d3142, k: 0x15151c } },
+  'ch-legs-e-0': { rows: ['  pp  ', '  pp  ', '  kkk '], palette: { p: 0x2d3142, k: 0x15151c } },
+  'ch-legs-e-1': { rows: ['  pp  ', '  p pp', '  k kk'], palette: { p: 0x2d3142, k: 0x15151c } },
+  'ch-legs-e-2': { rows: ['  pp  ', ' pp p ', ' kk k '], palette: { p: 0x2d3142, k: 0x15151c } },
+  'ch-legs-e-sit': { rows: ['      ', ' ppppp', ' k  kk'], palette: { p: 0x2d3142, k: 0x15151c } },
+  'ch-head-n': { rows: [' ffff ', 'ffffff', 'ffffff', 'ffffff', ' fssf '], palette: { f: W, s: SHADE } },
+  'ch-head-e': { rows: [' ffff ', 'ffffff', 'ffffek', 'ffffff', ' ffssf'], palette: { f: W, e: 0x2b2330, k: W, s: SHADE } },
+  // Hair from behind: fuller than the front view, it covers the back of the head (rows 2-3).
+  'ch-hair-0-n': { rows: [' hhhh ', 'hhhhhh', 'hhhhhh', 'hhhhhh'], palette: { h: W } },
+  'ch-hair-1-n': { rows: [' hhhh ', 'hhhhhh', 'hhhhhh', 'hhhhhh', 'hhhhhh', 'hhhhhh'], palette: { h: W } },
+  'ch-hair-2-n': { rows: ['h hh h', 'hhhhhh', 'hhhhhh', 'hhhhhh'], palette: { h: W } },
+  'ch-hair-3-n': { rows: ['  hh  ', ' hhhh ', 'hhhhhh', 'hhhhhh', 'hhhhhh'], palette: { h: W } },
+  'ch-hair-4-n': { rows: [' hhhhh', 'hhhhhh', 'hhhhhh', 'hhhhhh'], palette: { h: W } },
+  'ch-hair-5-n': { rows: ['      ', ' hhhh ', ' hhhh '], palette: { h: W } },
+  'ch-hair-6-n': { rows: [' hhhh ', 'hhhhhh', 'hhhhhh', 'hhhhhh', 'hhhhhh'], palette: { h: W } },
+  // Hair in profile (facing east): the fringe on the front (right) column, the length trailing behind.
+  'ch-hair-0-e': { rows: [' hhhh ', 'hhhhhh', 'hhh  h'], palette: { h: W } },
+  'ch-hair-1-e': { rows: [' hhhh ', 'hhhhhh', 'hhh  h', 'hhh   ', 'hhh   ', 'hhh   '], palette: { h: W } },
+  'ch-hair-2-e': { rows: ['h hh h', 'hhhhhh', 'hh    '], palette: { h: W } },
+  'ch-hair-3-e': { rows: ['  hh  ', ' hhhh ', 'hhhhhh', 'hhh   '], palette: { h: W } },
+  'ch-hair-4-e': { rows: [' hhhhh', 'hhhhhh', 'hhh  h'], palette: { h: W } },
+  'ch-hair-5-e': { rows: ['      ', ' hhh  '], palette: { h: W } },
+  'ch-hair-6-e': { rows: [' hhhh ', 'hhhhhh', 'hhh  h', 'hhh   ', 'hhh  h'], palette: { h: W } },
   'ch-shadow': { rows: [' ssssssss ', 'ssssssssss', ' ssssssss '], palette: { s: 0x000000 } },
   // M16: the cast-shadow blob (10 x 10, rounded; stretched along the light direction by Character#setCastShadow).
   'ch-shadow-cast': {
@@ -164,3 +201,15 @@ export function generateTextures(scene: Phaser.Scene) {
 }
 
 export const HAIR_STYLES = HERO_HAIR_STYLE_COUNT;
+
+/** M17: a character body-part texture key in its front (`s`) view: `ch-body`, `ch-head`, `ch-legs-<frame>` or `ch-hair-<style>`. */
+export type ViewBase = string;
+
+/**
+ * M17: the texture of a body part in a view. `s` is the legacy key (`ch-body`, `ch-legs-1`, `ch-hair-3`); `n` / `e` add the view:
+ * `ch-body-n`, `ch-legs-e-1`, `ch-hair-3-e` (docs/design/depth-25d.md section 6.1). `w` is `e` flipped, so it never reaches here.
+ */
+export function viewTexture(base: ViewBase, view: View): string {
+  if (view === 's') return base;
+  return base.startsWith('ch-legs-') ? `ch-legs-${view}-${base.slice('ch-legs-'.length)}` : `${base}-${view}`;
+}

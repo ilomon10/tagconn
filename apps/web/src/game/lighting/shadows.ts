@@ -1,6 +1,7 @@
 // M16 L2: furniture drop shadows and per-character cast shadows (docs/design/lighting.md section 2.6). Pure.
 import type { GeneratedMap, Point } from '../procgen/types';
-import { kindHeight } from './heights';
+import { WALL_HEIGHT_PX, kindHeight } from './heights';
+import type { Occluders } from './occluders';
 import { sunShadowVector } from './sun';
 import type { CastShadow, LightmapLight, ShadowQuad, SunState } from './types';
 
@@ -195,5 +196,87 @@ export function characterShadow(feet: Point, sun: SunState, index: LightIndex, m
   }
   out.len = MIN_LEN + (MAX_LEN - MIN_LEN) * f;
   out.alpha = CHARACTER_LIGHT_ALPHA * Math.min(1, l.strength) * f;
+  return out;
+}
+
+/**
+ * M17 day shadows of walls (docs/design/depth-25d.md section 3.6). Every wall/floor boundary tile edge whose floor side lies in the
+ * shadow direction (`sunShadowVector(sun, WALL_HEIGHT_PX, T)`: south always, east or west by the sun's skew) is extruded along the
+ * vector as a parallelogram, runs of equal orientation merged. The extrusion is shortened until its far edge sits on floor/door
+ * tiles, like furniture shadows. Alpha `shadowAlpha * 0.8 * daylight`. Nothing at night (room lights are inside the room).
+ */
+export function wallShadows(map: GeneratedMap, occluders: Occluders, sun: SunState, shadowAlpha: number): ShadowQuad[] {
+  const out: ShadowQuad[] = [];
+  const base = Number.isFinite(shadowAlpha) ? Math.max(0, shadowAlpha) : 0;
+  if (!(base > 0) || !(sun.daylight > 0.5)) return out;
+  const T = map.tileSize;
+  const v = sunShadowVector(sun, WALL_HEIGHT_PX, T);
+  if (!(v.y > 0 || v.x !== 0)) return out;
+  const alpha = base * 0.8 * sun.daylight;
+  const tiles = map.tiles;
+  const wall = (tx: number, ty: number): boolean => tiles[ty]?.[tx] === 'wall';
+  const open = (tx: number, ty: number): boolean => {
+    const t = tiles[ty]?.[tx];
+    return t === 'floor' || t === 'door';
+  };
+
+  // Emits the parallelogram of the run [a, b] (world px along the edge) on the fixed line `c`. The part that would slide past the
+  // run's ends (into the corner walls) is trimmed off the near edge, and the extrusion is shortened until the far edge is on floor.
+  const emit = (horizontal: boolean, c: number, a: number, b: number): void => {
+    const along = horizontal ? v.x : v.y;
+    const across = horizontal ? v.y : v.x;
+    for (let k = 1; k > 0; k -= 0.25) {
+      const a0 = Math.max(a, a - along * k);
+      const b0 = Math.min(b, b - along * k);
+      if (!(b0 - a0 > 1)) return;
+      const far = c + across * k;
+      // Probe half a pixel inside the far edge's ends so a corner on a tile boundary is judged by the tile the shadow covers.
+      const u0 = a0 + along * k + 0.5;
+      const u1 = b0 + along * k - 0.5;
+      const um = (u0 + u1) / 2;
+      const ok = horizontal
+        ? isFloor(map, u0, far) && isFloor(map, u1, far) && isFloor(map, um, far)
+        : isFloor(map, far, u0) && isFloor(map, far, u1) && isFloor(map, far, um);
+      if (!ok) continue;
+      const P = (u: number, d: number) => (horizontal ? { x: u, y: c + across * d } : { x: c + across * d, y: u });
+      out.push({ points: [P(a0, 0), P(b0, 0), P(b0 + along * k, k), P(a0 + along * k, k)], alpha });
+      return;
+    }
+  };
+
+  for (let i = 0; i < occluders.wallCount; i++) {
+    const s = occluders.segments[i]!;
+    if (s.y1 === s.y2) {
+      // Horizontal edge between rows ty - 1 and ty. Shadows go south: the wall must be above, the floor below.
+      if (!(v.y > 0)) continue;
+      const ty = Math.round(s.y1 / T);
+      const t0 = Math.round(Math.min(s.x1, s.x2) / T);
+      const t1 = Math.round(Math.max(s.x1, s.x2) / T);
+      let start = -1;
+      for (let tx = t0; tx <= t1; tx++) {
+        const on = tx < t1 && wall(tx, ty - 1) && open(tx, ty);
+        if (on && start < 0) start = tx;
+        else if (!on && start >= 0) {
+          emit(true, ty * T, start * T, tx * T);
+          start = -1;
+        }
+      }
+    } else {
+      // Vertical edge between columns tx - 1 and tx. East shadow (vx > 0): wall on the west; west shadow: wall on the east.
+      if (v.x === 0) continue;
+      const tx = Math.round(s.x1 / T);
+      const t0 = Math.round(Math.min(s.y1, s.y2) / T);
+      const t1 = Math.round(Math.max(s.y1, s.y2) / T);
+      let start = -1;
+      for (let ty = t0; ty <= t1; ty++) {
+        const on = ty < t1 && (v.x > 0 ? wall(tx - 1, ty) && open(tx, ty) : wall(tx, ty) && open(tx - 1, ty));
+        if (on && start < 0) start = ty;
+        else if (!on && start >= 0) {
+          emit(false, tx * T, start * T, ty * T);
+          start = -1;
+        }
+      }
+    }
+  }
   return out;
 }

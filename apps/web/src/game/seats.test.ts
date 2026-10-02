@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_LAYOUT, MULTIVERSE_LIMITS, type MultiverseProjectInput, type RoomType } from '@tagconn/shared';
 import { generateMap } from './procgen';
 import { planMultiverse } from './multiverse/plan';
-import { SeatAllocator, type SeatScope } from './seats';
+import type { GeneratedMap } from './procgen/types';
+import { SeatAllocator, seatFacingAt, type SeatScope } from './seats';
 import { PathFinder } from './pathfinding';
 
 // `seats.ts` and `pathfinding.ts` were retyped from the pre-M7 `OfficeMap` to procgen's
@@ -131,5 +132,40 @@ describe('PathFinder', () => {
 
   it('returns null for blocked targets', () => {
     expect(finder.find(map.spawn, { x: 0, y: 0 })).toBeNull();
+  });
+});
+
+describe('seatFacingAt (M17)', () => {
+  const map = generateMap(DEFAULT_LAYOUT);
+
+  it('finds the chair under a desk seat (facing n) and the chair facing of any seated tile', () => {
+    const seats = new SeatAllocator(map);
+    const spot = seats.assign('a', 'desks');
+    expect(spot.seated).toBe(true);
+    const chair = map.furniture.find((f) => f.kind === 'chair' && f.x <= spot.x && spot.x < f.x + f.w && f.y <= spot.y && spot.y < f.y + f.h);
+    expect(chair).toBeDefined();
+    expect(seatFacingAt(map, spot)).toBe(chair!.facing ?? 's');
+    expect(seatFacingAt(map, spot)).toBe('n');
+  });
+
+  it('every seat of a meeting room resolves to its chair facing, and facings other than s occur', () => {
+    const seen = new Set<string>();
+    for (const room of map.rooms) for (const s of room.seats) seen.add(seatFacingAt(map, s));
+    expect([...seen].every((f) => ['n', 'e', 's', 'w'].includes(f))).toBe(true);
+    expect(seen.has('n')).toBe(true);
+  });
+
+  it("is 's' on a bare tile", () => {
+    expect(seatFacingAt({ furniture: [] }, { x: 3, y: 3 })).toBe('s');
+    const bare = { furniture: [{ kind: 'plant', x: 3, y: 3, w: 1, h: 1 }] } as unknown as Pick<GeneratedMap, 'furniture'>;
+    expect(seatFacingAt(bare, { x: 3, y: 3 })).toBe('s');
+  });
+
+  it('covers a half-tile pinned sofa by coveredTileRect', () => {
+    const m = { furniture: [{ kind: 'sofa', x: 4.5, y: 2, w: 2, h: 1, facing: 'w' }] } as unknown as Pick<GeneratedMap, 'furniture'>;
+    expect(seatFacingAt(m, { x: 4, y: 2 })).toBe('w');
+    expect(seatFacingAt(m, { x: 6, y: 2 })).toBe('w');
+    expect(seatFacingAt(m, { x: 7, y: 2 })).toBe('s');
+    expect(seatFacingAt(m, { x: 5, y: 3 })).toBe('s');
   });
 });
