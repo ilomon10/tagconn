@@ -270,13 +270,13 @@ published first. Designs: `docs/design/dual-grid.md`, `docs/design/navigation.md
   - [x] T1 nav core `nav/{grid,shapes}.ts` (nibble masks, true clearance + incremental) + `nav.perf.test.ts`
   - [x] T2 procgen half-tile: one rasterizer (`procgen/geometry.ts`), pins/triggers/seats/backWall/spots on covered tiles
   - [x] T3 editor: half-tile drag snap, Alt+arrow 0.5, half-cell hit test, Inspector
-  - [x] PM: `generate.ts` emits `nav`, derives `walkable` (152 files / 1765 web tests, perf green); [ ] quick gate
+  - [x] PM: `generate.ts` emits `nav`, derives `walkable` (152 files / 1765 web tests, perf green); quick gate [x] (review: 6 low, fixed; QA: pass, +20 tests)
 - Wave 2 (parallel)
-  - [ ] D1 modern / D2 guild / D3 rift dual painters (`paint/dual/*`)
-  - [ ] T4 `nav/{heap,macro,adapter}.ts`: tile A*, `PathFinder` adapter, easystar parity on 300 seeds
+  - [x] D1 modern / D2 guild / D3 rift dual painters (`paint/dual/*`)
+  - [x] T4 `nav/{heap,macro,adapter}.ts`: tile A*, `PathFinder` adapter, easystar parity on 300 seeds (easystar's heuristic was inadmissible: new paths never longer, 39% shorter)
 - Wave 3 (parallel)
-  - [ ] D4 `renderTheme.ts` dual pass + flag wiring + `renderTheme.perf.test.ts` + PreviewScene
-  - [ ] T6 `nav/{micro,navigator}.ts` + `Character.walkNav`; PM wires `OfficeScene.walk`, NPC `navClass`; remove easystarjs
+  - [x] D4 `renderTheme.ts` dual pass + flag wiring + `renderTheme.perf.test.ts` + PreviewScene (fillRect ≈1.05×, 15–25 ms)
+  - [x] T6 `nav/{micro,navigator}.ts` + `Character.walkNav`; PM wired `OfficeScene.walk` → Navigator; `navClass` set from the creature; easystarjs now a devDependency (parity test only)
 - [ ] W4 (optional): shape insets per kind, denser recipe pitches, painter audit for fractional sizes
 - [ ] Gate (QA demo walk + editor, review, security, docs) → v0.9.0
 

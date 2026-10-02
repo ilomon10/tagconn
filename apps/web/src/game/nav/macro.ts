@@ -2,12 +2,15 @@
 //
 // Tile-level A* per nav class: 8-connected, octile costs (1, SQRT2) in fixed point, no corner cutting
 // (a diagonal step needs both orthogonal neighbours passable: easystar's `disableCornerCutting`, which
-// the pre-M15 PathFinder used). All buffers are allocated once per planner; a query allocates only
-// its result. Ties break by h then tile id (invariant 7), so two runs give equal paths.
+// the pre-M15 PathFinder used). For `small` a step also needs the two tiles to connect at the cell
+// level across their shared edge (`smallEdgeOpen`): a half-tile divider leaves both tiles passable but
+// cuts the hop, and the Navigator's per-tile repairs cannot route around a long divider. All buffers are
+// allocated once per planner; a query allocates only its result. Ties break by h then tile id
+// (invariant 7), so two runs give equal paths.
 import type { Point } from '../procgen/types';
 import { CLASS_K, type NavClass } from './classes';
 import { FULL_MASK, SUB } from './constants';
-import { fits, isTileStandable } from './grid';
+import { bitOf, fits, isTileStandable } from './grid';
 import { NodeHeap } from './heap';
 import type { NavGrid } from './types';
 
@@ -126,6 +129,7 @@ export class MacroPlanner {
           const oy = ny * cols + x; // (x, ny)
           if (!this.stepPassable(pass, cls, ox, nx, y, start, override) || !this.stepPassable(pass, cls, oy, x, ny, start, override)) continue;
         }
+        if (cls === 'small' && !this.smallEdgeOpen(i, ni, x, y, DX[d]!, DY[d]!, start)) continue;
         const ng = gi + (d >= 4 ? MACRO_DIAGONAL : MACRO_STRAIGHT);
         if (seen[ni] === stamp && ng >= gCost[ni]!) continue;
         seen[ni] = stamp;
@@ -176,6 +180,43 @@ export class MacroPlanner {
     if (i === start) return true;
     if (override !== undefined && override.has(i)) return false;
     return this.passable(pass, cls, i, x, y);
+  }
+
+  /** Cell bits of a tile inside the grid for the small-edge rule; the start tile counts as fully free (it is passable for this query). */
+  private cellsOf(i: number, start: number): number {
+    return i === start ? FULL_MASK : this.grid.masks[i]! & FULL_MASK;
+  }
+
+  /**
+   * A `small` (one-cell) body can step from tile `i` to its neighbour `ni` at (x + dx, y + dy) at the cell
+   * level: a straight step needs a free cell pair across the shared edge; a diagonal step needs the two
+   * corner cells that touch, plus the corner cells of both orthogonal tiles (no corner cutting at the
+   * cell level). Uncached (a few bit tests on masks the step already reads).
+   */
+  private smallEdgeOpen(i: number, ni: number, x: number, y: number, dx: number, dy: number, start: number): boolean {
+    const a = this.cellsOf(i, start);
+    const b = this.cellsOf(ni, start);
+    const last = SUB - 1;
+    const has = (m: number, cx: number, cy: number): boolean => ((m >> bitOf(cx, cy)) & 1) === 1;
+    if (dy === 0) {
+      // E: a's last column against b's first; W: the mirror.
+      const ca = dx > 0 ? last : 0;
+      const cb = dx > 0 ? 0 : last;
+      for (let r = 0; r < SUB; r++) if (has(a, ca, r) && has(b, cb, r)) return true;
+      return false;
+    }
+    if (dx === 0) {
+      const ra = dy > 0 ? last : 0;
+      const rb = dy > 0 ? 0 : last;
+      for (let c = 0; c < SUB; c++) if (has(a, c, ra) && has(b, c, rb)) return true;
+      return false;
+    }
+    const cols = this.grid.cols;
+    const e = this.cellsOf(y * cols + x + dx, start); // the orthogonal tile in x
+    const s = this.cellsOf((y + dy) * cols + x, start); // the orthogonal tile in y
+    const ax = dx > 0 ? last : 0;
+    const ay = dy > 0 ? last : 0;
+    return has(a, ax, ay) && has(b, last - ax, last - ay) && has(e, last - ax, ay) && has(s, ax, last - ay);
   }
 }
 

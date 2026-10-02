@@ -370,6 +370,12 @@ export class MacroPlanner {
 | `small` | at least one walkable cell in the tile (nibble `!== 0`) |
 | `large` | standable and `clearance[tile's top-left cell] >= 3` |
 
+> **As landed (T6):** a `small` step also needs the two tiles to connect at the cell level across their shared edge
+> (`MacroPlanner.smallEdgeOpen`: a free cell pair across the edge; for a diagonal the two touching corner cells plus the
+> corner cells of both orthogonal tiles). Without it a half-tile divider on a shared edge leaves both tiles passable but
+> cuts the hop, and the per-tile repairs below cannot route around a long divider (measured: 8 % repairs per hop and a
+> quarter of the paths giving up on random dividers; with the rule 0.1 % and none). The start tile counts as fully free.
+
 Implementation notes: one `Uint8Array` passability cache per class (0 unknown, 1 yes, 2 no), `Int32Array` for
 `g`-cost (fixed-point x1000), parent and generation stamps for open/closed (`stamp++` per query, no clearing),
 `NodeHeap` of tile indices. No per-query allocation except the result array. `from === to` → `[from]`.
@@ -409,6 +415,13 @@ export class Navigator {
   invalidate(dirty?: CellRect): void;
 }
 ```
+
+> **As landed (T6):** `NavPath` also carries `repairs` (macro re-runs) and `pulled` (false after the give-up below: tile
+> anchors walked as they are) and a `toPoints()` preview of the segment ends. In-between anchors come from
+> `tileAnchorPoint(g, tile, k)`: the tile centre for `k = SUB`, the first fitting cell of the tile for a smaller class (a
+> half-blocked tile has no centred block), the top-left anchor for a larger one. A blocked start skips the LOS check of
+> its first hop (walked straight, as today) instead of spending repairs on it; when a hop into the goal tile fails the
+> previous tile is marked. `PathFinder.navigator()` shares the adapter's `MacroPlanner`.
 
 `findPath` pseudo-code:
 

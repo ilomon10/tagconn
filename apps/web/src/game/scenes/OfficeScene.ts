@@ -18,6 +18,7 @@ import {
 } from '@tagconn/shared';
 import { generateMap } from '../procgen';
 import type { GeneratedMap, Point, Rect, StairsSpot } from '../procgen/types';
+import { CLASS_K, navPointOfTile } from '../nav';
 import { PathFinder } from '../pathfinding';
 import { SeatAllocator, type SeatScope } from '../seats';
 import { Character } from '../actors/Character';
@@ -320,6 +321,8 @@ export class OfficeScene extends Phaser.Scene {
    *  characters never move). */
   private layoutKey = '';
   private appliedStyle: OfficeStyle | typeof MULTIVERSE_THEME_ID | null = null;
+  /** M15: the `office.dualGrid` value the base texture was last painted with (a change reskins). */
+  private appliedDualGrid = true;
   private floorKey: string | null = null;
   private userZoom = 1;
   /** M9 8f: the zoom `update()` last computed hit scaling for, and the character scale it derived
@@ -502,7 +505,7 @@ export class OfficeScene extends Phaser.Scene {
     this.multiversePlan = multiverse;
     this.regions = multiverse ? this.buildRegions(multiverse) : [];
     this.realmScopes = multiverse ? this.buildRealmScopes(multiverse) : new Map();
-    this.finder = new PathFinder(this.map.walkable);
+    this.finder = new PathFinder(this.map.nav); // M15: the nav grid (nibble masks + clearance) is the collision truth; `walkable` is derived from it
     this.seats = new SeatAllocator(this.map);
     this.drama.reset();
     this.life.reset();
@@ -627,7 +630,8 @@ export class OfficeScene extends Phaser.Scene {
     for (const o of this.worldLayer) o.destroy();
     this.worldLayer = [];
     const T = this.map.tileSize;
-    renderGeneratedMap(this, this.map, this.theme, this.regions);
+    this.appliedDualGrid = this.state?.settings.office.dualGrid ?? true;
+    renderGeneratedMap(this, this.map, this.theme, this.regions, { dualGrid: this.appliedDualGrid });
     this.worldLayer.push(this.add.image(0, 0, THEME_BASE_TEXTURE).setOrigin(0).setDepth(-10));
 
     if (this.multiversePlan) {
@@ -1219,7 +1223,7 @@ export class OfficeScene extends Phaser.Scene {
 
     const layoutKey = `${state.layout.id}|${state.layout.updatedAt}|${multiverse?.key ?? ''}`;
     const rebuild = layoutKey !== this.layoutKey;
-    const reskin = !rebuild && effectiveStyle !== this.appliedStyle;
+    const reskin = !rebuild && (effectiveStyle !== this.appliedStyle || (office.dualGrid ?? true) !== this.appliedDualGrid);
     if (rebuild) {
       this.layoutKey = layoutKey;
       this.buildWorld(state.layout, effectiveStyle, multiverse);
@@ -1518,8 +1522,10 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   private walk(c: Character, to: Point, seated: boolean) {
-    const path = this.finder.find(c.tile, to);
-    if (path) c.walk(path, seated);
+    // M15 (navigation.md §4): sub-tile navigator — macro tiles, string-pulled any-angle segments, per-class clearance.
+    // A person lands exactly on the target tile's feet point, so seats and the scripts' stall detectors are unchanged.
+    const path = this.finder.navigator().findPath(c.navPoint, navPointOfTile(to, CLASS_K[c.navClass]), c.navClass);
+    if (path) c.walkNav(path, seated);
     else {
       c.teleport(to);
       c.setSeated(seated);

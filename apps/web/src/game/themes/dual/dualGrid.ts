@@ -99,7 +99,9 @@ export function maskOf(kinds: Record<Quadrant, CornerKind>, kind: CornerKind): n
   return mask;
 }
 
-/** One cell: its four kinds, the masks that partition `0xf`, and the floor kind / room id per quadrant. */
+/** One cell: its four kinds, the masks that partition `0xf`, and the floor kind / room id per quadrant.
+ *  Hot at 128 x 96 (12.5k cells per bake, D4 perf budget): the quadrant tiles are indexed inline rather than through
+ *  `quadrantTile`/`cornerKinds`/`maskOf`, so a cell costs four small objects, not a dozen. Same result as those helpers. */
 export function buildDualCell(
   map: Pick<GeneratedMap, 'tiles' | 'roomAt'>,
   cx: number,
@@ -107,28 +109,31 @@ export function buildDualCell(
   kindAt: KindAt,
   floorKindAt: FloorKindAt,
 ): DualCell {
-  const kinds = cornerKinds(kindAt, cx, cy);
-  let doorMask = 0;
+  const kinds: Record<Quadrant, CornerKind> = { tl: 'void', tr: 'void', bl: 'void', br: 'void' };
   const floorKinds: Record<Quadrant, FloorKind | null> = { tl: null, tr: null, bl: null, br: null };
   const roomIds: Record<Quadrant, string | null> = { tl: null, tr: null, bl: null, br: null };
-  for (const q of QUADRANTS) {
-    const t = quadrantTile({ cx, cy }, q);
-    if (kinds[q] !== 'floor') continue;
-    if (map.tiles[t.y]?.[t.x] === 'door') doorMask |= BIT[q];
-    floorKinds[q] = floorKindAt(t.x, t.y);
-    roomIds[q] = map.roomAt[t.y]?.[t.x] ?? null;
+  let wallMask = 0;
+  let floorMask = 0;
+  let voidMask = 0;
+  let doorMask = 0;
+  // QUADRANTS is tl, tr, bl, br: bit 0 of the index picks the east column, bit 1 the south row (see `quadrantTile`).
+  for (let i = 0; i < 4; i++) {
+    const q = QUADRANTS[i]!;
+    const x = i & 1 ? cx : cx - 1;
+    const y = i & 2 ? cy : cy - 1;
+    const kind = kindAt(x, y);
+    const bit = BIT[q];
+    kinds[q] = kind;
+    if (kind === 'wall') wallMask |= bit;
+    else if (kind === 'void') voidMask |= bit;
+    else {
+      floorMask |= bit;
+      if (map.tiles[y]?.[x] === 'door') doorMask |= bit;
+      floorKinds[q] = floorKindAt(x, y);
+      roomIds[q] = map.roomAt[y]?.[x] ?? null;
+    }
   }
-  return {
-    cx,
-    cy,
-    kinds,
-    wallMask: maskOf(kinds, 'wall'),
-    floorMask: maskOf(kinds, 'floor'),
-    voidMask: maskOf(kinds, 'void'),
-    doorMask,
-    floorKinds,
-    roomIds,
-  };
+  return { cx, cy, kinds, wallMask, floorMask, voidMask, doorMask, floorKinds, roomIds };
 }
 
 /** Every cell, row-major (cy outer, cx inner): `(cols + 1) * (rows + 1)` entries, index `cy * (cols + 1) + cx`. */

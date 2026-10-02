@@ -17,6 +17,12 @@ Planner overrides the server default for that one floor):
 The Multiverse floor always uses its own **`rift`** style regardless of the setting above — a
 starfield/void backdrop blending each visible project's own style per realm.
 
+### Tile edges
+
+| Key | Default | Effect |
+|---|---|---|
+| `office.dualGrid` | `true` | Dual-grid tile edges: wall caps get a real outline and rounded outer corners, floors a shadow where they meet a wall and a cliff where they meet the void. Off = flat per-tile paint (every tile drawn on its own, as before v0.9.0). Applies live on Save, in every style and in the Hall Planner preview; it changes the look only, never the layout or where anyone stands. |
+
 ## Shaders
 
 `office.shaders.*` controls WebGL post-processing, applied live as you change it in Settings.

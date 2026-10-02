@@ -1,7 +1,8 @@
 import type * as Phaser from 'phaser';
 import type { RoomType } from '@tagconn/shared';
 import type { GeneratedMap, Rect } from '../procgen/types';
-import type { ThemeDefinition } from './types';
+import { buildDualCells, cellOrigin, quadrantTile, type DualCell } from './dual/dualGrid';
+import type { DualCtx, ThemeDefinition } from './types';
 
 /**
  * A themed sub-area of the map (the Multiverse, M8 8h): a realm's cell painted with its project's
@@ -31,6 +32,16 @@ function mulberry32(seed: number) {
 
 export const THEME_BASE_TEXTURE = 'theme-base';
 
+/** M15 (docs/design/dual-grid.md section 2.3). */
+export interface RenderOptions {
+  /** Run the dual pass (2b: wall outlines, corner cuts, floor shadows, cliffs). Defaults to true, matching the
+   *  `office.dualGrid` setting; `false` renders the exact pre-M15 command stream (flat per-tile paint). */
+  dualGrid?: boolean;
+}
+
+/** The order in which a dual cell's quadrants pick its theme (section 2.2): the first non-void one wins. */
+const DUAL_THEME_ORDER = ['br', 'bl', 'tr', 'tl'] as const;
+
 /**
  * Paints one `GeneratedMap` into a single generated texture, per the theme's paint functions.
  * Geometry never depends on style (D2 in the design doc) — this only chooses how each tile and
@@ -39,8 +50,11 @@ export const THEME_BASE_TEXTURE = 'theme-base';
  * `regions` (M8 8h, the Multiverse): a tile, door, or furniture item inside a region's `rect` is
  * painted with that region's theme instead of the base `theme`; regions must not overlap. Every
  * existing single-theme caller passes none and behaves exactly as before.
+ *
+ * Pass order (back-wall.md 3.2 + dual-grid.md 2.2): tiles → island edges → dual cells → back wall →
+ * wall decor → doors → furniture.
  */
-export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme: ThemeDefinition, regions: ThemeRegion[] = []): string {
+export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme: ThemeDefinition, regions: ThemeRegion[] = [], opts: RenderOptions = {}): string {
   // Perf note (M8 style pass): everything below - every floor/wall/furniture tile for the whole
   // floor - is drawn once into a single shared `Graphics` and baked into one `generateTexture` call
   // (`THEME_BASE_TEXTURE`), i.e. this layer is already one texture / one draw call per floor; there
@@ -52,6 +66,7 @@ export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme
   const T = map.tileSize;
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
   const rand = mulberry32(map.seed ^ 0x9e3779b9);
+  const dual = opts.dualGrid !== false;
 
   const themeAt = (x: number, y: number): ThemeDefinition => regions.find((r) => rectContains(r.rect, x, y))?.theme ?? theme;
 
@@ -86,7 +101,13 @@ export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme
       else if (tile === 'wall') {
         const faceVisible = isFaceTile(x, y);
         const wallTheme = themeAt(x, y);
-        wallTheme.paintWall(g, px, py, wallTheme.paintBackWall ? false : faceVisible, rand);
+        // M15: with the dual pass on, the wall top is painted WITHOUT its per-tile edge line (the dual
+        // cells draw the real outline). A theme with `paintWallBase` but no tall face keeps `paintWall`
+        // on its face tiles, so the short pre-8p face still shows there. `paintWallBase` consumes the
+        // same `rand()` draws as `paintWall`, so the floor noise is identical with the flag on and off.
+        const useBase = dual && !!wallTheme.paintWallBase && (!!wallTheme.paintBackWall || !faceVisible);
+        if (useBase) wallTheme.paintWallBase!(g, px, py, rand);
+        else wallTheme.paintWall(g, px, py, wallTheme.paintBackWall ? false : faceVisible, rand);
       }
     }
   }
@@ -107,6 +128,32 @@ export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme
           theme.paintIslandEdge(g, x * T, y * T, depth, rand);
         }
       }
+    }
+  }
+
+  // Dual cells (M15, docs/design/dual-grid.md section 2): one cell per tile corner, (cols+1)(rows+1) of them,
+  // painted AFTER the island edges (which refill their void tile) and BEFORE the back-wall faces (which own
+  // the face quadrants). Own PRNG so pass 1's stream above is untouched. Both hooks are called for every
+  // cell, uniform ones included (the painters return before any draw on `isUniform`); floor edges first so
+  // a wall outline wins where the two meet (a floor peninsula next to a wall cap).
+  if (dual) {
+    const dualRand = mulberry32(map.seed ^ 0x5d1a7c3b);
+    const dualThemeAt = (cell: DualCell): ThemeDefinition => {
+      for (const q of DUAL_THEME_ORDER) {
+        if (cell.kinds[q] === 'void') continue;
+        const t = quadrantTile(cell, q);
+        return themeAt(t.x, t.y);
+      }
+      return theme;
+    };
+    for (const cell of buildDualCells(map)) {
+      const t = dualThemeAt(cell);
+      if (!t.paintDualFloor && !t.paintDualWall) continue;
+      const { capPx, bandPx } = t.backWall ?? { capPx: 0, bandPx: 0 };
+      const { px, py } = cellOrigin(cell, T);
+      const ctx: DualCtx = { cell, px, py, T, capPx, bandPx, facePass: !!t.paintBackWall };
+      t.paintDualFloor?.(g, ctx, dualRand);
+      t.paintDualWall?.(g, ctx, dualRand);
     }
   }
 

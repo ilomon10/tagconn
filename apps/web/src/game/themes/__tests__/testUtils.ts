@@ -1,8 +1,7 @@
 import type * as Phaser from 'phaser';
 
-/** A stub `Graphics` that records every draw call instead of touching a real canvas. */
-export function makeStubGraphics(): { g: Phaser.GameObjects.Graphics; calls: string[] } {
-  const calls: string[] = [];
+/** A stub `Graphics` that records every draw call (method names, into `calls`) instead of touching a real canvas. */
+export function makeStubGraphics(calls: string[] = []): { g: Phaser.GameObjects.Graphics; calls: string[] } {
   const methods = [
     'fillStyle',
     'fillRect',
@@ -101,24 +100,45 @@ export interface FakeScene {
   scene: Phaser.Scene;
   tweenCount: () => number;
   imageCount: () => number;
+  /** Every `fillRect` of every `make.graphics()` in call order; filled only with `recordRects` (M15). */
+  rects: RecordedRect[];
+  /** Every draw-method name of every `make.graphics()` in call order (`makeStubGraphics` `calls`); with
+   *  `recordRects` only. Lets a test compare two whole command streams, not just their rects. */
+  calls: string[];
+}
+
+export interface FakeSceneOptions {
+  /** Record the `fillRect` bounds and method names of the graphics the scene makes (M15: the dual pass
+   *  "off = byte-identical" and perf-count tests). Off by default: the stubs then only count calls. */
+  recordRects?: boolean;
 }
 
 /** A minimal fake `Phaser.Scene` covering exactly what `renderTheme.ts`, `guild.ts` and `modern.ts`
  *  call: `make.graphics`, `textures.exists/remove`, `add.image/container`, and `tweens.add`. */
-export function makeFakeScene(): FakeScene {
+export function makeFakeScene(opts: FakeSceneOptions = {}): FakeScene {
   const textureKeys = new Set<string>();
   let tweens = 0;
   let images = 0;
+  const rects: RecordedRect[] = [];
+  const allCalls: string[] = [];
   const scene = {
     make: {
       graphics: () => {
-        const { g } = makeStubGraphics();
+        const { g } = makeStubGraphics(opts.recordRects ? allCalls : []);
         const raw = g as unknown as Record<string, (...args: unknown[]) => unknown>;
         const original = raw.generateTexture!;
         raw.generateTexture = (...args: unknown[]) => {
           textureKeys.add(args[0] as string);
           return original(...args);
         };
+        if (opts.recordRects) {
+          const originalFillRect = raw.fillRect!;
+          raw.fillRect = (...args: unknown[]) => {
+            const [x, y, w, h] = args as number[];
+            rects.push({ x: x!, y: y!, w: w!, h: h! });
+            return originalFillRect(...args);
+          };
+        }
         return g;
       },
     },
@@ -145,5 +165,7 @@ export function makeFakeScene(): FakeScene {
     scene: scene as unknown as Phaser.Scene,
     tweenCount: () => tweens,
     imageCount: () => images,
+    rects,
+    calls: allCalls,
   };
 }

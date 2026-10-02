@@ -280,10 +280,10 @@ describe('tilePassable', () => {
   });
 
   it('small routes through a half-tile gap a person cannot pass', () => {
-    // 3 x 1 tiles; the middle tile keeps only its right column of cells.
+    // 3 x 1 tiles; the middle tile keeps only its top row of cells (a half-tile gap along the walk).
     const g = createNavGrid(3, 1);
     for (let cy = 0; cy < g.crows; cy++) for (let cx = 0; cx < g.ccols; cx++) setCell(g, cx, cy, true);
-    for (let cy = 0; cy < SUB; cy++) setCell(g, SUB, cy, false);
+    for (let cx = SUB; cx < 2 * SUB; cx++) setCell(g, cx, SUB - 1, false);
     computeClearance(g);
     const planner = new MacroPlanner(g);
     expect(planner.search({ x: 0, y: 0 }, { x: 2, y: 0 }, 'person')).toBeNull();
@@ -292,5 +292,30 @@ describe('tilePassable', () => {
       { x: 1, y: 0 },
       { x: 2, y: 0 },
     ]);
+  });
+
+  it('small: a step needs a free cell pair across the shared edge (a divider on the edge cuts the hop)', () => {
+    // The middle tile keeps only its right column: passable, but nothing of it touches the left tile.
+    const g = createNavGrid(3, 1);
+    for (let cy = 0; cy < g.crows; cy++) for (let cx = 0; cx < g.ccols; cx++) setCell(g, cx, cy, true);
+    for (let cy = 0; cy < SUB; cy++) setCell(g, SUB, cy, false);
+    computeClearance(g);
+    const planner = new MacroPlanner(g);
+    expect(tilePassable(g, 'small', 1, 0)).toBe(true);
+    expect(planner.search({ x: 0, y: 0 }, { x: 2, y: 0 }, 'small')).toBeNull();
+    expect(planner.search({ x: 2, y: 0 }, { x: 1, y: 0 }, 'small')).toEqual([{ x: 2, y: 0 }, { x: 1, y: 0 }]);
+    // A diagonal step needs the touching corner cells and both orthogonal corners (no cell-level corner cut).
+    const d = createNavGrid(2, 2);
+    for (let cy = 0; cy < d.crows; cy++) for (let cx = 0; cx < d.ccols; cx++) setCell(d, cx, cy, true);
+    setCell(d, SUB, SUB - 1, false); // bottom-left cell of tile (1, 0)
+    computeClearance(d);
+    const dp = new MacroPlanner(d);
+    // (0,0) -> (1,1) straight across is cut; the planner routes around (via (1,0): E is tried before S, ids tie-break).
+    expect(dp.search({ x: 0, y: 0 }, { x: 1, y: 1 }, 'small')).toEqual([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }]);
+    // A fully free 2 x 2 takes the diagonal.
+    setCell(d, SUB, SUB - 1, true);
+    computeClearance(d);
+    dp.invalidate();
+    expect(dp.search({ x: 0, y: 0 }, { x: 1, y: 1 }, 'small')).toEqual([{ x: 0, y: 0 }, { x: 1, y: 1 }]);
   });
 });

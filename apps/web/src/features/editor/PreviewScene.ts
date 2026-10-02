@@ -4,6 +4,7 @@ import type { GeneratedMap } from '../../game/procgen';
 import { getTheme, prefersReducedMotion, renderGeneratedMap, type ThemeDefinition } from '../../game/themes';
 import type { OfficeLayoutInput, OfficeStyle } from '@tagconn/shared';
 import { draftAsLayout } from '../../stores/editorStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { generateTextures } from '../../game/textures';
 
 /**
@@ -25,23 +26,27 @@ export class PreviewScene extends Phaser.Scene {
   private map: GeneratedMap;
   private theme: ThemeDefinition;
   private ambient: boolean;
+  /** M15: `office.dualGrid` — the preview paints with the same edge pass as the live office. */
+  private dualGrid: boolean;
   private fxObjects: Phaser.GameObjects.GameObject[] = [];
   private wanderers: Wanderer[] = [];
   private isPanning = false;
   private lastPointer = { x: 0, y: 0 };
 
-  constructor(map: GeneratedMap, theme: ThemeDefinition, ambient: boolean) {
+  constructor(map: GeneratedMap, theme: ThemeDefinition, ambient: boolean, dualGrid = true) {
     super('hall-planner-preview');
     this.map = map;
     this.theme = theme;
     this.ambient = ambient;
+    this.dualGrid = dualGrid;
   }
 
   /** Recomputes and repaints for a new draft/style, without recreating the Phaser.Game. */
-  rebuild(map: GeneratedMap, theme: ThemeDefinition, ambient: boolean) {
+  rebuild(map: GeneratedMap, theme: ThemeDefinition, ambient: boolean, dualGrid = this.dualGrid) {
     this.map = map;
     this.theme = theme;
     this.ambient = ambient;
+    this.dualGrid = dualGrid;
     this.children.removeAll(true);
     this.fxObjects.forEach((o) => o.destroy());
     this.fxObjects = [];
@@ -76,7 +81,7 @@ export class PreviewScene extends Phaser.Scene {
   }
 
   private build() {
-    const key = renderGeneratedMap(this, this.map, this.theme);
+    const key = renderGeneratedMap(this, this.map, this.theme, [], { dualGrid: this.dualGrid });
     this.add.image(0, 0, key).setOrigin(0, 0);
     this.fxObjects = this.theme.animate(this, this.map, { ambient: this.ambient });
 
@@ -140,6 +145,11 @@ export function buildPreview(draft: OfficeLayoutInput, style: OfficeStyle): { ma
   return { map, theme: getTheme(style) };
 }
 
+/** The server's `office.dualGrid` (default on): the Hall Planner has no per-draft toggle, it previews the setting. */
+function currentDualGrid(): boolean {
+  return useSettingsStore.getState().settings.office.dualGrid ?? true;
+}
+
 /** A small wrapper Phaser.Game so the host component doesn't need to know Phaser's config shape. */
 export class PreviewGame {
   private game: Phaser.Game;
@@ -148,7 +158,7 @@ export class PreviewGame {
   constructor(parent: HTMLElement, draft: OfficeLayoutInput, style: OfficeStyle) {
     const { map, theme } = buildPreview(draft, style);
     const ambient = !prefersReducedMotion();
-    this.scene = new PreviewScene(map, theme, ambient);
+    this.scene = new PreviewScene(map, theme, ambient, currentDualGrid());
     this.game = new Phaser.Game({
       type: Phaser.AUTO,
       parent,
@@ -164,7 +174,7 @@ export class PreviewGame {
 
   update(draft: OfficeLayoutInput, style: OfficeStyle) {
     const { map, theme } = buildPreview(draft, style);
-    this.scene.rebuild(map, theme, !prefersReducedMotion());
+    this.scene.rebuild(map, theme, !prefersReducedMotion(), currentDualGrid());
   }
 
   destroy() {

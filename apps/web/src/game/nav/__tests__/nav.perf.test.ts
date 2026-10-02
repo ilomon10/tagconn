@@ -4,8 +4,10 @@ import { generateMap } from '../../procgen/generate';
 import { mulberry32 } from '../../procgen/rng';
 import type { Point } from '../../procgen/types';
 import { CLEARANCE_MAX } from '../constants';
-import { buildNavGrid, setCell, updateClearance } from '../grid';
+import { buildNavGrid, navPointOfTile, pointOfAnchor, setCell, updateClearance } from '../grid';
 import { MacroPlanner } from '../macro';
+import { hopWindow, lineOfSight, microAStar } from '../micro';
+import { Navigator } from '../navigator';
 import { maxRoomsLayout, toLayout } from './perfLayout';
 
 /**
@@ -32,6 +34,11 @@ const BUILD_MAX_SAMPLE_MS = 100;
 const UPDATE_MEDIAN_MS = 0.25;
 const MACRO_P50_MS = 1;
 const MACRO_P99_MS = 5;
+const FIND_PERSON_P50_MS = 2;
+const FIND_SMALL_P50_MS = 4;
+const FIND_P99_MS = 10;
+const LOS_MEDIAN_MS = 0.2;
+const MICRO_MEDIAN_MS = 0.2;
 
 describe('perf budget: nav grid (M15 T1)', () => {
   const map = generateMap(toLayout(maxRoomsLayout(), 'perf'));
@@ -97,5 +104,67 @@ describe('perf budget: macro A* (M15 T4)', () => {
     const p99 = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.99))]!;
     expect(p50).toBeLessThanOrEqual(MACRO_P50_MS);
     expect(p99).toBeLessThanOrEqual(MACRO_P99_MS);
+  });
+});
+
+describe('perf budget: Navigator (M15 T6)', () => {
+  const map = generateMap(toLayout(maxRoomsLayout(), 'perf'));
+  const g = map.nav ?? buildNavGrid(map);
+  const seats: Point[] = map.rooms.flatMap((r) => r.seats.map((s) => ({ x: s.x, y: s.y })));
+  const rnd = mulberry32(0x5e5e);
+  const targets = Array.from({ length: 200 }, () => seats[Math.floor(rnd() * seats.length)]!);
+
+  /** p50 / p99 of `findPath(spawn, seat, cls)` over the 200 targets (full lazy pull included: every segment is consumed). */
+  function findPathSamples(cls: 'person' | 'small'): { p50: number; p99: number; found: number } {
+    const k = cls === 'person' ? 2 : 1;
+    const nav = new Navigator(g);
+    const from = navPointOfTile(map.spawn, k);
+    for (const t of targets) nav.findPath(from, navPointOfTile(t, k), cls); // warm-up (JIT + the passability cache)
+    const samples: number[] = [];
+    let found = 0;
+    for (const t of targets) {
+      const to = navPointOfTile(t, k);
+      const t0 = performance.now();
+      const path = nav.findPath(from, to, cls);
+      if (path) while (path.nextSegment() !== null) { /* consume every segment: the LOS work is lazy */ }
+      samples.push(performance.now() - t0);
+      if (path) found++;
+    }
+    samples.sort((a, b) => a - b);
+    return { p50: samples[Math.floor(samples.length * 0.5)]!, p99: samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.99))]!, found };
+  }
+
+  it('findPath(person) spawn -> 200 random seats at 128 x 96, segments consumed: p50 <= 2 ms', () => {
+    const { p50, p99, found } = findPathSamples('person');
+    expect(found).toBe(200);
+    expect(p50).toBeLessThanOrEqual(FIND_PERSON_P50_MS);
+    expect(p99).toBeLessThanOrEqual(FIND_P99_MS);
+  });
+
+  it('findPath(small) spawn -> 200 random seats at 128 x 96, segments consumed: p50 <= 4 ms', () => {
+    const { p50, p99, found } = findPathSamples('small');
+    expect(found).toBe(200);
+    expect(p50).toBeLessThanOrEqual(FIND_SMALL_P50_MS);
+    expect(p99).toBeLessThanOrEqual(FIND_P99_MS);
+  });
+
+  it('one lineOfSight across the map and one windowed microAStar each stay under 0.2 ms', () => {
+    const a = navPointOfTile(map.spawn);
+    const b = navPointOfTile(targets[0]!);
+    const N = 200; // one sample = N calls, so the timer resolution does not dominate; the budget is per call
+    const los = sampleDurations(() => {
+      for (let i = 0; i < N; i++) lineOfSight(g, a, b, 2);
+    }, 9).map((ms) => ms / N);
+    expect(los[Math.floor(los.length / 2)]!).toBeLessThan(LOS_MEDIAN_MS);
+    // A k = 2 diagonal hop window (6 x 6 cells) between the spawn tile and its diagonal neighbour.
+    const t0 = map.spawn;
+    const t1 = { x: t0.x + 1, y: t0.y + 1 };
+    const win = hopWindow(t0, t1, 2);
+    const from = navPointOfTile(t0);
+    const to = pointOfAnchor({ x: t1.x * 2, y: t1.y * 2 }, 2);
+    const micro = sampleDurations(() => {
+      for (let i = 0; i < N; i++) microAStar(g, from, to, 2, win);
+    }, 9).map((ms) => ms / N);
+    expect(micro[Math.floor(micro.length / 2)]!).toBeLessThan(MICRO_MEDIAN_MS);
   });
 });

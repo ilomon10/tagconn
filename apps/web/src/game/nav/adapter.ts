@@ -6,11 +6,13 @@
 import type { Point } from '../procgen/types';
 import { isTileStandable, navGridFromWalkable, tileOfNavPoint } from './grid';
 import { MacroPlanner } from './macro';
+import { Navigator } from './navigator';
 import type { NavGrid } from './types';
 
 export class PathFinder {
   readonly nav: NavGrid;
   private readonly macro: MacroPlanner;
+  private nav_?: Navigator;
 
   /** A NavGrid, or a legacy `number[][]` walkable grid (wrapped with `navGridFromWalkable`). */
   constructor(source: NavGrid | readonly (readonly number[])[]) {
@@ -32,6 +34,12 @@ export class PathFinder {
   find(from: Point, to: Point): Point[] | null {
     if (!this.isWalkable(to)) return null;
     return this.macro.search(from, to, 'person', { allowBlockedStart: true });
+  }
+
+  /** The shared Navigator over the same grid and planner (W3 px walks). Created on first use. */
+  navigator(): Navigator {
+    this.nav_ ??= new Navigator(this.nav, this.macro);
+    return this.nav_;
   }
 }
 

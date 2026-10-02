@@ -3,6 +3,10 @@ import type { Activity, AgentStatus } from '@tagconn/shared';
 import type { ActorKey } from '../cast';
 import { INITIAL_LIFECYCLE, type LifecycleFrame } from '../actorLifecycle';
 import { DIZZY_FRAMES, EMOTE_ICON, STRAIN_ICON } from '../drama';
+import { navClassForCreature, type NavClass } from '../nav/classes';
+import { FEET_DY } from '../nav/constants';
+import { navPointOfTile } from '../nav/grid';
+import type { NavPath } from '../nav/navigator';
 import type { Point } from '../procgen/types';
 import type { Size } from '../labels';
 import { HAIR_COLORS, HAIR_STYLES, KO_FRAMES, SKIN_TONES } from '../textures';
@@ -13,6 +17,7 @@ import { clipDisplayText } from '../../lib/displayText';
 import { PIXEL_FONT_KEYS, ensurePixelFonts, hasGlyphs } from '../text/pixelFont';
 import { PIXEL_METRICS, layoutPlate, pixelMeasure, plateGlyphScale, taskVisible, type MeasureFn, type PlateLayout, type PlateOptions, type PlateStyle } from './namePlate';
 import { POSE_ANIM, POSE_PROP } from './poses';
+import { facingOf, feetOfNavPoint, WalkQueue, type Facing } from './walkQueue';
 
 export interface CharacterLook {
   color: number;
@@ -161,8 +166,13 @@ export class Character extends Phaser.GameObjects.Container {
   private bubbleText: Phaser.GameObjects.Text;
   private bubbleBg: Phaser.GameObjects.Graphics;
 
-  private path: Point[] = [];
+  /** Feet px targets (M15: fed by a tile path, a nav point list or a lazily pulled NavPath). */
+  private readonly queue = new WalkQueue();
   private onArrive?: () => void;
+  /** Routing class (docs/design/navigation.md section 4.6); `setCreature` sets it, humans are `person`. */
+  navClass: NavClass = 'person';
+  /** M17 hook: direction of the current walk segment; today only `upper.scaleX` flips with it. */
+  facing: Facing = 's';
   private activity: Activity = 'idle';
   private status: AgentStatus = 'active';
   private seated = false;
@@ -625,6 +635,7 @@ export class Character extends Phaser.GameObjects.Container {
   setCreature(id: CreatureId | null): void {
     if (id === this.creature) return;
     this.creature = id;
+    this.navClass = navClassForCreature(id ?? undefined);
     this.upper.setVisible(!id);
     this.legs.setVisible(!id);
     this.creatureImg.setVisible(!!id);
@@ -922,21 +933,41 @@ export class Character extends Phaser.GameObjects.Container {
     return { x: Math.floor(this.x / 16), y: Math.floor((this.y - 1) / 16) };
   }
 
-  get walking() {
-    return this.path.length > 0;
+  /** The feet shifted up by FEET_DY: a person's nav point is its tile centre (navigation.md invariant 6). */
+  get navPoint(): Point {
+    return { x: this.x, y: this.y - FEET_DY };
+  }
+
+  /** A feet target is queued or an unfinished NavPath can still give one. */
+  get walking(): boolean {
+    return this.queue.walking;
   }
 
   teleport(p: Point) {
-    this.path = [];
+    this.queue.clear();
     this.setPosition(p.x * 16 + 8, p.y * 16 + 14);
   }
 
+  /** Tile path (the tile we stand on first). Feet px are today's exactly: tile centre nav point + FEET_DY. */
   walk(path: Point[], seated: boolean, onArrive?: () => void) {
     // Drop the tile we're standing on.
-    this.path = path.slice(1).map((p) => ({ x: p.x * 16 + 8, y: p.y * 16 + 14 }));
+    this.walkPoints(path.slice(1).map((t) => navPointOfTile(t)), seated, onArrive);
+  }
+
+  /** Nav points (excluding the current position); feet px = point + FEET_DY on y. Replaces any walk in progress. */
+  walkPoints(points: readonly Point[], seated: boolean, onArrive?: () => void) {
+    this.queue.setFeet(points.map(feetOfNavPoint));
     this.seated = seated;
     this.onArrive = onArrive;
-    if (!this.path.length) this.arrive();
+    if (this.queue.peek() === null) this.arrive();
+  }
+
+  /** Pulls `path.nextSegment()` whenever the px queue runs empty; `onArrive` once the path is done. Replaces any walk in progress. */
+  walkNav(path: NavPath, seated: boolean, onArrive?: () => void) {
+    this.queue.setNav(path);
+    this.seated = seated;
+    this.onArrive = onArrive;
+    if (this.queue.peek() === null) this.arrive();
   }
 
   setSeated(seated: boolean) {
@@ -1004,18 +1035,20 @@ export class Character extends Phaser.GameObjects.Container {
   }
 
   update(now: number, dt: number, speed: number) {
-    if (this.path.length) {
+    let next = this.queue.peek();
+    if (next !== null) {
       let step = (speed * dt) / 1000;
-      while (step > 0 && this.path.length) {
-        const next = this.path[0]!;
+      while (step > 0 && next !== null) {
         const dx = next.x - this.x;
         const dy = next.y - this.y;
+        this.facing = facingOf(dx, dy, this.facing);
         const d = Math.hypot(dx, dy);
         if (d <= step) {
           this.setPosition(next.x, next.y);
-          this.path.shift();
+          this.queue.shift();
           step -= d;
-          if (!this.path.length) this.arrive();
+          next = this.queue.peek();
+          if (next === null) this.arrive();
         } else {
           this.setPosition(this.x + (dx / d) * step, this.y + (dy / d) * step);
           if (Math.abs(dx) > 0.5) this.upper.scaleX = dx < 0 ? -1 : 1;
@@ -1036,7 +1069,7 @@ export class Character extends Phaser.GameObjects.Container {
 
   private animate(now: number) {
     const t = now / 1000 + this.phase * 10;
-    const walking = this.path.length > 0;
+    const walking = this.walking;
     const pose = !walking && !this.isWaiting ? this.pose : null;
     const poseAnim = pose ? POSE_ANIM[pose] : null;
     const sitting = !walking && (pose === 'sit' || (this.seated && SIT_ACTIVITIES.has(this.activity)));
