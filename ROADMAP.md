@@ -298,12 +298,12 @@ fractional sizes). Designs: `docs/design/lighting.md`, `docs/design/furnishing.m
 Design `docs/design/depth-25d.md`, ADR #31. Layouts and pins load unchanged; flags restore the v0.10 look.
 
 - [x] Design, ADR #31, task split
-- [ ] W0 contract: `office.camera.*`, `office.depth.*`, depth types and tables, character views
-- [ ] Spike: modern desks room, walk behind a bookcase, sit in a chair facing north (atlas on WebGL and canvas)
-- [ ] Y-sorted furniture sprites from a code-drawn atlas, sit-in front strips (replaces the receptionist desk-front hack)
-- [ ] 4-direction characters with walk cycles, seat facing
-- [ ] Height map, wall shadows, see-through fade for tall items hiding a character
-- [ ] Follow camera with deadzone, integer zoom, optional perspective shader; Hall Planner preview on the sprite path
+- [x] W0 contract: `office.camera.*`, `office.depth.*`, depth types and tables, character views
+- [x] Spike: modern desks room, walk behind a bookcase, sit in a chair facing north (atlas on WebGL and canvas)
+- [x] Y-sorted furniture sprites from a code-drawn atlas, sit-in front strips (replaces the receptionist desk-front hack)
+- [x] 4-direction characters with walk cycles, seat facing
+- [x] Height map, wall shadows, see-through fade for tall items hiding a character
+- [x] Follow camera with deadzone, integer zoom, optional perspective shader; Hall Planner preview on the sprite path
 - [ ] Gate → v1.0.0
 
 ## Backlog

@@ -13,6 +13,7 @@ uniform float k;
 uniform float hazeStrength;
 uniform vec3 haze;
 uniform float texel;
+uniform float phase;
 varying vec2 outTexCoord;
 
 void main() {
@@ -23,7 +24,7 @@ void main() {
   }
   float t = 1.0 - uv.y;
   float srcT = t + k * (t - t * t);
-  if (texel > 0.0) srcT = (floor(srcT / texel) + 0.5) * texel;
+  if (texel > 0.0) srcT = (floor((srcT + phase) / texel) + 0.5) * texel - phase;
   vec4 c = texture2D(uMainSampler, vec2(uv.x, 1.0 - clamp(srcT, 0.0, 1.0)));
   gl_FragColor = vec4(mix(c.rgb, haze, hazeStrength * (1.0 - t)), c.a);
 }
@@ -33,16 +34,19 @@ export class PerspectivePipeline extends Phaser.Renderer.WebGL.Pipelines.PostFXP
   perspective = 0;
   zoom = 1;
   bgColor = 0;
+  /** Camera scrollY in world px (art rows are anchored to it); set by PostFxController.setScroll. */
+  scrollY = 0;
 
   constructor(game: Phaser.Game) {
     super({ game, fragShader: FRAG_SHADER });
   }
 
   onPreRender(): void {
-    const u = perspectiveUniforms(this.perspective, this.zoom, this.renderer.height, this.bgColor);
+    const u = perspectiveUniforms(this.perspective, this.zoom, this.renderer.height, this.bgColor, this.scrollY);
     this.set1f('k', u.k);
     this.set1f('hazeStrength', u.hazeStrength);
     this.set3f('haze', u.haze[0], u.haze[1], u.haze[2]);
     this.set1f('texel', u.texel);
+    this.set1f('phase', u.phase);
   }
 }

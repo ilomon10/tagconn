@@ -23,6 +23,17 @@ describe('perspectiveUniforms', () => {
   });
 });
 
+describe('perspectiveUniforms phase', () => {
+  it('is the fractional art-row offset of the scroll in UV units, 0 for no scroll or a whole number of rows', () => {
+    expect(perspectiveUniforms(0.5, 2, 800, 0).phase).toBe(0);
+    expect(perspectiveUniforms(0.5, 2, 800, 10).phase).toBeCloseTo(0);
+    expect(perspectiveUniforms(0.5, 2, 800, 10.25).phase).toBeCloseTo(0.5 / 800);
+    expect(perspectiveUniforms(0.5, 2, 800, -0.25).phase).toBeCloseTo(1.5 / 800);
+    expect(perspectiveUniforms(0.5, 2, 0, 3.3).phase).toBe(0);
+    expect(perspectiveUniforms(0, 2, 800, 3.3).k).toBe(0);
+  });
+});
+
 describe('perspectiveSource / unproject', () => {
   it('keeps the endpoints and is monotonic', () => {
     const k = PERSPECTIVE_K_MAX;

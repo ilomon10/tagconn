@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser';
+import { ringDepthOf } from './ringDepth';
 import { hitScaleFor } from '../camera/hitsize';
 import { createSeenStore, triggerTooltip, triggersOf } from '../furnitureTriggers';
 import type { FurnitureAction, GeneratedMap, PlacedFurniture } from '../procgen/types';
@@ -17,7 +18,6 @@ export interface TriggerHost {
 }
 
 const RING_COLOR = 0xf3c94d;
-const RING_DEPTH = 0.5;
 /** Above realm zones (-3), below characters; stairs zones sit at -1 so they never tie. */
 const TRIGGER_DEPTH = -1.5;
 const PULSE_THROTTLE_MS = 500;
@@ -63,11 +63,12 @@ export class FurnitureTriggerLayer {
       const h = f.h * T;
       const cx = f.x * T + w / 2;
       const cy = f.y * T + h / 2;
+      const ringDepth = ringDepthOf(f, T);
       const entry: Entry = {
         furniture: f,
         zone: this.scene.add.zone(cx, cy, w, h).setDepth(TRIGGER_DEPTH),
-        ring: this.makeRing(cx, cy, w, h).setVisible(false),
-        pulse: this.makeRing(cx, cy, w, h).setVisible(false),
+        ring: this.makeRing(cx, cy, w, h, ringDepth).setVisible(false),
+        pulse: this.makeRing(cx, cy, w, h, ringDepth).setVisible(false),
         baseW: w,
         baseH: h,
         tween: null,
@@ -144,8 +145,8 @@ export class FurnitureTriggerLayer {
     return this.host.styleFor?.(f) ?? fallback;
   }
 
-  private makeRing(cx: number, cy: number, w: number, h: number): Phaser.GameObjects.Graphics {
-    const g = this.scene.add.graphics().setDepth(RING_DEPTH).setPosition(cx, cy);
+  private makeRing(cx: number, cy: number, w: number, h: number, depth: number): Phaser.GameObjects.Graphics {
+    const g = this.scene.add.graphics().setDepth(depth).setPosition(cx, cy);
     g.lineStyle(1, RING_COLOR, 1);
     g.strokeRoundedRect(-w / 2 - 1, -h / 2 - 1, w + 2, h + 2, 3);
     return g;

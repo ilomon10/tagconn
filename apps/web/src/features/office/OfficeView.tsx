@@ -220,6 +220,9 @@ async function goToFloor(game: OfficeGame | null, target: Project, ms: number, l
   showToast(label);
 }
 
+/** M17: `office.camera.follow = 'selected'` starts following the character a click (or the party bar) selects. */
+const followOnSelect = () => useSettingsStore.getState().settings.office.camera?.follow === 'selected';
+
 export function OfficeView({ active }: { active: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
@@ -260,7 +263,7 @@ export function OfficeView({ active }: { active: boolean }) {
     const g = new OfficeGame(host.current);
     const offClick = g.on('agentClick', (id) => {
       setSelected(id);
-      setFollow(false);
+      setFollow(followOnSelect());
       g.focus(id);
     });
     const offEmpty = g.on('emptyClick', () => closePanel());
@@ -540,7 +543,7 @@ export function OfficeView({ active }: { active: boolean }) {
   const selectAgent = (id: string) => {
     setTrayOpen(false);
     setSelected(id);
-    setFollow(false);
+    setFollow(followOnSelect());
     game?.focus(id);
   };
 

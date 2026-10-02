@@ -35,9 +35,7 @@ import {
   getTheme,
   paintCostumeTextures,
   prefersReducedMotion,
-  renderGeneratedMap,
   themedBubble,
-  THEME_BASE_TEXTURE,
   type ThemeDefinition,
   type ThemeRegion,
 } from '../themes';
@@ -52,6 +50,11 @@ import { receptionistLookKey } from '../receptionistLook';
 import { counterScale, labelVisible, layoutLabels, type LabelSubject, type Rect as LabelRect } from '../labels';
 import { PostFxController } from '../postfx/PostFxController';
 import { LightingController } from '../lighting/LightingController';
+import { renderFloor, type FloorRender } from '../depth/renderFloor';
+import { SeeThroughController } from '../depth/SeeThroughController';
+import { followStep } from '../camera/follow';
+import { snapZoom } from '../camera/snap';
+import { seatFacingAt } from '../seats';
 import type { ClockSync, LightingOverride } from '../lighting/clock';
 import { DramaDirector } from './dramaDirector';
 import { CosmeticClaims } from '../cosmetic/claims';
@@ -79,7 +82,6 @@ interface KoView extends KoTarget {
 const RECEPTIONIST_KEY: ActorKey = 'npc:receptionist';
 /** Feet offset inside the desk tile, and where the desk-front strip starts, so she reads as seated behind the counter. */
 const RECEPTIONIST_DESK_FEET_DY = 10;
-const RECEPTIONIST_DESK_FRONT_DY = 6;
 /** Screen-px margin the off-screen selection arrow keeps from the safe viewport's edge, and its click radius. */
 const EDGE_ARROW_MARGIN = 26;
 const EDGE_ARROW_HIT = 20;
@@ -311,7 +313,11 @@ export class OfficeScene extends Phaser.Scene {
    *  would destroy it); the scene loop drives its update/hit scale/label scale itself. */
   private receptionist: Character | null = null;
   /** The theme's own desk art, re-cut from the base texture and painted over her legs. */
-  private receptionistDeskFront: Phaser.GameObjects.Image | null = null;
+  /** M17: base texture + y-sorted furniture sprites + atlases of the current floor (depth-25d.md §3.4). */
+  private floor: FloorRender | null = null;
+  private seeThrough!: SeeThroughController;
+  /** M17: the first follow step after `setFollow` lands instantly. */
+  private followInstant = false;
   private receptionistBusy = false;
   /** M12 selection beacon: the screen-space arrow shown while the selected character is off-screen,
    *  and the screen-space rects a click on it counts in (see `handleEdgeArrowClick`). */
@@ -330,6 +336,8 @@ export class OfficeScene extends Phaser.Scene {
   private appliedStyle: OfficeStyle | typeof MULTIVERSE_THEME_ID | null = null;
   /** M15: the `office.dualGrid` value the base texture was last painted with (a change reskins). */
   private appliedDualGrid = true;
+  /** M17: `office.depth.sprites|maxSprites` the floor was rendered with (a change reskins). */
+  private appliedDepthKey = '';
   private floorKey: string | null = null;
   private userZoom = 1;
   /** M9 8f: the zoom `update()` last computed hit scaling for, and the character scale it derived
@@ -402,6 +410,11 @@ export class OfficeScene extends Phaser.Scene {
     // layer (a no-op until `setOfficeState`'s first pass has settings to read).
     this.postFx = new PostFxController(this);
     // M16: host-clock sun, lightmap, furniture + character shadows (docs/design/lighting.md §7).
+    this.seeThrough = new SeeThroughController(this, {
+      characters: () => this.seeThroughCasters(),
+      render: () => this.floor,
+      reducedMotion: () => this.reducedMotion.value,
+    });
     this.lighting = new LightingController(this, {
       map: () => this.map,
       theme: () => this.theme,
@@ -494,7 +507,9 @@ export class OfficeScene extends Phaser.Scene {
       this.reducedMotion.destroy();
       this.postFx.destroy();
       this.receptionist?.destroyAll();
-      this.receptionistDeskFront?.destroy();
+      this.seeThrough.destroy();
+      this.floor?.destroy();
+      this.floor = null;
       this.drama.destroy();
       this.life.destroy();
       this.npcs.destroy();
@@ -572,21 +587,21 @@ export class OfficeScene extends Phaser.Scene {
   /** W3b/M12: (re)creates the floor's Receptionist at `pickReceptionistSpot`'s tile — on a full
    *  rebuild (new map, so a new spot) and on a reskin too (same spot, but the theme's title, costume
    *  and desk art changed). Behind the reception desk she sits with her feet inside the desk tile, and
-   *  the desk's lower part is re-cut from the base texture and drawn in front of her (the desk itself
-   *  is baked into the base texture, so nothing else can paint over a character). */
+   *  the reception desk's front strip sprite (M17, depth-25d.md §2.2) is drawn in front of her. */
   private rebuildReceptionist() {
     this.receptionist?.destroyAll();
     // The old Character is gone, so a hover held on it can never get its pointerout.
     if (this.hoveredKey === RECEPTIONIST_KEY) this.hoveredKey = null;
     this.receptionistLookKey = '';
-    this.receptionistDeskFront?.destroy();
-    this.receptionistDeskFront = null;
     const spot = pickReceptionistSpot(this.map);
     const T = this.map.tileSize;
     const c = new Character(this, RECEPTIONIST_KEY, 0, 0);
     const behindDesk = isReceptionDeskTile(this.map, spot);
     c.setPosition(spot.x * T + T / 2, spot.y * T + (behindDesk ? RECEPTIONIST_DESK_FEET_DY : T - 2));
     c.setSeated(behindDesk);
+    // M17: the reception desk is a sit-in kind; its front strip sprite covers her lap (replaces the old desk-front cut).
+    c.setSeatFacing(behindDesk ? seatFacingAt(this.map, spot) : null);
+    c.setFourDirections(this.state?.settings.office.depth.fourDirections ?? true);
     c.setHitScale(this.currentHitScale);
     c.on('pointerup', () => {
       if (this.drag?.moved || this.pinchGuard || this.arrowPress) return;
@@ -595,16 +610,6 @@ export class OfficeScene extends Phaser.Scene {
     c.on('pointerover', () => this.setHovered(RECEPTIONIST_KEY));
     c.on('pointerout', () => this.setHovered(null));
     this.receptionist = c;
-    if (behindDesk) {
-      const tex = this.textures.get(THEME_BASE_TEXTURE);
-      const frame = 'receptionist-desk-front';
-      if (tex.has(frame)) tex.remove(frame);
-      tex.add(frame, 0, spot.x * T, spot.y * T + RECEPTIONIST_DESK_FRONT_DY, T, T - RECEPTIONIST_DESK_FRONT_DY);
-      this.receptionistDeskFront = this.add
-        .image(spot.x * T, spot.y * T + RECEPTIONIST_DESK_FRONT_DY, THEME_BASE_TEXTURE, frame)
-        .setOrigin(0)
-        .setDepth(c.y + 1);
-    }
     this.applyReceptionistLook();
   }
 
@@ -627,7 +632,6 @@ export class OfficeScene extends Phaser.Scene {
     c.setActivity(activity, 'active');
     c.setActivityFx(this.theme.activityFx?.[activity], ambient);
     c.setShown(enabled);
-    this.receptionistDeskFront?.setVisible(enabled);
   }
 
   /** Any actor the scene draws by key: a cast member, or the Receptionist. */
@@ -638,6 +642,7 @@ export class OfficeScene extends Phaser.Scene {
   /** M13: an NPC is a plain Character with hover handlers (no click: it is not an agent). */
   private spawnNpc(key: ActorKey, at: { x: number; y: number }): Character {
     const c = new Character(this, key, 0, 0);
+    c.setFourDirections(this.state?.settings.office.depth.fourDirections ?? true);
     c.teleport(at);
     c.setHitScale(this.currentHitScale);
     c.on('pointerover', () => this.setHovered(key));
@@ -649,9 +654,14 @@ export class OfficeScene extends Phaser.Scene {
     for (const o of this.worldLayer) o.destroy();
     this.worldLayer = [];
     const T = this.map.tileSize;
-    this.appliedDualGrid = this.state?.settings.office.dualGrid ?? true;
-    renderGeneratedMap(this, this.map, this.theme, this.regions, { dualGrid: this.appliedDualGrid });
-    this.worldLayer.push(this.add.image(0, 0, THEME_BASE_TEXTURE).setOrigin(0).setDepth(-10));
+    const office = this.state?.settings.office;
+    this.appliedDualGrid = office?.dualGrid ?? true;
+    const sprites = office?.depth.sprites ?? true;
+    const maxSprites = office?.depth.maxSprites ?? 1500;
+    this.appliedDepthKey = `${sprites}|${maxSprites}`;
+    // M17: base texture (flat art) + y-sorted furniture sprites from a code-drawn atlas (depth-25d.md §3.4).
+    this.floor?.destroy();
+    this.floor = renderFloor(this, this.map, this.theme, this.regions, { dualGrid: this.appliedDualGrid, sprites, maxSprites });
 
     if (this.multiversePlan) {
       // Room labels are hidden on the Multiverse (section 6.3) — the realm banners below replace them.
@@ -1057,7 +1067,9 @@ export class OfficeScene extends Phaser.Scene {
     const safe = safeViewportRect(cam.width, cam.height, this.insets);
     const fit = Math.min(safe.w / this.worldW, safe.h / this.worldH);
     const cfg = this.state?.settings.office.zoom ?? 1;
-    return Math.max(0.2, fit * cfg * this.userZoom);
+    // M17: whole zoom stops at or above 1 keep art pixels crisp; the plain fit rounds down, a user zoom rounds to nearest.
+    const mode = this.userZoom === 1 ? 'fit' : 'round';
+    return snapZoom(Math.max(0.2, fit * cfg * this.userZoom), this.state?.settings.office.camera.integerZoom ?? true, mode);
   }
 
   fitCamera() {
@@ -1138,7 +1150,8 @@ export class OfficeScene extends Phaser.Scene {
   /** Keep `agentId` centered in the safe rect while it moves; any manual drag cancels this. */
   setFollow(agentId: string | null) {
     this.followId = agentId;
-    if (agentId) this.recenterFollow(prefersReducedMotion());
+    this.followInstant = true;
+    if (agentId) this.recenterFollow(true);
   }
 
   private cancelFollow() {
@@ -1152,24 +1165,43 @@ export class OfficeScene extends Phaser.Scene {
     return key ? this.characters.get(key) : undefined;
   }
 
-  private recenterFollow(instant: boolean) {
+  /** M17 (depth-25d.md §7.1): keep the followed character inside the deadzone of the safe rect, with
+   *  exponential lag; `instant` (reduced motion, insets changes, the first frame after `setFollow`) lands in one step. */
+  private recenterFollow(instant: boolean, dtMs = 16) {
     const c = this.followId ? this.characterForAgent(this.followId) : undefined;
     if (!c) {
       this.cancelFollow();
       return;
     }
     const cam = this.cameras.main;
-    const target = centerInSafeRect(c.x, c.y - 8, cam.width, cam.height, cam.zoom, this.insets);
-    if (instant) {
-      cam.setScroll(target.scrollX, target.scrollY);
-    } else {
-      cam.scrollX = Phaser.Math.Linear(cam.scrollX, target.scrollX, 0.25);
-      cam.scrollY = Phaser.Math.Linear(cam.scrollY, target.scrollY, 0.25);
-    }
-    this.clampCamera();
+    const camera = this.state?.settings.office.camera;
+    const next = followStep({
+      target: { x: c.x, y: c.y - 8 },
+      scrollX: cam.scrollX,
+      scrollY: cam.scrollY,
+      camWidth: cam.width,
+      camHeight: cam.height,
+      zoom: cam.zoom,
+      insets: this.insets,
+      worldW: this.worldW,
+      worldH: this.worldH,
+      deadzone: camera?.deadzone ?? 0.3,
+      lagMs: camera?.followLagMs ?? 180,
+      dtMs,
+      instant: instant || this.followInstant,
+    });
+    this.followInstant = false;
+    // Whole screen pixels: a fractional scroll would shimmer the art at integer zoom while following.
+    if (next.moved) cam.setScroll(Math.round(next.scrollX * cam.zoom) / cam.zoom, Math.round(next.scrollY * cam.zoom) / cam.zoom);
   }
 
   // ---------------------------------------------------------------- state
+
+  /** M17: characters whose occluders fade (cast + Receptionist; NPCs never fade a bookcase). */
+  private *seeThroughCasters(): Iterable<Character> {
+    yield* this.characters.values();
+    if (this.receptionist) yield this.receptionist;
+  }
 
   /** Everything that casts a character shadow: the cast, live NPCs and the Receptionist. */
   private *shadowCasters(): Iterable<Character> {
@@ -1231,6 +1263,7 @@ export class OfficeScene extends Phaser.Scene {
 
   setOfficeState(state: OfficeState) {
     const prevZoom = this.state?.settings.office.zoom;
+    const prevIntegerZoom = this.state?.settings.office.camera.integerZoom;
     const prevAmbient = this.state?.settings.office.ambientEffects;
     this.state = state;
     const office = state.settings.office;
@@ -1239,7 +1272,11 @@ export class OfficeScene extends Phaser.Scene {
 
     const layoutKey = `${state.layout.id}|${state.layout.updatedAt}|${multiverse?.key ?? ''}`;
     const rebuild = layoutKey !== this.layoutKey;
-    const reskin = !rebuild && (effectiveStyle !== this.appliedStyle || (office.dualGrid ?? true) !== this.appliedDualGrid);
+    const reskin =
+      !rebuild &&
+      (effectiveStyle !== this.appliedStyle ||
+        (office.dualGrid ?? true) !== this.appliedDualGrid ||
+        `${office.depth.sprites}|${office.depth.maxSprites}` !== this.appliedDepthKey);
     if (rebuild) {
       this.layoutKey = layoutKey;
       this.buildWorld(state.layout, effectiveStyle, multiverse);
@@ -1251,9 +1288,17 @@ export class OfficeScene extends Phaser.Scene {
       this.refreshAmbient();
     }
     this.refreshStairsAvailability();
-    if (prevZoom !== office.zoom) this.fitCamera();
-    this.postFx.applySettings(office.shaders, effectiveStyle, prefersReducedMotion(), state.screenFx);
+    if (prevZoom !== office.zoom || prevIntegerZoom !== office.camera.integerZoom) this.fitCamera();
+    // M17: four-direction views (off = the v0.10 single front view + flip); a no-op when unchanged.
+    for (const c of this.characters.values()) c.setFourDirections(office.depth.fourDirections);
+    this.receptionist?.setFourDirections(office.depth.fourDirections);
+    this.postFx.applySettings(office.shaders, effectiveStyle, prefersReducedMotion(), state.screenFx, {
+      amount: office.camera.perspective,
+      bgColor: this.theme.palette.bg,
+    });
     this.lighting.applySettings(office, state.clock, state.lightingOverride); // after postFx: quality is resolved
+    this.lighting.applyDepth(office.depth);
+    this.seeThrough.applySettings(office.depth);
     this.applyReceptionistLook();
     this.triggers.setEnabled(office.furnitureTriggers ?? true);
 
@@ -1317,6 +1362,7 @@ export class OfficeScene extends Phaser.Scene {
       if (member) {
         if (!c) {
           c = new Character(this, key, 0, 0);
+          c.setFourDirections(state.settings.office.depth.fourDirections);
           this.attachCharacterHandlers(c);
           // M9 8f: a character created between zoom changes still needs the current minimum
           // click-target scale, not just whatever `Character`'s constructor defaults to.
@@ -1341,6 +1387,7 @@ export class OfficeScene extends Phaser.Scene {
             if (forceReseat && !cameFromRestOrLeave) {
               c.teleport(seat);
               c.setSeated(seat.seated);
+              c.setSeatFacing(seat.seated ? seatFacingAt(this.map, seat) : null);
             } else {
               this.walk(c, seat, seat.seated);
             }
@@ -1471,6 +1518,7 @@ export class OfficeScene extends Phaser.Scene {
       const seat = this.seats.assign(key, 'lounge', scope);
       c.teleport(seat);
       c.setSeated(seat.seated);
+      c.setSeatFacing(seat.seated ? seatFacingAt(this.map, seat) : null);
     }
     if (!alreadyResting) {
       this.seats.release(key);
@@ -1538,6 +1586,8 @@ export class OfficeScene extends Phaser.Scene {
   }
 
   private walk(c: Character, to: Point, seated: boolean) {
+    // M17: a seated character shows its chair's view (back to the viewer at a desk); read only while sitting.
+    c.setSeatFacing(seated ? seatFacingAt(this.map, to) : null);
     // M15 (navigation.md §4): sub-tile navigator — macro tiles, string-pulled any-angle segments, per-class clearance.
     // A person lands exactly on the target tile's feet point, so seats and the scripts' stall detectors are unchanged.
     const path = this.finder.navigator().findPath(c.navPoint, navPointOfTile(to, CLASS_K[c.navClass]), c.navClass);
@@ -1765,6 +1815,8 @@ export class OfficeScene extends Phaser.Scene {
     const zoom = this.cameras.main.zoom;
     // Pixel-vignette blocks and the LCD grid follow the camera zoom (incl. transition tweens); a field set.
     this.postFx.setZoom(zoom);
+    // M17: the perspective shader snaps whole art rows in phase with the camera scroll.
+    this.postFx.setScroll(this.cameras.main.scrollY);
     // M9 8f: cheaply (once per frame, only on an actual change) keep every hit target's rendered
     // size at or above the WCAG 2.5.8 minimum as the camera zooms — covers the wheel handler,
     // `fitCamera` and the stairs transition's zoom tween alike, since they all just move `cam.zoom`.
@@ -1797,6 +1849,7 @@ export class OfficeScene extends Phaser.Scene {
     this.life.update(time, delta);
     this.npcs.update(time, delta, speed);
     this.lighting.update(time, delta);
+    this.seeThrough.update(time, delta);
     this.koTimer -= delta;
     if (this.koTimer <= 0) {
       this.koTimer = KO_REFRESH_MS;
@@ -1808,7 +1861,7 @@ export class OfficeScene extends Phaser.Scene {
     this.updateBeacon(zoom);
     // M9 8f deferred: under reduced motion, snap to the follow target every frame instead of
     // lerping toward it — `reducedMotion.value` is a cached read, not a per-frame `matchMedia` call.
-    if (this.followId) this.recenterFollow(this.reducedMotion.value);
+    if (this.followId) this.recenterFollow(this.reducedMotion.value, delta);
     this.labelTimer -= delta;
     if (this.labelTimer <= 0) {
       this.labelTimer = LABEL_REFRESH_MS;

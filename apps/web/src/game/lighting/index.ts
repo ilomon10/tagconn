@@ -14,3 +14,4 @@ export * from './shadows';
 export * from './LightmapLayer';
 export * from './ShadowLayer';
 export * from './LightingController';
+export * from './heightmap';

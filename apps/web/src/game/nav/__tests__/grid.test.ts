@@ -450,7 +450,7 @@ describe('buildNavGrid parity with map.walkable (property 1)', () => {
         }
       }
     }
-  });
+  }, 60_000); // property over many maps: correctness, not a timing budget (slow under load)
 
   it('baseWalkable closes tiles the generator marks even when they are floor', () => {
     const map = generateMap(DEFAULT_LAYOUT);

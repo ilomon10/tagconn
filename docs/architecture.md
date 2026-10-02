@@ -46,10 +46,25 @@ Core: config (layered), db (Drizzle/better-sqlite3, WAL), event-bus, di (awilix)
 `lib/socket.ts` (typed client) → `stores/officeStore.ts` (zustand) → React panels (`features/*`) and the
 Phaser game (`game/*`), which uses a procedurally generated map with zones, generated character textures,
 a half-tile navigation grid with true clearance and macro A* pathfinding, micro line-of-sight and string-pulled
-smooth sub-tile movement, and a dual-grid render pass for wall caps and floor shadows (behind `office.dualGrid`).
+smooth sub-tile movement, a dual-grid render pass for wall caps and floor shadows (behind `office.dualGrid`), and
+2.5D depth rendering with y-sorted furniture sprites and character views.
+
+**Game depth rendering** (`game/depth/`): y-sorted tall furniture sprites from code-drawn per-style atlases; four-direction
+character views with walk cycles; see-through fade when items hide the selected character (`SeeThroughController`); and
+a floor-rendering pipeline that composits the base tiles, furniture, characters and effects in depth order. Controlled by
+`office.depth.*` settings. Key modules: `spritePlan.ts` (sprite table), `pack.ts` (atlas packing), `furnitureAtlas.ts`
+(code-drawn atlases), `renderFloor.ts` (compositing), `seeThrough.ts` and `SeeThroughController`.
+
+**Camera** (`game/camera/`): character following with configurable deadzone and motion lag (`follow.ts`); snap zoom to
+integer levels at 1× and above (`snap.ts`); optional perspective post-shader for depth cues (`PerspectivePipeline`).
+Controlled by `office.camera.*` settings.
+
+**Post-effects** (`game/postfx/PerspectivePipeline.ts`): subtle perspective shader that compresses far rows and adds
+distance haze; configurable intensity (0–1). WebGL only; kept under 0.3 for accurate pointer hits.
 
 **Game lighting** (`game/lighting/`): host-clock sun cycle with smooth dawn/dusk ramps; dynamic lightmap with
-visibility polygons, room/wall/point/window lights, and character/furniture cast shadows (pure planning modules:
+visibility polygons, room/wall/point/window lights, and character/furniture cast shadows; height map for shadow lengths
+from wall elevation (`heightmap.ts`); wall shadow casting on the floor from the sun's current angle (pure planning modules:
 `sun.ts`, `occluders.ts`, `visibility.ts`, `plan.ts`, `shadows.ts`; Phaser `LightmapLayer` and `ShadowLayer` only draw);
 per-frame baking on sun-step or light changes; canvas fallback to flat tinted overlay. Controlled by `office.lighting.*` settings.
 
@@ -60,6 +75,15 @@ so characters can stand closer to desks. `placeGroup` / `tryAnchor` honor pinned
 
 **Procgen and nav** (`game/procgen/generate.ts`, `game/nav/shapes.ts`): per-kind collision insets, denser furniture recipes,
 half-tile sizes, painter audit for fractional sizes. `rotateShape`, `insetFor`, `KIND_HEIGHT` for shadows/visibility.
+
+**Depth rendering table** (render order, z-index):
+- Base tilemap: −10
+- `ShadowLayer`: −5
+- Furniture sprites and characters: at south edge of their footprint − 0.5 (y-sorted)
+- Characters: at their feet y-position
+- Effects: variable
+- `LightmapLayer`: 90,000
+- `LightLayer`: 95,000
 
 `?demo=1` runs a scripted simulation without a server.
 

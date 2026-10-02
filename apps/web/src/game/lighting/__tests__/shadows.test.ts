@@ -179,6 +179,16 @@ describe('wallShadows', () => {
     }
   });
 
+  it('a 1-tile stub still casts a shortened shadow when the sun skew is at least a tile', () => {
+    const map = mapFrom(['#######', '#.....#', '#..#..#', '#.....#', '#.....#', '#######']);
+    const low = { ...EVENING, elevation: 0.1, skew: 0.9 };
+    const v = sunShadowVector(low, 16, T);
+    expect(Math.abs(v.x)).toBeGreaterThanOrEqual(T);
+    const stub = run(low, map).filter((q) => q.points[0].y === q.points[1].y && q.points[0].y === 3 * T && q.points[0].x >= 3 * T - 0.01);
+    expect(stub).toHaveLength(1);
+    expect(stub[0]!.points[1].x - stub[0]!.points[0].x).toBeGreaterThan(1);
+  });
+
   it('furnitureShadows is unchanged by the wall pass', () => {
     const map = room();
     expect(furnitureShadows(map, MORNING, [], 'cast', 0.25)).toHaveLength(1);

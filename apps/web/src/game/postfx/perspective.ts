@@ -4,6 +4,8 @@ export interface PerspectiveUniforms {
   hazeStrength: number;
   haze: [number, number, number];
   texel: number;
+  /** Offset of the art-row boundaries from the top of the screen, in UV units (0 when the scroll is a whole number of art rows). */
+  phase: number;
 }
 
 /** Compression of the top row at perspective = 1. */
@@ -12,15 +14,17 @@ export const PERSPECTIVE_HAZE_MAX = 0.18;
 
 /**
  * k = perspective * K_MAX; hazeStrength = perspective * HAZE_MAX; haze = theme `palette.bg` as rgb 0..1; texel = zoom / viewportH
- * (one art row in UV units). perspective 0 -> k and hazeStrength are 0 (identity).
+ * (one art row in UV units); phase = (scrollY * zoom mod zoom) / viewportH, where the art rows start when the camera scroll is fractional
+ * (the snap is anchored to the art pixels, not to screen y = 0, so rows do not shimmer while following). perspective 0 -> k and hazeStrength are 0 (identity).
  */
-export function perspectiveUniforms(perspective: number, zoom: number, viewportH: number, bgColor: number): PerspectiveUniforms {
+export function perspectiveUniforms(perspective: number, zoom: number, viewportH: number, bgColor: number, scrollY = 0): PerspectiveUniforms {
   const p = Math.min(Math.max(Number.isFinite(perspective) ? perspective : 0, 0), 1);
   return {
     k: p * PERSPECTIVE_K_MAX,
     hazeStrength: p * PERSPECTIVE_HAZE_MAX,
     haze: [((bgColor >> 16) & 0xff) / 255, ((bgColor >> 8) & 0xff) / 255, (bgColor & 0xff) / 255],
     texel: viewportH > 0 ? zoom / viewportH : 0,
+    phase: viewportH > 0 && zoom > 0 && Number.isFinite(scrollY) ? (((scrollY * zoom) % zoom) + zoom) % zoom / viewportH : 0,
   };
 }
 

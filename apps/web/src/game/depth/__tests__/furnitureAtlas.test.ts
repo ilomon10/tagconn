@@ -104,4 +104,51 @@ describe('buildFurnitureAtlas', () => {
     const atlas = buildFurnitureAtlas(fake.scene, modernTheme, specs, T, 4);
     expect(specs.filter((s) => !atlas.pageKeys.includes(atlas.textureOf(s.key)!))).toEqual([]);
   });
+
+  /** Wraps `make.graphics` so a test can see which graphics were destroyed. */
+  const track = (fake: ReturnType<typeof makeFakeScene>) => {
+    const made: { destroyed: boolean }[] = [];
+    const orig = fake.scene.make.graphics.bind(fake.scene.make);
+    (fake.scene.make as unknown as { graphics: unknown }).graphics = (...a: Parameters<typeof orig>) => {
+      const g = orig(...a);
+      const rec = { destroyed: false };
+      made.push(rec);
+      const d = g.destroy.bind(g);
+      g.destroy = () => ((rec.destroyed = true), d());
+      return g;
+    };
+    return made;
+  };
+
+  it('a painter that throws leaves no Graphics and no texture behind', () => {
+    const { specs } = frames();
+    const fake = makeFakeScene({ recordRects: true });
+    const made = track(fake);
+    let n = 0;
+    const theme: ThemeDefinition = {
+      ...modernTheme,
+      paintFurniture: (g, f, tile) => {
+        if (++n === 3) throw new Error('boom');
+        modernTheme.paintFurniture(g, f, tile);
+      },
+    };
+    expect(() => buildFurnitureAtlas(fake.scene, theme, specs, T, 5)).toThrow('boom');
+    expect(made.length).toBeGreaterThan(0);
+    expect(made.every((m) => m.destroyed)).toBe(true);
+    expect(fake.generated).toEqual([]);
+  });
+
+  it('does not generate a page whose frames all fell back to textures of their own', () => {
+    const { specs } = frames();
+    const theme: ThemeDefinition = { ...modernTheme, paintFurniture: (g, f) => void g.fillRect(f.x * T - 10, f.y * T - 10, 4, 4) };
+    const fake = makeFakeScene({ recordRects: true });
+    const made = track(fake);
+    const atlas = buildFurnitureAtlas(fake.scene, theme, specs, T, 6);
+    expect(atlas.pageKeys).toEqual([]);
+    expect(fake.generated.length).toBe(specs.length);
+    expect(fake.generated.every((g) => !g.key.startsWith(atlasKey('modern', 0, 6)) || g.key.includes('-x'))).toBe(true);
+    expect(made.every((m) => m.destroyed)).toBe(true);
+    for (const s of specs) expect(atlas.textureOf(s.key)).toContain('-x');
+    atlas.destroy();
+  });
 });

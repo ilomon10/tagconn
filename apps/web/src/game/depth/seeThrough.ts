@@ -1,7 +1,15 @@
 // M17 D3: which tall sprites hide a character (docs/design/depth-25d.md sections 3.5 and 5). Pure, allocation-free per query.
+import { MAX_OVERDRAW_PX } from '../procgen/backWallSpec';
 import type { Rect } from '../procgen/types';
 import { DEPTH_EPSILON, SEE_THROUGH_MIN_HEIGHT, SPRITE_MARGIN } from './tables';
 import type { FurnitureSprite, SeeThroughIndex } from './types';
+
+/** World-px rect a sprite can actually cover: the footprint plus the side/bottom margins, and above it only the painter's overdraw
+ *  (at most `MAX_OVERDRAW_PX`, and only against a north wall), so a character just north of a free-standing rack hides nothing. */
+function coverOf(s: FurnitureSprite, T: number): [number, number, number, number] {
+  const up = s.item.againstNorthWall ? MAX_OVERDRAW_PX : 0;
+  return [s.x, s.item.y * T - up, s.item.w * T + 2 * SPRITE_MARGIN.side, up + s.item.h * T + SPRITE_MARGIN.bottom];
+}
 
 /** Per-tile CSR bucket (tile -> indices into `sprites`) of the sprites that may fade: whole sprites (no strips) at or above `minHeight`. */
 export function buildSeeThroughIndex(
@@ -15,14 +23,13 @@ export function buildSeeThroughIndex(
   const start = new Int32Array(cells + 1);
   const span = (s: FurnitureSprite): [number, number, number, number] | null => {
     if (s.strip !== null || !(s.height >= minHeight)) return null;
-    const w = s.item.w * T + 2 * SPRITE_MARGIN.side;
-    const h = SPRITE_MARGIN.top + s.item.h * T + SPRITE_MARGIN.bottom;
+    const [cx, cy, w, h] = coverOf(s, T);
     if (!(w > 0) || !(h > 0)) return null;
     return [
-      Math.max(0, Math.floor(s.x / T)),
-      Math.min(cols - 1, Math.floor((s.x + w - 1e-6) / T)),
-      Math.max(0, Math.floor(s.y / T)),
-      Math.min(rows - 1, Math.floor((s.y + h - 1e-6) / T)),
+      Math.max(0, Math.floor(cx / T)),
+      Math.min(cols - 1, Math.floor((cx + w - 1e-6) / T)),
+      Math.max(0, Math.floor(cy / T)),
+      Math.min(rows - 1, Math.floor((cy + h - 1e-6) / T)),
     ];
   };
   for (const s of sprites) {
@@ -67,10 +74,7 @@ export function occludersOf(index: SeeThroughIndex, head: Rect, feetY: number, o
         const i = items[k]!;
         const s = sprites[i]!;
         if (!(s.baseY - DEPTH_EPSILON > feetY)) continue;
-        const fx = s.x;
-        const fy = s.y;
-        const fw = s.item.w * T + 2 * SPRITE_MARGIN.side;
-        const fh = SPRITE_MARGIN.top + s.item.h * T + SPRITE_MARGIN.bottom;
+        const [fx, fy, fw, fh] = coverOf(s, T);
         if (head.x >= fx + fw || head.x + head.w <= fx || head.y >= fy + fh || head.y + head.h <= fy) continue;
         let dup = false;
         for (let j = 0; j < n; j++) if (out[j] === i) { dup = true; break; }

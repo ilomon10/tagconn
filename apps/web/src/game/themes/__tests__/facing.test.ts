@@ -23,7 +23,7 @@ describe('facing helpers (M16 F3)', () => {
   });
 
   it('paintRotated draws as-is for s and brackets the south art in a rotation otherwise', () => {
-    const draw = (g: ReturnType<typeof makeCommandGraphics>['g']) => g.fillRect(0, 0, 1, 1);
+    const draw = (g: ReturnType<typeof makeCommandGraphics>['g']) => g.fillRect(24, 88, 1, 1); // inside the south footprint (M17: rotated rects are clipped to it)
     const s = makeCommandGraphics();
     paintRotated(s.g, base, 16, draw);
     expect(names(s.commands)).toEqual(['fillRect']);

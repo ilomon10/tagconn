@@ -116,67 +116,92 @@ function fitsSlot(rec: Recording, item: PlacedFurniture, T: number): boolean {
 export function buildFurnitureAtlas(scene: Phaser.Scene, theme: ThemeDefinition, frames: readonly FrameSpec[], T: number, generation: number): FurnitureAtlas {
   const start = import.meta.env.DEV ? performance.now() : 0;
   const layout = packFrames(frames);
-  const pageKeys = layout.pages.map((_p, i) => atlasKey(theme.id, i, generation));
+  const allKeys = layout.pages.map((_p, i) => atlasKey(theme.id, i, generation));
+  /** Pages that got a texture: a page whose frames all fell back to textures of their own is never generated. */
+  const pageKeys: string[] = [];
   const owned: string[] = [];
   const where = new Map<string, string>();
-  const gs = layout.pages.map(() => scene.make.graphics({ x: 0, y: 0 }, false));
+  const gs: Phaser.GameObjects.Graphics[] = [];
+  const live = new Set<Phaser.GameObjects.Graphics>();
+  const makeGraphics = () => {
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    live.add(g);
+    return g;
+  };
+  const release = (g: Phaser.GameObjects.Graphics) => {
+    if (live.delete(g)) g.destroy();
+  };
+  const used = layout.pages.map(() => 0);
 
   /** Frame rects to register once the page textures exist: [texture key, frame name, x, y, w, h]. */
   const adds: [string, string, number, number, number, number][] = [];
   const own: { key: string; rec: Recording; spec: FrameSpec }[] = [];
-  for (const spec of frames) {
-    const slot = layout.frames.get(spec.key);
-    if (!slot) continue;
-    const rec = recordPaint((g) => theme.paintFurniture(g, spec.item, T));
-    const fx = spec.item.x * T;
-    const fy = spec.item.y * T;
-    const fw = spec.item.w * T;
-    const fh = spec.item.h * T;
-    let tex = pageKeys[slot.page]!;
-    let ox = slot.x;
-    let oy = slot.y;
-    if (fitsSlot(rec, spec.item, T)) {
-      const g = gs[slot.page]!;
+  try {
+    layout.pages.forEach(() => gs.push(makeGraphics()));
+
+    for (const spec of frames) {
+      const slot = layout.frames.get(spec.key);
+      if (!slot) continue;
+      const rec = recordPaint((g) => theme.paintFurniture(g, spec.item, T));
+      const fx = spec.item.x * T;
+      const fy = spec.item.y * T;
+      const fw = spec.item.w * T;
+      const fh = spec.item.h * T;
+      let tex = allKeys[slot.page]!;
+      let ox = slot.x;
+      let oy = slot.y;
+      if (fitsSlot(rec, spec.item, T)) {
+        const g = gs[slot.page]!;
+        used[slot.page]!++;
+        g.save();
+        g.translateCanvas(ox - (fx - SPRITE_MARGIN.side), oy - (fy - SPRITE_MARGIN.top));
+        replay(g, rec.ops);
+        g.restore();
+      } else {
+        tex = `${allKeys[slot.page]!}-x${own.length}`;
+        ox = 0;
+        oy = 0;
+        own.push({ key: tex, rec, spec });
+      }
+      adds.push([tex, spec.key, ox, oy, spec.w, spec.h]);
+      where.set(spec.key, tex);
+      const px = isSitInKind(spec.item.kind) ? Math.min(FRONT_STRIP_PX[spec.item.kind][spec.item.facing ?? 's'], fh) : 0;
+      if (px > 0) {
+        adds.push([tex, `${spec.key}#strip`, ox + SPRITE_MARGIN.side, oy + SPRITE_MARGIN.top + fh - px, fw, px]);
+        where.set(`${spec.key}#strip`, tex);
+      }
+    }
+    layout.pages.forEach((p, i) => {
+      if (used[i] === 0) return release(gs[i]!);
+      gs[i]!.generateTexture(allKeys[i]!, p.w, p.h);
+      release(gs[i]!);
+      pageKeys.push(allKeys[i]!);
+      owned.push(allKeys[i]!);
+    });
+    for (const o of own) {
+      const g = makeGraphics();
+      const { item } = o.spec;
       g.save();
-      g.translateCanvas(ox - (fx - SPRITE_MARGIN.side), oy - (fy - SPRITE_MARGIN.top));
-      replay(g, rec.ops);
+      g.translateCanvas(SPRITE_MARGIN.side - item.x * T, SPRITE_MARGIN.top - item.y * T);
+      replay(g, o.rec.ops);
       g.restore();
-    } else {
-      tex = `${pageKeys[slot.page]!}-x${own.length}`;
-      ox = 0;
-      oy = 0;
-      own.push({ key: tex, rec, spec });
+      g.generateTexture(o.key, o.spec.w, o.spec.h);
+      release(g);
+      owned.push(o.key);
     }
-    adds.push([tex, spec.key, ox, oy, spec.w, spec.h]);
-    where.set(spec.key, tex);
-    const px = isSitInKind(spec.item.kind) ? Math.min(FRONT_STRIP_PX[spec.item.kind][spec.item.facing ?? 's'], fh) : 0;
-    if (px > 0) {
-      adds.push([tex, `${spec.key}#strip`, ox + SPRITE_MARGIN.side, oy + SPRITE_MARGIN.top + fh - px, fw, px]);
-      where.set(`${spec.key}#strip`, tex);
-    }
+    for (const [tex, name, x, y, w, h] of adds) scene.textures.get(tex).add(name, 0, x, y, w, h);
+  } catch (err) {
+    // A painter threw: drop the textures made so far (the caller never gets an atlas to destroy).
+    for (const key of owned.splice(0)) if (scene.textures.exists(key)) scene.textures.remove(key);
+    throw err;
+  } finally {
+    for (const g of [...live]) release(g);
   }
-  layout.pages.forEach((p, i) => {
-    gs[i]!.generateTexture(pageKeys[i]!, p.w, p.h);
-    gs[i]!.destroy();
-    owned.push(pageKeys[i]!);
-  });
-  for (const o of own) {
-    const g = scene.make.graphics({ x: 0, y: 0 }, false);
-    const { item } = o.spec;
-    g.save();
-    g.translateCanvas(SPRITE_MARGIN.side - item.x * T, SPRITE_MARGIN.top - item.y * T);
-    replay(g, o.rec.ops);
-    g.restore();
-    g.generateTexture(o.key, o.spec.w, o.spec.h);
-    g.destroy();
-    owned.push(o.key);
-  }
-  for (const [tex, name, x, y, w, h] of adds) scene.textures.get(tex).add(name, 0, x, y, w, h);
 
   if (import.meta.env.DEV) {
     const dims = layout.pages.map((p) => `${p.w}x${p.h}`).join(', ');
     // eslint-disable-next-line no-console -- intentional one-line dev perf log, not app logging.
-    console.debug(`[depth] atlas ${theme.id}: ${frames.length} frames, ${dims || 'none'} (${layout.pages.length} pages, ${own.length} own) in ${(performance.now() - start).toFixed(1)} ms`);
+    console.debug(`[depth] atlas ${theme.id}: ${frames.length} frames, ${dims || 'none'} (${pageKeys.length} pages, ${own.length} own) in ${(performance.now() - start).toFixed(1)} ms`);
   }
   return {
     themeId: theme.id,

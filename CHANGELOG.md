@@ -7,6 +7,20 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- **Characters walk behind tall furniture and sit in chairs** (M17): furniture with height (bookcases, cabinets, desks with their monitors, appliances) is drawn as depth-sorted sprites from a code-drawn atlas, so a character north of it is hidden behind it. Chairs, sofas, booths, benches and the reception desk draw their front edge over a seated character's legs.
+- **Four-direction characters** (M17): front, back and side views with walk cycles (west is the mirrored east view). A seated character faces its chair, so desk workers show their backs. `office.depth.fourDirections: false` keeps the single front view.
+- **See-through furniture** (M17): a tall item that hides a character fades to `office.depth.seeThrough` (default 0.45) over `office.depth.seeThroughFadeMs` (default 160 ms); reduced motion switches instantly.
+- **Wall day shadows** (M17): walls cast shadows onto the floor whose length follows the sun (`office.depth.wallShadows`, with `office.lighting.shadows: cast`).
+- **Follow camera** (M17): the camera follows with a deadzone (`office.camera.deadzone`, default 0.3) and smoothing (`office.camera.followLagMs`, default 180 ms). `office.camera.follow: selected` starts following when you select a character; the default `manual` keeps the Follow button.
+- **Whole zoom stops** (M17): at 1× and above the zoom snaps to whole numbers so pixels stay crisp; below 1× it stays continuous so a floor still fits a phone (`office.camera.integerZoom`).
+- **Perspective effect** (M17): an optional subtle shader that compresses the far rows and adds haze (`office.camera.perspective`, default 0.1, 0 = off, WebGL only). Pointer hits near the top can be off by a few pixels (about 6 px at the default), so keep it below 0.3.
+- **Hall Planner preview** (M17): the preview (`P`) shows the same furniture sprites and characters walking real paths.
+
+### Changed
+- **BREAKING: furniture renderer** (M17, v1.0.0): tall furniture is no longer baked into the floor texture; it is painted into a per-style atlas and depth-sorted at runtime. A rotated tall wall piece (bookcase, filing cabinet, coat rack, supply stack) is clipped to its footprint. Layouts and pins load unchanged.
+- **Restoring the v0.10 look** (M17): `office.depth.sprites: false`, `office.depth.fourDirections: false`, `office.camera.perspective: 0` and `office.camera.integerZoom: false`.
+
 ## [0.10.0] - 2026-10-02
 
 ### Added

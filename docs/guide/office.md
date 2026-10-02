@@ -166,8 +166,9 @@ menu, the `H` hotkey, or "Edit hero" in a character's detail drawer. The Heroes 
 Opens from **Hall Planner** in the menu (`P`), or "Edit floor" in Manage floors. Draw and
 edit a floor's room layout: rectangular rooms with a type (office, lounge, QA lab, server room,
 ...), doors, and live validation (a room the reachability checker can't reach from the stairs is
-flagged with a one-click fix). "Surprise me" generates a random layout; a live preview renders it in
-either visual style before you save.
+flagged with a one-click fix). "Surprise me" generates a random layout; a live preview (`P` key)
+renders it in either visual style and shows the actual y-sorted furniture sprites and walking
+characters before you save.
 
 | Key | Action |
 |---|---|

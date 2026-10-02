@@ -8,7 +8,18 @@ import { paintModernWallDecor, paintGuildWallDecor } from '../paint/wallDecor';
 import { paintModernBackWall, paintGuildBackWall } from '../paint/walls';
 import type { ThemeDefinition } from '../types';
 import { ROTATION_SAFE_KINDS } from '../paint/facing';
-import { fractionalBoundsFailures, makeBoundsGraphics, makeStubGraphics, rotatedBoundsFailures } from './testUtils';
+import { riftTheme } from '../rift';
+import { FACING_SUPPORT } from '../../procgen/facingSpec';
+import { SPRITE_MARGIN, spriteClassOf } from '../../depth/tables';
+import {
+  fractionalBoundsFailures,
+  fractionalFootprints,
+  integerFootprints,
+  makeBoundsGraphics,
+  makeStubGraphics,
+  makeTransformRecorder,
+  rotatedBoundsFailures,
+} from './testUtils';
 
 // A compile-time-exhaustive list: adding a FurnitureKind without adding it here fails to typecheck.
 const FURNITURE_KIND_SET: Record<FurnitureKind, true> = {
@@ -356,5 +367,40 @@ describe.each(THEMES)('%s theme painters', (name, theme) => {
         }
       }
     }
+  });
+});
+
+// M17 W2 A1 (depth-25d.md section 9 test 7): every sprite/sit-in painter stays inside the atlas slot (footprint + SPRITE_MARGIN)
+// at every footprint, supported facing and wall flag, measured through the canvas transforms (rotated painters land elsewhere).
+describe.each([...THEMES, ['rift', riftTheme] as [string, ThemeDefinition]])('%s sprite margin (M17)', (_name, theme) => {
+  it('every sprite/sit-in painter stays inside SPRITE_MARGIN', () => {
+    const T = 16;
+    const fails: string[] = [];
+    for (const kind of FURNITURE_KINDS) {
+      if (spriteClassOf(kind) === 'baked') continue;
+      for (const facing of FACING_SUPPORT[kind]) {
+        const swap = facing === 'e' || facing === 'w';
+        for (const fp of [...integerFootprints, ...fractionalFootprints]) {
+          for (const roomType of ['desks', 'lounge'] as const) {
+            for (const against of [false, true]) {
+              for (let variant = 0; variant < 4; variant++) {
+                const f: PlacedFurniture = {
+                  x: 2, y: 5, w: swap ? fp.h : fp.w, h: swap ? fp.w : fp.h, kind, blocking: true, roomId: 'r1', roomType, variant,
+                  ...(facing !== 's' && { facing }), ...(against && { againstNorthWall: true }),
+                };
+                const { g, bounds } = makeTransformRecorder();
+                theme.paintFurniture(g, f, T);
+                const b = bounds();
+                if (!b) continue;
+                const o = { l: f.x * T - b.minX - SPRITE_MARGIN.side, t: f.y * T - b.minY - SPRITE_MARGIN.top, r: b.maxX - (f.x + f.w) * T - SPRITE_MARGIN.side, b: b.maxY - (f.y + f.h) * T - SPRITE_MARGIN.bottom };
+                if (Math.max(o.l, o.t, o.r, o.b) > 1e-6) fails.push(`${kind} ${facing} ${f.w}x${f.h}${against ? ' wall' : ''}: over by ${Object.entries(o).filter(([, v]) => v > 1e-6).map(([k, v]) => `${k}${Math.round(v * 100) / 100}`).join(' ')}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    // Report one line per (kind, facing, size); the first few are enough to act on.
+    expect([...new Set(fails)].slice(0, 60)).toEqual([]);
   });
 });

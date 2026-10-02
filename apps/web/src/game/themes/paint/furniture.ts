@@ -252,11 +252,16 @@ const MODERN: Record<FurnitureKind, Painter> = {
     rect(0x000000, x + 1, y + 13, w - 2, 3, 0.25);
     rect(0x5a3418, x, y + 2, w, 12);
     rect(0x7a4a2a, x, y + 2, w, 9);
-    rect(0x22252e, x + 18, y - 2, 12, 8);
-    rect(0x5fb8ff, x + 19, y - 1, 10, 5);
+    // M17: the monitor and the lamp are skipped when the desk is too short to hold them (a 1x1 or 2x1 lead desk stays in its sprite slot).
+    if (w >= 32) {
+      rect(0x22252e, x + 18, y - 2, 12, 8);
+      rect(0x5fb8ff, x + 19, y - 1, 10, 5);
+    }
     rect(0xf5f0e0, x + 5, y + 4, 7, 5);
-    rect(0xe8c070, x + 36, y - 1, 4, 3);
-    rect(0x444444, x + 37, y + 2, 2, 5);
+    if (w >= 48) {
+      rect(0xe8c070, x + 36, y - 1, 4, 3);
+      rect(0x444444, x + 37, y + 2, 2, 5);
+    }
   },
   table: (g, f, T, rect) => {
     const x = f.x * T;
@@ -849,8 +854,11 @@ const GUILD: Record<FurnitureKind, Painter> = {
     rect(0x22252e, x + 16, y + 7, 1, 1);
     rect(0x6a3a1e, x + w - 10, y + 5, 4, 5);
     rect(0x8a5a2b, x + w - 11, y + 4, 6, 1);
-    rect(GOLD, x + 21, y + 8, 2, 1);
-    rect(GOLD, x + 24, y + 6, 2, 1);
+    if (w >= 32) {
+      // M17: the coins are skipped on a 1-tile table (they would poke out of its sprite slot).
+      rect(GOLD, x + 21, y + 8, 2, 1);
+      rect(GOLD, x + 24, y + 6, 2, 1);
+    }
   },
   'board-game-table': (g, f, T, rect) => {
     // A card and dice table: a round-cornered top with fanned cards, a die, and a candle stub.
@@ -867,8 +875,11 @@ const GUILD: Record<FurnitureKind, Painter> = {
       rect(0xf2ecd8, x + 7 + i * 2, y + 5 + i, 4, 4);
       rect(i === 1 ? 0xb5433a : 0x22252e, x + 8 + i * 2, y + 6 + i, 1, 1);
     }
-    rect(0xf2ecd8, x + 17, y + 6, 3, 3);
-    rect(0x22252e, x + 18, y + 7, 1, 1);
+    if (w >= 32) {
+      // M17: the die is skipped on a 1-tile table (it would poke out of its sprite slot).
+      rect(0xf2ecd8, x + 17, y + 6, 3, 3);
+      rect(0x22252e, x + 18, y + 7, 1, 1);
+    }
     rect(0xf2ecd8, x + w - 7, y + 5, 1, 3);
     rect(0xffd84a, x + w - 7, y + 4, 1, 1);
     rect(0xdcc9a0, x + w - 9, y + 8, 3, 1);
@@ -1188,7 +1199,7 @@ const GUILD: Record<FurnitureKind, Painter> = {
     rect(0x3a3446, x, y + h - 6, w, 6);
     rect(0x2c1c30, x + 2, y - 2, w - 4, h - 6);
     g.fillStyle(0x6ff5ff, 0.85);
-    g.fillCircle(x + w / 2, y + h / 2 - 3, Math.max(2, w / 4));
+    g.fillCircle(x + w / 2, y + h / 2 - 3, Math.min(Math.max(2, w / 4), h / 2 + 5)); // M17: the mirror never pokes below the slot
     g.fillStyle(0xffffff, 0.6);
     g.fillCircle(x + w / 2 - 1, y + h / 2 - 4, 1);
   },

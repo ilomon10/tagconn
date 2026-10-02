@@ -213,6 +213,17 @@ describe('Character views (M17)', () => {
     expect(shown()).toEqual(['ch-body', 'ch-head', 1, false]);
   });
 
+  it('turning four directions off and on again does not keep the legacy flip on the front view', () => {
+    h.c.setFourDirections(false);
+    h.c.face(50); // legacy flip: upper.scaleX = -1 while viewKey stays 's'
+    h.anim();
+    expect(h.p.upper.scaleX).toBe(-1);
+    h.c.face(null);
+    h.c.setFourDirections(true);
+    h.anim();
+    expect(shown()).toEqual(['ch-body', 'ch-head', 1, false]);
+  });
+
   it('applies a view only on change', () => {
     walkDir(h.c, 'e');
     const before = h.p.body_.setTextureCalls + h.p.head.setTextureCalls + h.p.hair.setTextureCalls;

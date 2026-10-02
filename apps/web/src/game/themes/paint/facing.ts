@@ -33,12 +33,41 @@ export function paintRotated(
   if (facing === 's') return drawSouth(g, f, T);
   const cx = (f.x + f.w / 2) * T;
   const cy = (f.y + f.h / 2) * T;
+  const south = southFrame(f);
   g.save();
   g.translateCanvas(cx, cy);
   g.rotateCanvas(ANGLE[facing]);
   g.translateCanvas(-cx, -cy);
-  drawSouth(g, southFrame(f), T);
+  drawSouth(clampedTo(g, south, T), south, T);
   g.restore();
+}
+
+/** M17: the tall south art of a wall kind (a bookcase pokes 11 px above its footprint) would swing sideways when rotated and leave the
+ *  sprite slot, so a rotated frame keeps its rects within `ROTATED_OVERDRAW_PX` of the footprint (the slot's side margin). */
+const ROTATED_OVERDRAW_PX = 2;
+
+/** `g` with `fillRect` clipped to the south frame's footprint plus `ROTATED_OVERDRAW_PX`; every other method is `g`'s own. */
+function clampedTo(g: Phaser.GameObjects.Graphics, south: PlacedFurniture, T: number): Phaser.GameObjects.Graphics {
+  const x0 = south.x * T - ROTATED_OVERDRAW_PX;
+  const y0 = south.y * T - ROTATED_OVERDRAW_PX;
+  const x1 = (south.x + south.w) * T + ROTATED_OVERDRAW_PX;
+  const y1 = (south.y + south.h) * T + ROTATED_OVERDRAW_PX;
+  return new Proxy(g, {
+    get(target, prop) {
+      if (prop === 'fillRect') {
+        return (x: number, y: number, w: number, h: number) => {
+          const cx0 = Math.max(x, x0);
+          const cy0 = Math.max(y, y0);
+          const cx1 = Math.min(x + w, x1);
+          const cy1 = Math.min(y + h, y1);
+          if (cx1 > cx0 && cy1 > cy0) target.fillRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+          return target;
+        };
+      }
+      const v = Reflect.get(target, prop, target) as unknown;
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
 }
 
 /** Kinds whose art is rotation-safe (furnishing.md section 5.2): rects only, no text, no front face. The explicit-variant

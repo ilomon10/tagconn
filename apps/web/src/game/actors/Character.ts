@@ -183,7 +183,7 @@ export class Character extends Phaser.GameObjects.Container {
   facing: Facing = 's';
   /** M17: the drawn view and what `applyView` last applied (`'w'` = `e` flipped); the view is applied only when it changes. */
   private view: View = 's';
-  private viewKey: 's' | 'n' | 'e' | 'w' = 's';
+  private viewKey: 's' | 'n' | 'e' | 'w' | '' = 's';
   /** M17: `office.depth.fourDirections`; false = the legacy single front view + horizontal flip. */
   private fourDirections = true;
   /** M17: facing of the chair while seated (`seatFacingAt`); null = `s`. */
@@ -682,6 +682,9 @@ export class Character extends Phaser.GameObjects.Container {
     if (!on) {
       this.applyView('s', false);
       this.upper.scaleX = 1;
+    } else {
+      // The legacy path may have flipped `upper`/`legs` behind applyView's back: force the next update to re-apply the view.
+      this.viewKey = '';
     }
   }
 

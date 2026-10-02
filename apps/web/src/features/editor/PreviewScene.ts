@@ -1,25 +1,33 @@
 import * as Phaser from 'phaser';
 import { generateMap } from '../../game/procgen';
 import type { GeneratedMap } from '../../game/procgen';
-import { getTheme, prefersReducedMotion, renderGeneratedMap, type ThemeDefinition } from '../../game/themes';
+import { getTheme, paintCostumeTextures, prefersReducedMotion, type ThemeDefinition } from '../../game/themes';
 import type { OfficeLayoutInput, OfficeStyle } from '@tagconn/shared';
 import { draftAsLayout } from '../../stores/editorStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { generateTextures } from '../../game/textures';
+import { Character } from '../../game/actors/Character';
+import { PathFinder } from '../../game/pathfinding';
+import { CLASS_K, navPointOfTile } from '../../game/nav';
+import { resolveCostume } from '../../game/lookResolver';
+import { renderFloor, type FloorRender } from '../../game/depth/renderFloor';
+import type { Point } from '../../game/procgen/types';
+import { pickWanderTile } from './wander';
 
 /**
  * The Hall Planner's live preview pane (guild-hall.md section 5): `generateMap(draft)` through the
  * selected theme, with a few wandering demo characters so the style (costumes, fx, lighting) reads
- * before it's assigned to a real floor. Not the game's `OfficeScene` — no agents, no pathfinding,
- * just "does this look right".
+ * before it's assigned to a real floor. Not the game's `OfficeScene` — no agents; the wanderers are real
+ * `Character`s walking real navigator paths, and the floor renders through `renderFloor` (y-sorted sprites).
  */
 
 const WANDERER_COLORS = [0xf5c07a, 0x8ecae6, 0xb07aff];
+const WANDER_SPEED = 90;
 
 interface Wanderer {
-  sprite: Phaser.GameObjects.Arc;
-  tile: { x: number; y: number };
-  timer: Phaser.Time.TimerEvent;
+  character: Character;
+  /** Scene time (ms) at which it picks its next destination. */
+  nextAt: number;
 }
 
 export class PreviewScene extends Phaser.Scene {
@@ -28,36 +36,45 @@ export class PreviewScene extends Phaser.Scene {
   private ambient: boolean;
   /** M15: `office.dualGrid` — the preview paints with the same edge pass as the live office. */
   private dualGrid: boolean;
+  /** M17: `office.depth.sprites` / `maxSprites` — the preview renders furniture the way the live office does. */
+  private depth: { sprites: boolean; maxSprites: number };
+  private floor: FloorRender | null = null;
+  private finder: PathFinder | null = null;
   private fxObjects: Phaser.GameObjects.GameObject[] = [];
   private wanderers: Wanderer[] = [];
   private isPanning = false;
   private lastPointer = { x: 0, y: 0 };
 
-  constructor(map: GeneratedMap, theme: ThemeDefinition, ambient: boolean, dualGrid = true) {
+  constructor(map: GeneratedMap, theme: ThemeDefinition, ambient: boolean, dualGrid = true, depth = { sprites: true, maxSprites: 1500 }) {
     super('hall-planner-preview');
     this.map = map;
     this.theme = theme;
     this.ambient = ambient;
     this.dualGrid = dualGrid;
+    this.depth = depth;
   }
 
   /** Recomputes and repaints for a new draft/style, without recreating the Phaser.Game. */
-  rebuild(map: GeneratedMap, theme: ThemeDefinition, ambient: boolean, dualGrid = this.dualGrid) {
+  rebuild(map: GeneratedMap, theme: ThemeDefinition, ambient: boolean, dualGrid = this.dualGrid, depth = this.depth) {
     this.map = map;
     this.theme = theme;
     this.ambient = ambient;
     this.dualGrid = dualGrid;
+    this.depth = depth;
+    this.wanderers.forEach((w) => w.character.destroyAll());
+    this.wanderers = [];
+    this.floor?.destroy();
+    this.floor = null;
     this.children.removeAll(true);
     this.fxObjects.forEach((o) => o.destroy());
     this.fxObjects = [];
-    this.wanderers.forEach((w) => w.timer.remove());
-    this.wanderers = [];
     this.build();
   }
 
   create() {
     // Theme fx (torch flames, ambient dots) use the shared 'icon-sparkle' texture, which only OfficeScene generated.
     generateTextures(this);
+    paintCostumeTextures(this);
     this.cameras.main.setBackgroundColor(this.theme.palette.bg);
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.isPanning = true;
@@ -81,8 +98,8 @@ export class PreviewScene extends Phaser.Scene {
   }
 
   private build() {
-    const key = renderGeneratedMap(this, this.map, this.theme, [], { dualGrid: this.dualGrid });
-    this.add.image(0, 0, key).setOrigin(0, 0);
+    this.floor = renderFloor(this, this.map, this.theme, [], { dualGrid: this.dualGrid, ...this.depth });
+    this.finder = new PathFinder(this.map.nav);
     this.fxObjects = this.theme.animate(this, this.map, { ambient: this.ambient });
 
     const worldW = this.map.cols * this.map.tileSize;
@@ -99,43 +116,28 @@ export class PreviewScene extends Phaser.Scene {
     cam.centerOn(worldW / 2, worldH / 2);
   }
 
-  /** Cardinal-adjacent random walk so wanderers never cut through a wall (guild-hall.md "3 wandering demo characters"). */
+  /** Real characters on the spawn tile; `update` sends each on a navigator path to a random walkable tile. */
   private spawnWanderers(n: number) {
-    const T = this.map.tileSize;
-    const start = this.map.spawn;
+    const costume = resolveCostume(this.theme, 'developer');
     for (let i = 0; i < n; i++) {
-      const tile = { ...start };
-      const sprite = this.add.circle(tile.x * T + T / 2, tile.y * T + T / 2, T * 0.28, WANDERER_COLORS[i % WANDERER_COLORS.length]);
-      sprite.setStrokeStyle(1, 0x000000, 0.35);
-      const wanderer: Wanderer = { sprite, tile, timer: this.scheduleNextHop(sprite, tile) };
-      this.wanderers.push(wanderer);
+      const character = new Character(this, `npc:preview-${i}`, 0, 0);
+      character.setCostume(costume, WANDERER_COLORS[i % WANDERER_COLORS.length]!);
+      character.teleport(this.map.spawn);
+      this.wanderers.push({ character, nextAt: 400 * i });
     }
   }
 
-  private neighbors(x: number, y: number): { x: number; y: number }[] {
-    const cand = [
-      { x: x + 1, y },
-      { x: x - 1, y },
-      { x, y: y + 1 },
-      { x, y: y - 1 },
-    ];
-    return cand.filter((c) => c.y >= 0 && c.y < this.map.rows && c.x >= 0 && c.x < this.map.cols && this.map.walkable[c.y]?.[c.x] === 0);
-  }
-
-  private scheduleNextHop(sprite: Phaser.GameObjects.Arc, tile: { x: number; y: number }): Phaser.Time.TimerEvent {
-    return this.time.addEvent({
-      delay: 700 + Math.random() * 1400,
-      callback: () => {
-        const options = this.neighbors(tile.x, tile.y);
-        const next = options.length ? options[Math.floor(Math.random() * options.length)]! : tile;
-        tile.x = next.x;
-        tile.y = next.y;
-        const T = this.map.tileSize;
-        this.tweens.add({ targets: sprite, x: next.x * T + T / 2, y: next.y * T + T / 2, duration: this.ambient ? 450 : 0, ease: 'Sine.easeInOut' });
-        const w = this.wanderers.find((w2) => w2.sprite === sprite);
-        if (w) w.timer = this.scheduleNextHop(sprite, tile);
-      },
-    });
+  update(time: number, delta: number) {
+    for (const w of this.wanderers) {
+      const c = w.character;
+      if (!c.walking && time >= w.nextAt) {
+        const to = pickWanderTile(this.map, this.map.spawn);
+        const path = to && this.finder?.navigator().findPath(c.navPoint, navPointOfTile(to, CLASS_K[c.navClass]), c.navClass);
+        if (path) c.walkNav(path, false);
+        w.nextAt = time + 700 + Math.random() * 1400;
+      }
+      c.update(time, delta, this.ambient ? WANDER_SPEED : 0);
+    }
   }
 }
 
@@ -150,6 +152,12 @@ function currentDualGrid(): boolean {
   return useSettingsStore.getState().settings.office.dualGrid ?? true;
 }
 
+/** M17 `office.depth.sprites` / `maxSprites`: the preview shows what the live floor will. */
+function currentDepth(): { sprites: boolean; maxSprites: number } {
+  const d = useSettingsStore.getState().settings.office.depth;
+  return { sprites: d?.sprites ?? true, maxSprites: d?.maxSprites ?? 1500 };
+}
+
 /** A small wrapper Phaser.Game so the host component doesn't need to know Phaser's config shape. */
 export class PreviewGame {
   private game: Phaser.Game;
@@ -158,7 +166,7 @@ export class PreviewGame {
   constructor(parent: HTMLElement, draft: OfficeLayoutInput, style: OfficeStyle) {
     const { map, theme } = buildPreview(draft, style);
     const ambient = !prefersReducedMotion();
-    this.scene = new PreviewScene(map, theme, ambient, currentDualGrid());
+    this.scene = new PreviewScene(map, theme, ambient, currentDualGrid(), currentDepth());
     this.game = new Phaser.Game({
       type: Phaser.AUTO,
       parent,
@@ -174,7 +182,7 @@ export class PreviewGame {
 
   update(draft: OfficeLayoutInput, style: OfficeStyle) {
     const { map, theme } = buildPreview(draft, style);
-    this.scene.rebuild(map, theme, !prefersReducedMotion(), currentDualGrid());
+    this.scene.rebuild(map, theme, !prefersReducedMotion(), currentDualGrid(), currentDepth());
   }
 
   destroy() {

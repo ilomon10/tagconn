@@ -8,8 +8,8 @@ const T = 16;
 const COLS = 30;
 const ROWS = 24;
 
-export function sprite(x: number, y: number, w: number, h: number, height: number, strip: Rect | null = null): FurnitureSprite {
-  const item = { kind: 'bookcase', x, y, w, h, variant: 0 } as unknown as PlacedFurniture;
+export function sprite(x: number, y: number, w: number, h: number, height: number, strip: Rect | null = null, againstNorthWall = false): FurnitureSprite {
+  const item = { kind: 'bookcase', x, y, w, h, variant: 0, againstNorthWall } as unknown as PlacedFurniture;
   return { item, frame: 'f', themeId: 't', x: x * T - SPRITE_MARGIN.side, y: y * T - SPRITE_MARGIN.top, baseY: (y + h) * T, strip, height };
 }
 
@@ -17,9 +17,12 @@ function brute(sprites: FurnitureSprite[], head: Rect, feetY: number, min = 10):
   const out: number[] = [];
   sprites.forEach((s, i) => {
     if (s.strip !== null || s.height < min) return;
+    const up = s.item.againstNorthWall ? 12 : 0;
+    const x0 = s.item.x * T - SPRITE_MARGIN.side;
+    const y0 = s.item.y * T - up;
     const w = s.item.w * T + 2 * SPRITE_MARGIN.side;
-    const h = SPRITE_MARGIN.top + s.item.h * T + SPRITE_MARGIN.bottom;
-    const hit = head.x < s.x + w && head.x + head.w > s.x && head.y < s.y + h && head.y + head.h > s.y;
+    const h = up + s.item.h * T + SPRITE_MARGIN.bottom;
+    const hit = head.x < x0 + w && head.x + head.w > x0 && head.y < y0 + h && head.y + head.h > y0;
     if (hit && s.baseY - DEPTH_EPSILON > feetY) out.push(i);
   });
   return out;
@@ -41,7 +44,7 @@ describe('occludersOf', () => {
     for (let i = 0; i < 120; i++) {
       const w = 1 + Math.floor(rnd() * 3);
       const h = 1 + Math.floor(rnd() * 2);
-      sprites.push(sprite(Math.floor(rnd() * (COLS - w)), 1 + Math.floor(rnd() * (ROWS - h - 1)), w, h, [0, 6, 10, 14][Math.floor(rnd() * 4)]!));
+      sprites.push(sprite(Math.floor(rnd() * (COLS - w)), 1 + Math.floor(rnd() * (ROWS - h - 1)), w, h, [0, 6, 10, 14][Math.floor(rnd() * 4)]!, null, rnd() < 0.4));
     }
     const index = buildSeeThroughIndex(sprites, COLS, ROWS, T);
     const out = new Int32Array(64);
@@ -57,13 +60,25 @@ describe('occludersOf', () => {
   it('the height threshold keeps desks out, a custom minimum lets them in; strips never occlude', () => {
     const sprites = [sprite(5, 5, 2, 1, 6), sprite(8, 5, 1, 1, 14), sprite(11, 5, 1, 1, 14, { x: 0, y: 0, w: 16, h: 4 })];
     const out = new Int32Array(8);
-    const head = headRectOf(6 * T, 5 * T + 4, { x: 0, y: 0, w: 0, h: 0 });
-    expect(occludersOf(buildSeeThroughIndex(sprites, COLS, ROWS, T), head, 5 * T + 4, out)).toBe(0);
-    expect(occludersOf(buildSeeThroughIndex(sprites, COLS, ROWS, T, 5), head, 5 * T + 4, out)).toBe(1);
-    const bk = headRectOf(8.5 * T, 5 * T + 4, head);
-    expect(occludersOf(buildSeeThroughIndex(sprites, COLS, ROWS, T), bk, 5 * T + 4, out)).toBe(1);
-    const strip = headRectOf(11.5 * T, 5 * T + 4, head);
-    expect(occludersOf(buildSeeThroughIndex(sprites, COLS, ROWS, T), strip, 5 * T + 4, out)).toBe(0);
+    const head = headRectOf(6 * T, 5 * T + 10, { x: 0, y: 0, w: 0, h: 0 });
+    expect(occludersOf(buildSeeThroughIndex(sprites, COLS, ROWS, T), head, 5 * T + 10, out)).toBe(0);
+    expect(occludersOf(buildSeeThroughIndex(sprites, COLS, ROWS, T, 5), head, 5 * T + 10, out)).toBe(1);
+    const bk = headRectOf(8.5 * T, 5 * T + 10, head);
+    expect(occludersOf(buildSeeThroughIndex(sprites, COLS, ROWS, T), bk, 5 * T + 10, out)).toBe(1);
+    const strip = headRectOf(11.5 * T, 5 * T + 10, head);
+    expect(occludersOf(buildSeeThroughIndex(sprites, COLS, ROWS, T), strip, 5 * T + 10, out)).toBe(0);
+  });
+
+  it('a character on the tile north of a free-standing rack does not fade it; against a north wall only the real overdraw counts', () => {
+    const out = new Int32Array(4);
+    const head = { x: 0, y: 0, w: 0, h: 0 };
+    // Feet at y = 5 * T - 2 (tile above the footprint): head spans y 5T-20 .. 5T-8.
+    const free = buildSeeThroughIndex([sprite(8, 5, 1, 1, 14)], COLS, ROWS, T);
+    expect(occludersOf(free, headRectOf(8.5 * T, 5 * T - 2, head), 5 * T - 2, out)).toBe(0);
+    const wall = buildSeeThroughIndex([sprite(8, 5, 1, 1, 14, null, true)], COLS, ROWS, T);
+    expect(occludersOf(wall, headRectOf(8.5 * T, 5 * T - 2, head), 5 * T - 2, out)).toBe(1); // head bottom 5T-8 is inside the 12 px overdraw
+    expect(occludersOf(wall, headRectOf(8.5 * T, 5 * T - 8, head), 5 * T - 8, out)).toBe(0); // head bottom 5T-14 is above it
+    expect(occludersOf(wall, headRectOf(8.5 * T, 5 * T + 4, head), 5 * T + 4, out)).toBe(1);
   });
 
   it('only a character behind the sprite (feet north of the depth line) is occluded', () => {

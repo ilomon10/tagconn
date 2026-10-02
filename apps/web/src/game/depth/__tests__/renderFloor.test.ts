@@ -91,6 +91,18 @@ describe('renderFloor', () => {
     expect(fake.scene.textures.exists(THEME_BASE_TEXTURE)).toBe(false);
   });
 
+  it('the base-texture owner is per texture manager: another game rendering never decides whose base is removed', () => {
+    const f1 = makeFakeScene();
+    const f2 = makeFakeScene();
+    const a = renderFloor(f1.scene, map, modernTheme, [], OPTS);
+    const b = renderFloor(f2.scene, map, modernTheme, [], OPTS); // a newer generation, but in the other game
+    a.destroy();
+    expect(f1.scene.textures.exists(THEME_BASE_TEXTURE)).toBe(false);
+    expect(f2.scene.textures.exists(THEME_BASE_TEXTURE)).toBe(true);
+    b.destroy();
+    expect(f2.scene.textures.exists(THEME_BASE_TEXTURE)).toBe(false);
+  });
+
   it('the maxSprites cap demotes to baked and the base bake paints them', () => {
     const fake = makeFakeScene();
     const r = renderFloor(fake.scene, map, modernTheme, [], { ...OPTS, maxSprites: 3 });

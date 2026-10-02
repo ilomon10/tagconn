@@ -25,6 +25,33 @@ Walls and floors now have real edges: wall caps get a 1 px outline with rounded 
 |---|---|---|
 | `office.dualGrid` | `true` | Dual-grid tile edges: per-style wall caps, rounded corners, floor shadows and cliff lines. Off = flat per-tile paint (every tile drawn on its own, as before v0.9.0). Applies live on Save, in every style and in the Hall Planner preview; it changes the look only, never the layout or where anyone stands. |
 
+## Depth and camera
+
+The office uses 2.5D rendering: tall furniture is drawn from atlases and y-sorted so characters can walk behind bookcases and sit in chairs, and the camera follows your selected character with configurable motion and zoom behavior.
+
+### Depth: furniture and characters
+
+| Key | Default | Effect |
+|---|---|---|
+| `office.depth.sprites` | `true` | Tall furniture as y-sorted sprites from a code-drawn atlas (characters walk behind bookcases, desks, monitors; sit in chairs with the backrest over their legs). Off = every item baked flat into the floor (the v0.10 look). |
+| `office.depth.fourDirections` | `true` | Front, back and side character views with walk cycles; a seated character faces its chair, so desk workers show their backs. Off = the single front view with a horizontal flip (the v0.10 look). |
+| `office.depth.seeThrough` | `0.45` | Alpha (opacity) of a tall furniture item while it hides a character (the cast or the Receptionist; NPCs never fade furniture); 1 = no fade. |
+| `office.depth.seeThroughFadeMs` | `160` | Fade in/out time of the see-through effect, in milliseconds (0 = instant). Respects your system's reduced motion preference. |
+| `office.depth.maxSprites` | `1500` | Cap on furniture sprite instances per floor. When exceeded, the lowest-priority items are baked flat. Tall items are kept first. |
+| `office.depth.wallShadows` | `true` | Walls cast day shadows onto the floor from the current sun elevation, adding depth. Needs `office.lighting.shadows: cast`. |
+
+### Camera: tracking and zoom
+
+| Key | Default | Effect |
+|---|---|---|
+| `office.camera.follow` | `manual` | `manual`: only the Follow button tracks a character. `selected`: selecting a character automatically starts following them. |
+| `office.camera.deadzone` | `0.3` | Fraction of the safe viewport (width and height) the followed character may roam before the camera moves; 0 = always centred. |
+| `office.camera.followLagMs` | `180` | Smoothing time constant for follow motion, in milliseconds (exponential ease-out). 0 = instant. Reduced motion always uses instant. |
+| `office.camera.integerZoom` | `true` | Snap zoom levels at 1× or above to whole numbers so art pixels stay crisp. Below 1×, zoom stays continuous, so a floor can still fit a small phone. Off = smooth zoom at every level (the v0.10 look). |
+| `office.camera.perspective` | `0.1` | Subtle perspective post-shader: far rows are gently compressed and distance haze fades them slightly. Range 0–1, where 0 = off. WebGL only (ignored in canvas mode). Keep below 0.3 for accurate pointer hits; the default causes ~6 px error near the top of a tall screen. |
+
+All of these are in **Settings → Office** and apply live (no restart needed). Changing `office.depth.sprites` or `maxSprites` repaints the floor.
+
 ## Shaders
 
 `office.shaders.*` controls WebGL post-processing, applied live as you change it in Settings.

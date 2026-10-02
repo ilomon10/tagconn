@@ -12,3 +12,11 @@ export {
   spriteClassOf,
 } from './tables';
 export type { SitInKind } from './tables';
+// Wave 1-3 (PM): the pure planners plus the Phaser layers. Pure tests should import from the module files, not this
+// barrel, because `furnitureAtlas`/`renderFloor`/`SeeThroughController` load Phaser.
+export * from './spritePlan';
+export * from './pack';
+export * from './seeThrough';
+export * from './furnitureAtlas';
+export * from './renderFloor';
+export * from './SeeThroughController';

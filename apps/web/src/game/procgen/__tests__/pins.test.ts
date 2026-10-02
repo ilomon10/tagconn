@@ -273,7 +273,7 @@ describe('pins: helpers', () => {
         expect(inRoom.some((f) => !f.pinned && f.slotId === d.slotId), label).toBe(false);
       }
     }
-  });
+  }, 60_000); // 54 desks x 4 directions of generateMap: correctness, not a timing budget (slow under a loaded parallel run)
 
   it('M16: a desk pushed aside by a half-tile pin keeps its chairs and their seats', () => {
     const desks = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'desks')!;

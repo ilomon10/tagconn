@@ -28,8 +28,9 @@ export interface FloorRender {
 }
 
 let generation = 0;
-/** Generation that last wrote `THEME_BASE_TEXTURE` (a stale render must not remove its successor's base). */
-let baseOwner = 0;
+/** Generation that last wrote `THEME_BASE_TEXTURE` in each texture manager (a stale render must not remove its successor's base).
+ *  Per manager, because the office game and the Hall Planner's preview game each have their own textures. */
+const baseOwners = new WeakMap<Phaser.Textures.TextureManager, number>();
 
 const inRect = (r: Rect, x: number, y: number) => x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
 
@@ -41,7 +42,7 @@ export function renderFloor(scene: Phaser.Scene, map: GeneratedMap, theme: Theme
   const plan = planSprites({ map, sprites: opts.sprites, maxSprites: opts.maxSprites, themeIdAt: (x, y) => themeAt(x, y).id });
   const bakedSet = new Set(plan.baked);
   renderGeneratedMap(scene, map, theme, regions, { dualGrid: opts.dualGrid, bakeItem: (f) => bakedSet.has(f) });
-  baseOwner = gen;
+  baseOwners.set(scene.textures, gen);
   const base = scene.add.image(0, 0, THEME_BASE_TEXTURE).setOrigin(0).setDepth(-10);
 
   const T = map.tileSize;
@@ -86,7 +87,7 @@ export function renderFloor(scene: Phaser.Scene, map: GeneratedMap, theme: Theme
       for (const img of images) img.destroy();
       base.destroy();
       for (const a of atlases) a.destroy();
-      if (baseOwner === gen && scene.textures.exists(THEME_BASE_TEXTURE)) scene.textures.remove(THEME_BASE_TEXTURE);
+      if (baseOwners.get(scene.textures) === gen && scene.textures.exists(THEME_BASE_TEXTURE)) scene.textures.remove(THEME_BASE_TEXTURE);
     },
   };
 }

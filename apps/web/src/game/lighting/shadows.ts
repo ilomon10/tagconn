@@ -228,7 +228,7 @@ export function wallShadows(map: GeneratedMap, occluders: Occluders, sun: SunSta
     for (let k = 1; k > 0; k -= 0.25) {
       const a0 = Math.max(a, a - along * k);
       const b0 = Math.min(b, b - along * k);
-      if (!(b0 - a0 > 1)) return;
+      if (!(b0 - a0 > 1)) continue; // a shorter extrusion trims less off a short run
       const far = c + across * k;
       // Probe half a pixel inside the far edge's ends so a corner on a tile boundary is judged by the tile the shadow covers.
       const u0 = a0 + along * k + 0.5;
