@@ -28,7 +28,7 @@ export function overlapsAny(r: Rect, others: readonly Rect[]): boolean {
 }
 
 /** Nearest multiple of `HALF_TILE`. */
-export const snapHalf = (v: number): number => Math.round(v * 2) / 2;
+export const snapHalf = (v: number): number => Math.round(v * 2) / 2 + 0; // `+ 0` folds -0 to 0
 
 /** Position on the half-tile grid, size in whole tiles (the only rects procgen accepts this milestone). */
 export const isHalfAligned = (r: Rect): boolean =>

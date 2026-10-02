@@ -34,7 +34,7 @@ import { decorateRoom, furnishRoom, seatsFor, type FurnishOptions, type RecipeIt
 import { buildRegionAtGrid, buildRoomToRegion, findRegions, findVoidAreas, reachableFrom, regionCentroid, type Region } from './regions';
 import { rngFor, randInt } from './rng';
 import { assignTriggers } from './triggers';
-import { applyFurniture, buildNavGrid, walkableFromNav } from '../nav/grid';
+import { applyFurniture, buildNavGrid, updateClearance, walkableFromNav } from '../nav/grid';
 import type {
   DecorSlot,
   FurnitureAction,
@@ -826,10 +826,11 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     assignTriggers({ rooms: generatedRooms, furniture, tiles, apronsByRoom, tallColumnsByRoom, seed });
   }
 
-  // M15 (navigation.md §2/§6): the nav grid is the collision source of truth. It rasterizes the tiles, keeps every
-  // tile the generator already closed (stairs/landings), applies blocking furniture per `KIND_SHAPE` (≡ KIND_BLOCKING
-  // this milestone, so a half-offset pin blocks every tile it touches), and computes true clearance. `walkable` is
-  // DERIVED from it: a tile is open only when all four cells are (conservative, so every tile flood fill is unchanged).
+  // M15 (navigation.md §2/§6): the nav grid is the collision source of truth. It rasterizes the tiles, applies
+  // blocking furniture per `KIND_SHAPE` (≡ KIND_BLOCKING this milestone, so a half-offset pin blocks every tile it
+  // touches; stairs/landings are blocking furniture too), and computes true clearance. `walkable` is passed as the base
+  // so any tile closed by an earlier generator step stays closed (a pass-through today, nothing writes it before here),
+  // then DERIVED from the grid: a tile is open only when all four cells are (conservative, so every tile flood fill is unchanged).
   const furnitureBeforeDecor = furniture.length;
   const nav = buildNavGrid({ cols, rows, tiles, furniture }, walkable);
   const derivedWalkable = walkableFromNav(nav);
@@ -1064,8 +1065,16 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     unreachableRooms.push({ roomId: gr.id, reason, ...(suggestion && { suggestion }) });
   }
 
-  // Decor placed after the nav build is soft-only: flag its tiles (masks and clearance are untouched).
-  if (furniture.length > furnitureBeforeDecor) applyFurniture(nav, furniture.slice(furnitureBeforeDecor));
+  // Decor placed after the nav build is soft-only (recipes.ts `decorateRoom` never emits blocking items), so this only
+  // sets TILE_FLAG_SOFT. If a decor kind ever blocks, the dirty rect keeps clearance and the derived `walkable` honest.
+  if (furniture.length > furnitureBeforeDecor) {
+    const dirty = applyFurniture(nav, furniture.slice(furnitureBeforeDecor));
+    if (dirty) {
+      updateClearance(nav, dirty);
+      const refreshed = walkableFromNav(nav);
+      for (let y = 0; y < rows; y++) walkable[y] = refreshed[y]!;
+    }
+  }
 
   return {
     layoutId: layout.id,

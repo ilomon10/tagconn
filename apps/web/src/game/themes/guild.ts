@@ -6,6 +6,7 @@ import { paintGuildFloor } from './paint/floors';
 import { paintGuildFurniture } from './paint/furniture';
 import { paintGuildWallDecor } from './paint/wallDecor';
 import { paintGuildBackWall, paintGuildDoor, paintGuildVoid, paintGuildWall } from './paint/walls';
+import { paintGuildDualFloor, paintGuildDualWall, paintGuildWallBase } from './paint/dual/guildDual';
 import type { Costume, DramaContent, ThemeDefinition } from './types';
 import { GUILD_LIFE } from './content/guildLife';
 import { GUILD_NPCS } from './content/guildNpcs';
@@ -271,6 +272,10 @@ export const guildTheme: ThemeDefinition = {
   backWall: { capPx: 2, bandPx: 10 },
   paintBackWall: paintGuildBackWall,
   paintWallDecor: paintGuildWallDecor,
+  // M15: dual-grid edge art (docs/design/dual-grid.md section 3, guild column).
+  paintWallBase: paintGuildWallBase,
+  paintDualFloor: paintGuildDualFloor,
+  paintDualWall: paintGuildDualWall,
   animate,
   decorFor: guildDecorFor,
   zoneNames: ZONE_NAMES,

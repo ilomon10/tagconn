@@ -77,6 +77,8 @@ clipped by the texture bounds and are still "inside the cell" for the bounds tes
 > §2.1 is `import type { DualCell } from './dual/dualGrid'` (already landed). D0 extends `dualGrid.ts` in place and
 > replaces its three stubs (`makeKindAt`, `buildDualCells`, `isUniform`). `RenderOptions.dualGrid` defaults to **true**
 > (plan decision; the setting default is true and off stays byte-identical).
+> Signature drift to ignore in §1.3/§2.3: landed are `quadrantTile(cell, q)`, `cellOrigin(cell, T): {px, py}`, `cornerKinds(...)`
+> (see `dualGrid.ts`); D4 must write `const { px, py } = cellOrigin(cell, T)`, not `cellOrigin(cell.cx, T)`.
 
 ### 1.2 `themes/dual/types.ts` (W0, type-only, verbatim)
 

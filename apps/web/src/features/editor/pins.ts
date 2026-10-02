@@ -91,7 +91,9 @@ export function pinFits(room: LayoutRoom, pin: PinnedFurniture, ignoreIndex?: nu
 }
 
 /** Nearest multiple of `HALF_TILE` (M15: the pin position grid). `+ 0` turns `Math.round(-0.2) * 0.5` (-0) into 0. */
-export const snapHalf = (v: number): number => Math.round(v / HALF_TILE) * HALF_TILE + 0;
+import { snapHalf } from '../../game/procgen/geometry';
+/** Re-exported for the editor's callers/tests; the single implementation lives in procgen/geometry.ts. */
+export { snapHalf };
 
 /**
  * Snaps a pin's top-left to half tiles, then clamps it inside the room's interior (a pin larger than

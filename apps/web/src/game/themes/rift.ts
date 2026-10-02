@@ -4,6 +4,7 @@ import type * as Phaser from 'phaser';
 import type { GeneratedMap } from '../procgen/types';
 import { guildTheme } from './guild';
 import { paintRiftDecorTextures, riftDecorFor, RIFT_AURORA, RIFT_GLOW, riftBanner } from './paint/riftDecor';
+import { paintRiftDualFloor, paintRiftDualWall, paintRiftWallBase } from './paint/dual/riftDual';
 import { paintRiftFloor } from './paint/riftFloors';
 import { paintRiftFurniture } from './paint/riftFurniture';
 import { paintRiftBackWall, paintRiftDoor, paintRiftIslandEdge, paintRiftVoid, paintRiftWall, paintRiftWallDecor } from './paint/riftWalls';
@@ -207,6 +208,11 @@ export const riftTheme: ThemeDefinition = {
   paintDoor: paintRiftDoor,
   paintFurniture: paintRiftFurniture,
   paintIslandEdge: paintRiftIslandEdge,
+  // M15 dual grid (docs/design/dual-grid.md section 3): obsidian cap rim, teal floor glow, 1 px crystal rim
+  // on cliffs that the island jag below stays visible under. `paintWallBase` keeps `paintWall`'s rand draws.
+  paintWallBase: paintRiftWallBase,
+  paintDualFloor: paintRiftDualFloor,
+  paintDualWall: paintRiftDualWall,
   // M8 8p: the tall 3/4 back-wall face + baked wall decor (docs/design/back-wall.md) — optional
   // hooks, so the Nexus renders with the tall face too even though every realm room is normally
   // covered by its own project theme.

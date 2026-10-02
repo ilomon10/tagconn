@@ -26,6 +26,7 @@ export function blockedCells(shape: NavShape, cells: CellRect): (cx: number, cy:
   if (shape === 'full') return inside;
   if (shape === 'none') return () => false;
   if ('inset' in shape) {
+    // Insets are >= 0 cells (shaving the footprint inwards); a negative inset would reach outside the rect.
     const { n, e, s, w } = shape.inset;
     return (cx, cy) => cx >= cells.x0 + w && cx < cells.x1 - e && cy >= cells.y0 + n && cy < cells.y1 - s;
   }

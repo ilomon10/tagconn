@@ -5,6 +5,7 @@ import { paintModernFloor } from './paint/floors';
 import { paintModernFurniture } from './paint/furniture';
 import { paintModernWallDecor } from './paint/wallDecor';
 import { paintModernBackWall, paintModernDoor, paintModernVoid, paintModernWall } from './paint/walls';
+import { paintModernDualFloor, paintModernDualWall, paintModernWallBase } from './paint/dual/modernDual';
 import type { Costume, DramaContent, ThemeDefinition } from './types';
 import { SHIPPED_ROLE_TITLES } from './shippedTitles';
 import { MODERN_LIFE } from './content/modernLife';
@@ -158,6 +159,10 @@ export const modernTheme: ThemeDefinition = {
   backWall: { capPx: 3, bandPx: 8 },
   paintBackWall: paintModernBackWall,
   paintWallDecor: paintModernWallDecor,
+  // M15: dual-grid edge art (docs/design/dual-grid.md section 3, modern column).
+  paintWallBase: paintModernWallBase,
+  paintDualFloor: paintModernDualFloor,
+  paintDualWall: paintModernDualWall,
   // Static art only (a framed poster on `wall-hanging` slots) — nothing animated, so
   // `ambientEffects` never creates a tween here either way.
   animate: (scene, map) => {
