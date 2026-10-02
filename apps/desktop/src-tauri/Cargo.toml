@@ -1,6 +1,6 @@
 [package]
 name = "tagconn-desktop"
-version = "0.10.0"
+version = "1.0.0"
 description = "tagconn Desktop: a thin Tauri shell around the Node supervisor sidecar"
 license = "MIT"
 edition = "2021"

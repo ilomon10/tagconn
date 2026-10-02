@@ -7,6 +7,8 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-02
+
 ### Added
 - **Characters walk behind tall furniture and sit in chairs** (M17): furniture with height (bookcases, cabinets, desks with their monitors, appliances) is drawn as depth-sorted sprites from a code-drawn atlas, so a character north of it is hidden behind it. Chairs, sofas, booths, benches and the reception desk draw their front edge over a seated character's legs.
 - **Four-direction characters** (M17): front, back and side views with walk cycles (west is the mirrored east view). A seated character faces its chair, so desk workers show their backs. `office.depth.fourDirections: false` keeps the single front view.
@@ -246,7 +248,8 @@ First public release: an observer that turns Claude Code sessions into a live 2D
 ### Security
 - Host and Origin allowlists (against DNS rebinding and cross-site WebSocket hijacking), 127.0.0.1 bind by default, JSON-only bodies, redaction of secrets across the whole hook payload, settings that the GUI cannot change (paths, network, runner permissions), and a masked hook token.
 
-[Unreleased]: https://github.com/ilomon10/tagconn/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/ilomon10/tagconn/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/ilomon10/tagconn/compare/v0.10.0...v1.0.0
 [0.10.0]: https://github.com/ilomon10/tagconn/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/ilomon10/tagconn/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/ilomon10/tagconn/compare/v0.7.0...v0.8.0
