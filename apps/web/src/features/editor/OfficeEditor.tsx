@@ -29,7 +29,7 @@ const TOOLS: { tool: EditorTool; label: string; hotkey: string }[] = [
 ];
 
 const HELP_LINES = [
-  ['V / R / S / D / F / H', 'Select / Room / Stairs / Doors / Furniture / Hand tool'],
+  ['V / R / S / D / F / H', 'Select / Room / Stairs / Doors / Furniture / Hand tool (R rotates a selected furniture item instead)'],
   ['Drag (Room/Stairs)', 'Draw a room; release to pick its type'],
   ['1-9, 0', 'Pick a room type from the popover'],
   ['Click / Shift+click', 'Select / add to selection'],
@@ -47,7 +47,10 @@ const HELP_LINES = [
   ['Furniture tool: drag an item', 'Move it; this locks it in place (generation keeps it there)'],
   ['Furniture tool: click an item', 'Select it; the Inspector can lock or release it'],
   ['Furniture tool: select + Arrows', 'Nudge a locked item (Shift = 5 tiles, Alt = half a tile)'],
-  ['Furniture tool: select + Delete', 'Release a locked item back to procedural generation'],
+  ['Furniture tool: select + Delete', 'Remove a generated item from the room (a dashed ghost; Delete again restores it), or release a locked one'],
+  ['Furniture tool: select + R', 'Rotate the item (N / E / S / W); refused if it does not fit'],
+  ['Furniture tool: palette', 'Pick a piece, click inside a room to place it (Esc cancels)'],
+  ['Furniture tool: drag + Alt', 'Free placement; otherwise edges and centres snap to neighbours (cyan guides)'],
   ['Ctrl/Cmd+Z', 'Undo'],
   ['Ctrl/Cmd+Shift+Z or Ctrl+Y', 'Redo'],
   ['Ctrl/Cmd+G', 'Surprise me (random layout)'],
@@ -300,7 +303,15 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           if (tool === 'furniture') {
             // The Furniture tool never deletes rooms: Delete releases the selected pin, else nothing.
             e.preventDefault();
-            if (selectedFurniture && 'pinIndex' in selectedFurniture) store.releasePin(selectedFurniture.roomId, selectedFurniture.pinIndex);
+            if (selectedFurniture) {
+              const sel = selectedFurniture;
+              const pin = 'pinIndex' in sel ? draft?.rooms.find((r) => r.id === sel.roomId)?.furniture?.[sel.pinIndex] : undefined;
+              // A ghost restores, a free pin or a locked item releases, a generated item turns into a ghost (its slot is consumed).
+              if ('pinIndex' in sel) {
+                if (pin?.suppressed) store.restoreSlot(sel.roomId, sel.pinIndex);
+                else store.releasePin(sel.roomId, sel.pinIndex);
+              } else store.suppressSlot(sel.roomId, { ...sel.generated, suppressed: true });
+            }
           } else if (selectedDoor) {
             e.preventDefault();
             store.removeDoor(selectedDoor.roomId, selectedDoor.index);
@@ -309,9 +320,20 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
             store.removeRooms(selection);
           }
           break;
+        case 'rotate':
+          // R rotates a selected furniture item; with nothing selected it stays the Room tool hotkey.
+          if (selectedFurniture) {
+            e.preventDefault();
+            if ('pinIndex' in selectedFurniture) store.rotatePin(selectedFurniture.roomId, selectedFurniture.pinIndex);
+            else store.rotateGenerated(selectedFurniture.roomId, selectedFurniture.generated);
+          } else store.setTool('room');
+          break;
         case 'escape':
           // The planner's own dialogs close first (conflict is drawn over help).
-          if (conflict) {
+          if (store.placing) {
+            e.preventDefault();
+            store.setPlacing(null);
+          } else if (conflict) {
             e.preventDefault();
             setConflict(null);
           } else if (helpOpen) {
@@ -539,6 +561,12 @@ export function OfficeEditor({ onClose, targetProjectId }: { onClose: () => void
           lockOverflow={lockPlan?.overflow ?? 0}
           onLockFurniture={(roomId, pin) => store.lockFurniture(roomId, pin)}
           onReleaseFurniture={(roomId, index) => store.releasePin(roomId, index)}
+          onRestoreFurniture={(roomId, index) => store.restoreSlot(roomId, index)}
+          onFaceFurniture={(roomId, facing) => {
+            if (!selectedFurniture) return;
+            if ('pinIndex' in selectedFurniture) store.rotatePin(roomId, selectedFurniture.pinIndex, facing);
+            else store.rotateGenerated(roomId, selectedFurniture.generated, facing);
+          }}
           onLockAll={(id) => lockPlan && store.lockAll(id, lockPlan.pins)}
           onReleaseAll={(id) => store.releaseAll(id)}
         />

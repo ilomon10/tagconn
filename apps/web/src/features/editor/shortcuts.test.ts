@@ -50,7 +50,7 @@ describe('resolveShortcut', () => {
 
   it('maps tool hotkeys, but only unmodified (Ctrl+S is Save, not the Stairs tool)', () => {
     expect(resolveShortcut(key({ key: 'v' }))).toEqual({ type: 'tool', tool: 'select' });
-    expect(resolveShortcut(key({ key: 'r' }))).toEqual({ type: 'tool', tool: 'room' });
+    expect(resolveShortcut(key({ key: 'r' }))).toEqual({ type: 'rotate' });
     expect(resolveShortcut(key({ key: 's' }))).toEqual({ type: 'tool', tool: 'stairs' });
     expect(resolveShortcut(key({ key: 'd' }))).toEqual({ type: 'tool', tool: 'doors' });
     expect(resolveShortcut(key({ key: 'f' }))).toEqual({ type: 'tool', tool: 'furniture' });

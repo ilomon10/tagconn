@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import { LAYOUT_LIMITS, type DoorSpec, type LayoutBackground, type LayoutRoom, type OfficeLayout, type OfficeLayoutInput, type OfficeStyle, type PinnedFurniture, type RoomFurnish, type RoomType } from '@tagconn/shared';
-import { clampPinPos, pinFits, prunePins } from '../features/editor/pins';
+import { LAYOUT_LIMITS, type DoorSpec, type Facing, type LayoutBackground, type LayoutRoom, type OfficeLayout, type OfficeLayoutInput, type OfficeStyle, type PinnedFurniture, type RoomFurnish, type RoomType } from '@tagconn/shared';
+import { clampPinPos, isPinnableKind, isSuppressibleKind, pinFits, prunePins, rotatedPin } from '../features/editor/pins';
 
 /**
  * Hall Planner draft state (7e-A, docs/design/guild-hall.md section 5). The draft is an
@@ -27,6 +27,16 @@ function reconcileFurnitureSelection(draft: OfficeLayoutInput | null, sel: Furni
   if ('pinIndex' in sel && !room.furniture?.[sel.pinIndex]) return null;
   return sel;
 }
+
+/** The palette's armed kind: the next click on a room's interior drops a free pin of this size (M16, furnishing.md section 6.3). */
+export interface Placing {
+  kind: string;
+  w: number;
+  h: number;
+}
+
+/** True when `p` is the same real (non-ghost) item as `pin`: same kind and rect. */
+const samePin = (p: PinnedFurniture, pin: PinnedFurniture) => !p.suppressed && p.kind === pin.kind && p.x === pin.x && p.y === pin.y && p.w === pin.w && p.h === pin.h;
 
 const HISTORY_LIMIT = 100;
 
@@ -99,6 +109,8 @@ export interface EditorState {
   /** How many locked items the last room edit released because they no longer fit; cleared by the next edit, undo or redo. */
   pruneNotice: { count: number } | null;
   tool: EditorTool;
+  /** The palette's armed free pin (M16), or null; cleared by Esc, a tool change, load and close. */
+  placing: Placing | null;
   /** Room type the Room tool stamps next (remembers the last pick; Stairs tool forces 'stairs'). */
   pendingRoomType: RoomType;
   history: OfficeLayoutInput[];
@@ -160,6 +172,17 @@ export interface EditorState {
   nudgePin(roomId: string, index: number, dx: number, dy: number): void;
   /** Releases a pin back to procedural generation (one commit); clears the selection if it pointed at it. */
   releasePin(roomId: string, index: number): void;
+  /** M16: "delete" a generated item: a ghost pin (`suppressed`, with `fromSlot`) so the next generation places nothing there; one commit. Refused for non-pinnable/unknown kinds, a pin without a slot, a repeat, or a full room (ghosts count toward the cap). */
+  suppressSlot(roomId: string, pin: PinnedFurniture): void;
+  /** M16: removes a ghost pin so its slot generates again (one commit); no-op on a real pin. */
+  restoreSlot(roomId: string, index: number): void;
+  /** M16: R on a pin: next facing with the w/h swap, one commit; refused (nothing changes) when the rotated rect does not fit or the kind is fixed. */
+  rotatePin(roomId: string, index: number, to?: Facing): void;
+  /** M16: R on a generated item: locks it (keeping `fromSlot`) already rotated, in one commit; same refusals as `rotatePin`. */
+  rotateGenerated(roomId: string, pin: PinnedFurniture, to?: Facing): void;
+  /** M16: palette placement of a free pin (one commit, selected afterwards); refused when it does not fit, the kind is not pinnable, or the cap is reached. */
+  addPin(roomId: string, pin: PinnedFurniture): void;
+  setPlacing(p: Placing | null): void;
   /** Locks many generated items at once (one commit); invalid or overlapping ones are skipped, the cap holds. */
   lockAll(roomId: string, pins: PinnedFurniture[]): void;
   /** Releases every pin of the room (one commit). */
@@ -230,6 +253,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
     selectedFurniture: null,
     pruneNotice: null,
     tool: 'select',
+    placing: null,
     pendingRoomType: 'desks',
     history: [],
     future: [],
@@ -247,6 +271,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         selectedFurniture: null,
         pruneNotice: null,
         tool: 'select',
+        placing: null,
         history: [],
         future: [],
         gestureBaseline: null,
@@ -264,6 +289,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         selectedFurniture: null,
         pruneNotice: null,
         tool: 'select',
+        placing: null,
         history: [],
         future: [],
         gestureBaseline: null,
@@ -281,6 +307,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
         selectedFurniture: null,
         pruneNotice: null,
         tool: 'select',
+        placing: null,
         history: [],
         future: [],
         gestureBaseline: null,
@@ -419,7 +446,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const room = s.draft.rooms.find((r) => r.id === roomId);
       if (!room) return;
       const pins = room.furniture ?? [];
-      const same = pins.findIndex((p) => p.kind === pin.kind && p.x === pin.x && p.y === pin.y && p.w === pin.w && p.h === pin.h);
+      const same = pins.findIndex((p) => samePin(p, pin));
       if (same >= 0) {
         set({ selectedFurniture: { roomId, pinIndex: same } });
         return;
@@ -435,7 +462,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       const room = s.draft.rooms.find((r) => r.id === roomId);
       if (!room) return -1;
       const pins = room.furniture ?? [];
-      const same = pins.findIndex((p) => p.kind === pin.kind && p.x === pin.x && p.y === pin.y && p.w === pin.w && p.h === pin.h);
+      const same = pins.findIndex((p) => samePin(p, pin));
       if (same >= 0) return same;
       if (pins.length >= LAYOUT_LIMITS.maxPinnedPerRoom || !pinFits(room, pin)) return -1;
       set({
@@ -450,7 +477,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       if (!s.draft || s.builtin) return;
       const room = s.draft.rooms.find((r) => r.id === roomId);
       const pin = room?.furniture?.[index];
-      if (!room || !pin) return;
+      if (!room || !pin || pin.suppressed) return; // a ghost is never movable
       const at = clampPinPos(room, pin, pos);
       if ((at.x === pin.x && at.y === pin.y) || !pinFits(room, { ...pin, ...at }, index)) return;
       set({
@@ -466,7 +493,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       if (!s.draft || s.builtin || (dx === 0 && dy === 0)) return;
       const room = s.draft.rooms.find((r) => r.id === roomId);
       const pin = room?.furniture?.[index];
-      if (!room || !pin) return;
+      if (!room || !pin || pin.suppressed) return;
       const at = clampPinPos(room, pin, { x: pin.x + dx, y: pin.y + dy });
       if ((at.x === pin.x && at.y === pin.y) || !pinFits(room, { ...pin, ...at }, index)) return;
       setPins(roomId, room.furniture!.map((p, i) => (i === index ? { ...p, ...at } : p)));
@@ -481,6 +508,63 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       set((st) => (st.selectedFurniture && st.selectedFurniture.roomId === roomId && 'pinIndex' in st.selectedFurniture ? { selectedFurniture: null } : {}));
     },
 
+    suppressSlot: (roomId, pin) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room || !isSuppressibleKind(pin.kind) || !pin.fromSlot) return;
+      const ghost: PinnedFurniture = { ...pin, suppressed: true };
+      const pins = room.furniture ?? [];
+      if (pins.length >= LAYOUT_LIMITS.maxPinnedPerRoom || pins.some((p) => p.suppressed && p.fromSlot === ghost.fromSlot) || !pinFits(room, ghost)) return;
+      setPins(roomId, [...pins, ghost]);
+      set({ selectedFurniture: null });
+    },
+
+    restoreSlot: (roomId, index) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room?.furniture?.[index]?.suppressed) return;
+      setPins(roomId, room.furniture.filter((_, i) => i !== index));
+      set((st) => (st.selectedFurniture && st.selectedFurniture.roomId === roomId && 'pinIndex' in st.selectedFurniture ? { selectedFurniture: null } : {}));
+    },
+
+    rotatePin: (roomId, index, to) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      const pin = room?.furniture?.[index];
+      if (!room || !pin) return;
+      const next = rotatedPin(room, pin, index, to);
+      if (!next) return;
+      setPins(roomId, room.furniture!.map((p, i) => (i === index ? next : p)));
+    },
+
+    rotateGenerated: (roomId, pin, to) => {
+      const s = get();
+      if (!s.draft || s.builtin) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room) return;
+      const pins = room.furniture ?? [];
+      const next = rotatedPin(room, pin, undefined, to);
+      if (!next || pins.length >= LAYOUT_LIMITS.maxPinnedPerRoom) return;
+      setPins(roomId, [...pins, next]);
+      set({ selectedFurniture: { roomId, pinIndex: pins.length } });
+    },
+
+    addPin: (roomId, pin) => {
+      const s = get();
+      if (!s.draft || s.builtin || !isPinnableKind(pin.kind)) return;
+      const room = s.draft.rooms.find((r) => r.id === roomId);
+      if (!room) return;
+      const pins = room.furniture ?? [];
+      if (pins.length >= LAYOUT_LIMITS.maxPinnedPerRoom || pin.suppressed || !pinFits(room, pin)) return;
+      setPins(roomId, [...pins, pin]);
+      set({ selectedFurniture: { roomId, pinIndex: pins.length } });
+    },
+
+    setPlacing: (p) => set({ placing: p }),
+
     lockAll: (roomId, pins) => {
       const s = get();
       if (!s.draft || s.builtin) return;
@@ -490,7 +574,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       for (const pin of pins) {
         const cur = probe.furniture ?? [];
         if (cur.length >= LAYOUT_LIMITS.maxPinnedPerRoom) break;
-        if (cur.some((p) => p.kind === pin.kind && p.x === pin.x && p.y === pin.y && p.w === pin.w && p.h === pin.h) || !pinFits(probe, pin)) continue;
+        if (cur.some((p) => samePin(p, pin)) || !pinFits(probe, pin)) continue;
         probe = { ...probe, furniture: [...cur, pin] };
       }
       if (probe.furniture?.length === room.furniture?.length) return;
@@ -549,7 +633,7 @@ export const useEditorStore = create<EditorState>()((set, get) => {
       ),
     clearSelection: () => set({ selection: [] }),
     setTool: (tool) =>
-      set((s) => ({ tool, selectedDoor: tool === 'doors' ? s.selectedDoor : null, selectedFurniture: tool === 'furniture' ? s.selectedFurniture : null })),
+      set((s) => ({ tool, placing: tool === 'furniture' ? s.placing : null, selectedDoor: tool === 'doors' ? s.selectedDoor : null, selectedFurniture: tool === 'furniture' ? s.selectedFurniture : null })),
     setPendingRoomType: (type) => set({ pendingRoomType: type }),
 
     beginGesture: () => {

@@ -1,5 +1,6 @@
 import type * as Phaser from 'phaser';
 import type { FurnitureKind, PlacedFurniture } from '../../procgen/types';
+import { paintForFacing } from './facing';
 import { darken, lighten, rectFn, type RectFn } from './util';
 
 type Painter = (g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn) => void;
@@ -160,6 +161,7 @@ const MODERN: Record<FurnitureKind, Painter> = {
     rect(0xa47148, x, y + 3, w, 8);
     for (let i = 0; i < f.w; i++) {
       const mx = x + i * T + 3;
+      if (mx + 10 > x + w) break; // M16: a half-tile footprint gets no monitor that would poke past its end
       rect(0x22252e, mx, y - 3, 10, 8);
       rect(0x5fb8ff, mx + 1, y - 2, 8, 5);
       rect(0xa8dcff, mx + 2, y - 2, 3, 1);
@@ -188,7 +190,11 @@ const MODERN: Record<FurnitureKind, Painter> = {
     rect(0x000000, x + 2, y + h - 2, w - 2, 3, 0.25);
     rect(0x6a4a30, x, y, w, h);
     rect(0x9a7450, x + 1, y + 1, w - 2, h - 3);
-    for (let i = 0; i < Math.max(1, f.w / 2); i++) rect(0xf5f0e0, x + 4 + i * 2 * T, y + 4 + (i % 2) * 6, 6, 4);
+    for (let i = 0; i < Math.max(1, f.w / 2); i++) {
+      const px = x + 4 + i * 2 * T;
+      if (px + 6 > x + w) break; // M16: no paper past a half-tile end
+      rect(0xf5f0e0, px, y + 4 + (i % 2) * 6, 6, 4);
+    }
     rect(0xe8e8e8, x + w - 10, y + 5, 3, 3);
   },
   board: (g, f, T, rect) => {
@@ -212,6 +218,7 @@ const MODERN: Record<FurnitureKind, Painter> = {
     rect(0x7c8a96, x, y + 2, w, 12);
     rect(0xdde4ea, x, y + 2, w, 8);
     for (let i = 0; i < f.w; i++) {
+      if (i * T + 14 > w) break; // M16: tools end at +14 in their tile; none past a half-tile end
       const c = [0x7ef0a0, 0x50e3c2, 0xffa94a, 0xb48cff][i % 4]!;
       rect(0xd9eef7, x + i * T + 5, y - 1, 4, 6);
       rect(c, x + i * T + 5, y + 2, 4, 3);
@@ -356,6 +363,7 @@ const MODERN: Record<FurnitureKind, Painter> = {
     const LED = [0x4bffa0, 0xffd84a, 0xff5a5a];
     for (let row = 0; row < f.h; row++) {
       const ry = y + row * T;
+      if (ry + T - 4 > y + h) break; // M16: no cabinet row past a half-tile end
       rect(0x2e3440, x + 2, ry + 2, w - 4, T - 6);
       rect(pick(LED, f.variant + row), x + w - 5, ry + 3, 2, 2);
     }
@@ -380,6 +388,7 @@ const MODERN: Record<FurnitureKind, Painter> = {
     rect(0x7c8a96, x, y + 2, w, 12);
     rect(0xdde4ea, x, y + 2, w, 8);
     for (let i = 0; i < f.w; i++) {
+      if (i * T + 11 > w) break; // M16: no flask pair past a half-tile end
       const c = pick([0x7ef0a0, 0x50e3c2, 0xffa94a, 0xb48cff, 0xff6f91], f.variant + i);
       rect(0xd9eef7, x + i * T + 3, y - 3, 3, 7);
       rect(c, x + i * T + 3, y + 1, 3, 3);
@@ -661,7 +670,7 @@ function paintModernStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T
 }
 
 export function paintModernFurniture(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number): void {
-  MODERN[f.kind](g, f, T, rectFn(g));
+  paintForFacing(g, f, T, (gg, ff, TT) => MODERN[ff.kind](gg, ff, TT, rectFn(gg)));
 }
 
 // ==================================================================== guild
@@ -819,7 +828,10 @@ const GUILD: Record<FurnitureKind, Painter> = {
     rect(WOOD_DARK, x, y + 3, w, 11);
     rect(WOOD, x, y + 3, w, 8);
     for (let gx = x + 2; gx < x + w - 2; gx += 4) rect(darken(WOOD, 0.2), gx, y + 3, 1, 8, 0.5);
-    for (let i = 0; i < f.w; i++) candleAndScroll(rect, x + i * T + 3, y);
+    for (let i = 0; i < f.w; i++) {
+      if (i * T + 11 > w) break; // M16: no candle and scroll past a half-tile end
+      candleAndScroll(rect, x + i * T + 3, y);
+    }
   },
   'lead-desk': (g, f, T, rect) => {
     const x = f.x * T;
@@ -1061,6 +1073,7 @@ const GUILD: Record<FurnitureKind, Painter> = {
     const ORB = [0x2c7a7a, 0x6ff5ff, 0x9a6bff];
     for (let row = 0; row < f.h; row++) {
       const ry = y + row * T;
+      if (ry + T - 1 > y + h) break; // M16: no crystal segment past a half-tile end
       rect(darken(0x1c2230, 0.15), x + 2, ry + 1, w - 4, T - 2, 0.5);
       rect(pick(ORB, f.variant + row), x + Math.floor(w / 2) - 1, ry + 5, 2, 2, 0.85);
     }
@@ -1089,6 +1102,7 @@ const GUILD: Record<FurnitureKind, Painter> = {
     rect(0x4a3826, x, y + 2, w, 12);
     rect(0x6b4f38, x, y + 2, w, 8);
     for (let i = 0; i < f.w; i++) {
+      if (i * T + 11 > w) break; // M16: no flask pair past a half-tile end
       const c = pick([0x7ef0a0, 0xff8a3a, 0xb48cff, 0x6ff5ff], f.variant + i);
       rect(0xd9eef7, x + i * T + 4, y - 3, 3, 6);
       rect(c, x + i * T + 4, y, 3, 3);
@@ -1387,5 +1401,5 @@ function paintGuildStairs(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T:
 }
 
 export function paintGuildFurniture(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number): void {
-  GUILD[f.kind](g, f, T, rectFn(g));
+  paintForFacing(g, f, T, (gg, ff, TT) => GUILD[ff.kind](gg, ff, TT, rectFn(gg)));
 }

@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type PointerEventHandler, type WheelEventHandler } from 'react';
-import { isRoomWalled, roomInterior, type DoorSide, type DoorSpec, type LayoutIssue, type LayoutRoom, type RoomType } from '@tagconn/shared';
+import { LAYOUT_LIMITS, isRoomWalled, roomInterior, type DoorSide, type Facing, type DoorSpec, type LayoutIssue, type LayoutRoom, type PinnedFurniture, type RoomType } from '@tagconn/shared';
 import type { GeneratedMap } from '../../game/procgen';
 import type { ThemeDefinition } from '../../game/themes';
 import { isDragMove } from '../../game/camera/drag';
 import { zoomAboutPoint } from '../../game/camera/zoom';
 import { genRoomId, useEditorStore } from '../../stores/editorStore';
 import { autoDoorsForRoom } from './reachability';
-import { clampPinPos, hitFurnitureAt, isPinnableItem, pinFromPlaced, pinToWorld, unpinnableReason, type FurnitureHit } from './pins';
+import { clampPinPos, hitFurnitureAt, pinFits, isPinnableItem, pinFromPlaced, pinToWorld, unpinnableReason, type FurnitureHit } from './pins';
 import { RoomTypePicker } from './RoomTypePicker';
+import { FurniturePalette } from './FurniturePalette';
+import { facingTriangle, isRotatable, kindGlyph, kindLabel } from './glyphs';
+import { snapRect } from './snap';
 
 /** World pixels per tile at zoom = 1 (this is a schematic 2D plan, not the game's 16px tiles). */
 const WORLD_TILE_PX = 20;
@@ -38,6 +41,36 @@ interface Rect {
   y: number;
   w: number;
   h: number;
+}
+
+/**
+ * Schematic detail inside a furniture rect (px): the kind glyph centred at T >= 12, the label under it at
+ * T >= 20 (clipped to the rect), and a facing triangle on the facing side for rotatable kinds.
+ */
+function drawItemDetail(ctx: CanvasRenderingContext2D, px: number, py: number, w: number, h: number, T: number, kind: string, facing: Facing | undefined, ink: string) {
+  if (T < 12) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(px, py, w, h);
+  ctx.clip();
+  ctx.fillStyle = ink;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const labelled = T >= 20 && h >= T * 0.9;
+  const g = Math.max(9, Math.min(T * 0.7, 16));
+  ctx.font = `${g}px sans-serif`;
+  ctx.fillText(kindGlyph(kind), px + w / 2, py + h / 2 - (labelled ? g * 0.25 : 0));
+  if (labelled) {
+    ctx.font = `${Math.max(7, Math.min(T * 0.38, 10))}px sans-serif`;
+    ctx.fillText(kindLabel(kind), px + w / 2, py + h / 2 + g * 0.55);
+  }
+  if (isRotatable(kind)) {
+    ctx.beginPath();
+    facingTriangle({ x: px, y: py, w, h }, facing ?? 's').forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 type DoorHandle = 'start' | 'end';
@@ -128,7 +161,7 @@ export function PlanCanvas({
   flashRoomIds: string[];
 }) {
   const store = useEditorStore();
-  const { draft, selection, selectedDoor, selectedFurniture, tool, pendingRoomType, builtin } = store;
+  const { draft, selection, selectedDoor, selectedFurniture, tool, pendingRoomType, builtin, placing } = store;
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [view, setView] = useState({ zoom: 1, scrollX: 0, scrollY: 0 });
@@ -136,6 +169,10 @@ export function PlanCanvas({
   const [pendingPick, setPendingPick] = useState<{ rect: Rect; screen: { x: number; y: number } } | null>(null);
   /** Furniture tool hover feedback: a reason the item under the cursor cannot be locked (cursor not-allowed + hint). */
   const [furnitureHint, setFurnitureHint] = useState<string | null>(null);
+  /** Snap guides while a furniture drag is snapped (world tiles; `span` is the room interior the lines cross). */
+  const [guides, setGuides] = useState<{ span: Rect; lines: { axis: 'x' | 'y'; at: number }[] } | null>(null);
+  /** Palette placement preview under the cursor (world tile rect) and whether it can be dropped there. */
+  const [placeHover, setPlaceHover] = useState<(Rect & { ok: boolean }) | null>(null);
   const modeRef = useRef<Mode>({ kind: 'none' });
   const downRef = useRef<{ screen: { x: number; y: number }; moved: boolean } | null>(null);
 
@@ -260,6 +297,9 @@ export function PlanCanvas({
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       // Pinned items are drawn from the draft below (amber); skip the generator's copy so they don't double up.
       for (const f of generatedMap.furniture) if (!f.pinned) ctx.fillRect(originX + f.x * T, originY + f.y * T, f.w * T, f.h * T);
+      for (const f of generatedMap.furniture) {
+        if (!f.pinned) drawItemDetail(ctx, originX + f.x * T, originY + f.y * T, f.w * T, f.h * T, T, f.kind, f.facing, 'rgba(15,13,21,0.75)');
+      }
       for (const seat of Object.values(generatedMap.zones).flatMap((z) => z.seats)) {
         ctx.fillStyle = seat.kind === 'sit' ? '#4ff0d0' : '#b07aff';
         ctx.beginPath();
@@ -352,11 +392,31 @@ export function PlanCanvas({
         const r = pinToWorld(pin, inner);
         const px = originX + r.x * T;
         const py = originY + r.y * T;
+        const selectedPin = !!selectedFurniture && 'pinIndex' in selectedFurniture && selectedFurniture.roomId === room.id && selectedFurniture.pinIndex === index;
+        if (pin.suppressed) {
+          // A ghost: the generator's slot the user deleted. Dashed outline, glyph at 40 % alpha, hit-testable but never movable.
+          ctx.save();
+          ctx.globalAlpha = 0.4;
+          ctx.strokeStyle = '#f5c07a';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 2]);
+          ctx.strokeRect(px + 0.5, py + 0.5, r.w * T - 1, r.h * T - 1);
+          ctx.setLineDash([]);
+          drawItemDetail(ctx, px, py, r.w * T, r.h * T, T, pin.kind, pin.facing, '#f5c07a');
+          ctx.restore();
+          if (selectedPin) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(px - 1, py - 1, r.w * T + 2, r.h * T + 2);
+          }
+          return;
+        }
         ctx.fillStyle = 'rgba(245,192,122,0.8)';
         ctx.fillRect(px, py, r.w * T, r.h * T);
         ctx.strokeStyle = '#8a5a14';
         ctx.lineWidth = 1;
         ctx.strokeRect(px + 0.5, py + 0.5, r.w * T - 1, r.h * T - 1);
+        drawItemDetail(ctx, px, py, r.w * T, r.h * T, T, pin.kind, pin.facing, '#3a2508');
         if (T >= 10) {
           const g = Math.max(8, Math.min(T * 0.7, 14));
           ctx.fillStyle = '#1a1724';
@@ -365,7 +425,7 @@ export function PlanCanvas({
           ctx.fillText('\u{1F512}', px + r.w * T - 1, py + g);
           ctx.textAlign = 'start';
         }
-        if (selectedFurniture && 'pinIndex' in selectedFurniture && selectedFurniture.roomId === room.id && selectedFurniture.pinIndex === index) {
+        if (selectedPin) {
           ctx.strokeStyle = '#ffffff';
           ctx.lineWidth = 2;
           ctx.strokeRect(px - 1, py - 1, r.w * T + 2, r.h * T + 2);
@@ -433,6 +493,35 @@ export function PlanCanvas({
           ctx.fillRect(hx - 3, hy - 3, 6, 6);
         }
       }
+    }
+
+    // Snap guides (furniture drag): 1 px cyan lines across the room interior.
+    if (guides) {
+      ctx.strokeStyle = '#4ff0d0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (const g of guides.lines) {
+        if (g.axis === 'x') {
+          const x = Math.round(originX + g.at * T) + 0.5;
+          ctx.moveTo(x, originY + guides.span.y * T);
+          ctx.lineTo(x, originY + (guides.span.y + guides.span.h) * T);
+        } else {
+          const y = Math.round(originY + g.at * T) + 0.5;
+          ctx.moveTo(originX + guides.span.x * T, y);
+          ctx.lineTo(originX + (guides.span.x + guides.span.w) * T, y);
+        }
+      }
+      ctx.stroke();
+    }
+
+    // Palette placement preview: green when it can be dropped there, red when not.
+    if (placing && placeHover) {
+      ctx.fillStyle = placeHover.ok ? 'rgba(79,240,208,0.3)' : 'rgba(255,107,107,0.3)';
+      ctx.strokeStyle = placeHover.ok ? '#4ff0d0' : '#ff6b6b';
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(originX + placeHover.x * T, originY + placeHover.y * T, placeHover.w * T, placeHover.h * T);
+      ctx.strokeRect(originX + placeHover.x * T, originY + placeHover.y * T, placeHover.w * T, placeHover.h * T);
+      drawItemDetail(ctx, originX + placeHover.x * T, originY + placeHover.y * T, placeHover.w * T, placeHover.h * T, T, placing.kind, undefined, '#e8e6f0');
     }
 
     // In-progress draw rectangle.
@@ -607,6 +696,12 @@ export function PlanCanvas({
       modeRef.current = { kind: 'none' };
       return;
     }
+    if (tool === 'furniture' && placing) {
+      const spot = placeSpot(toWorldPoint(screen.x, screen.y));
+      if (spot?.pin) store.addPin(spot.room.id, spot.pin);
+      modeRef.current = { kind: 'none' };
+      return;
+    }
     if (tool === 'furniture') {
       // Half-cell resolution (M15): the exact point tells two half-offset items in one tile apart.
       const hit = hitFurnitureAt(generatedMap, draft.rooms, toWorldPoint(screen.x, screen.y));
@@ -655,12 +750,35 @@ export function PlanCanvas({
     modeRef.current = { kind: 'none' };
   };
 
+  /** Where the armed palette piece would land under a world point: its room, the pin (null when it cannot be placed) and why not. */
+  function placeSpot(at: { x: number; y: number }): { room: LayoutRoom; rect: Rect; pin: PinnedFurniture | null; reason: string | null } | null {
+    if (!placing || !draft) return null;
+    const room = hitRoom({ x: Math.floor(at.x), y: Math.floor(at.y) });
+    if (!room || room.type === 'stairs') return null;
+    const inner = roomInterior(room);
+    const size = { w: placing.w, h: placing.h };
+    const pos = clampPinPos(room, { kind: placing.kind, x: 0, y: 0, ...size }, { x: at.x - inner.x - size.w / 2, y: at.y - inner.y - size.h / 2 });
+    const pin: PinnedFurniture = { kind: placing.kind, x: pos.x, y: pos.y, ...size };
+    const rect = { x: inner.x + pos.x, y: inner.y + pos.y, ...size };
+    if (builtin) return { room, rect, pin: null, reason: 'Builtin layouts are read-only' };
+    if ((room.furniture?.length ?? 0) >= LAYOUT_LIMITS.maxPinnedPerRoom) return { room, rect, pin: null, reason: `Room is full (${LAYOUT_LIMITS.maxPinnedPerRoom} locked items)` };
+    if (!pinFits(room, pin)) return { room, rect, pin: null, reason: 'Does not fit there' };
+    return { room, rect, pin, reason: null };
+  }
+
   const onPointerMove: PointerEventHandler<HTMLCanvasElement> = (e) => {
     const screen = screenPos(e);
     if (downRef.current && !downRef.current.moved) {
       downRef.current.moved = isDragMove(screen.x - downRef.current.screen.x, screen.y - downRef.current.screen.y);
     }
     const mode = modeRef.current;
+    if (tool === 'furniture' && placing && mode.kind === 'none') {
+      const spot = placeSpot(toWorldPoint(screen.x, screen.y));
+      setPlaceHover(spot ? { ...spot.rect, ok: !!spot.pin } : null);
+      const reason = spot?.reason ?? null;
+      if (reason !== furnitureHint) setFurnitureHint(reason);
+      return;
+    }
     if (tool === 'furniture' && mode.kind === 'none' && !builtin) {
       const hit = hitFurnitureAt(generatedMap, draft.rooms, toWorldPoint(screen.x, screen.y));
       const reason = hit && hit.pinIndex === null ? unpinnableReason(hit.item) : null;
@@ -688,7 +806,26 @@ export function PlanCanvas({
       const fresh = useEditorStore.getState().draft?.rooms.find((r) => r.id === mode.roomId);
       const pin = fresh?.furniture?.[index];
       if (!fresh || !pin) return;
-      store.setPinPos(mode.roomId, index, clampPinPos(fresh, pin, { x: mode.origin.x + half.x - mode.startHalf.x, y: mode.origin.y + half.y - mode.startHalf.y }));
+      if (pin.suppressed) return; // a ghost is never movable
+      const raw = clampPinPos(fresh, pin, { x: mode.origin.x + half.x - mode.startHalf.x, y: mode.origin.y + half.y - mode.startHalf.y });
+      if (e.altKey) {
+        setGuides(null); // Alt = free placement
+        store.setPinPos(mode.roomId, index, raw);
+        return;
+      }
+      const inner = roomInterior(fresh);
+      const origin = mode.hit.item;
+      const others: Rect[] = (fresh.furniture ?? []).filter((p, i) => i !== index && !p.suppressed);
+      for (const f of generatedMap?.furniture ?? []) {
+        if (f.roomId !== fresh.id || f.pinned || (f.kind === origin.kind && f.x === origin.x && f.y === origin.y)) continue;
+        others.push({ x: f.x - inner.x, y: f.y - inner.y, w: f.w, h: f.h });
+      }
+      const snapped = snapRect({ x: raw.x, y: raw.y, w: pin.w, h: pin.h }, others, { x: 0, y: 0, w: inner.w, h: inner.h });
+      const at = clampPinPos(fresh, pin, snapped);
+      store.setPinPos(mode.roomId, index, at);
+      const moved = useEditorStore.getState().draft?.rooms.find((r) => r.id === mode.roomId)?.furniture?.[index];
+      const lines = moved && moved.x === snapped.x && moved.y === snapped.y ? snapped.guides.map((g) => ({ axis: g.axis, at: g.at + (g.axis === 'x' ? inner.x : inner.y) })) : [];
+      setGuides(lines.length ? { span: inner, lines } : null);
       return;
     }
     if (mode.kind === 'pan') {
@@ -771,6 +908,7 @@ export function PlanCanvas({
       return;
     }
     if (mode.kind === 'move' || mode.kind === 'resize' || mode.kind === 'move-door' || mode.kind === 'resize-door' || mode.kind === 'move-furniture') {
+      if (mode.kind === 'move-furniture') setGuides(null);
       store.endGesture(); // a click on furniture never began a gesture, so this is a no-op for it
       return;
     }
@@ -798,7 +936,9 @@ export function PlanCanvas({
             : tool === 'furniture'
               ? furnitureHint
                 ? 'cursor-not-allowed'
-                : 'cursor-pointer'
+                : placing
+                  ? 'cursor-crosshair'
+                  : 'cursor-pointer'
               : tool === 'room' || tool === 'stairs' || tool === 'doors'
                 ? 'cursor-crosshair'
                 : 'cursor-default'
@@ -824,6 +964,7 @@ export function PlanCanvas({
           onCancel={() => setPendingPick(null)}
         />
       )}
+      {tool === 'furniture' && <FurniturePalette disabled={builtin} />}
       {tool === 'furniture' && furnitureHint && (
         <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-ink-900/90 px-2 py-1 text-[11px] text-amber-200">
           {furnitureHint}

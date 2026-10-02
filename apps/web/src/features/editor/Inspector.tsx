@@ -3,6 +3,7 @@ import {
   FURNISH_DENSITIES,
   LAYOUT_LIMITS,
   OFFICE_STYLES,
+  type Facing,
   ROOM_TYPES,
   isRoomWalled,
   type FurnishDensity,
@@ -15,6 +16,9 @@ import {
 import type { ThemeDefinition } from '../../game/themes';
 import { Button, Checkbox, Field, Input, Select } from '../../components/ui';
 import type { FurnitureSelection } from '../../stores/editorStore';
+import { isRotatable, kindGlyph, kindLabel } from './glyphs';
+import { facingSupported } from '../../game/procgen/facingSpec';
+import type { FurnitureKind } from '../../game/procgen/types';
 
 const int = (v: string, fallback: number) => {
   const n = Number.parseInt(v, 10);
@@ -269,12 +273,6 @@ function DoorsFields({ room, onAutoDoors, onSeal }: { room: LayoutRoom; onAutoDo
   );
 }
 
-/** Label for a furniture kind ("work-desk" -> "Work desk"). */
-const kindLabel = (kind: string) => {
-  const t = kind.replace(/-/g, ' ');
-  return t.charAt(0).toUpperCase() + t.slice(1);
-};
-
 /** Locked furniture of the selected room (M12): "N locked", Lock all, Release all. */
 function LockedFurnitureFields({
   room,
@@ -290,13 +288,16 @@ function LockedFurnitureFields({
   onLockAll: () => void;
   onReleaseAll: () => void;
 }) {
-  const locked = room.furniture?.length ?? 0;
+  const locked = room.furniture?.length ?? 0; // ghosts count toward the cap too
+  const removed = room.furniture?.filter((p) => p.suppressed).length ?? 0;
   const atLimit = locked + lockable >= LAYOUT_LIMITS.maxPinnedPerRoom && overflow > 0;
   return (
     <div className="space-y-2 border-t border-ink-700 p-2.5">
       <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-ink-400">
         <span>Furniture</span>
-        <span className="normal-case text-ink-300">{locked} locked</span>
+        <span className="normal-case text-ink-300">
+          {locked - removed} locked{removed > 0 ? ` · ${removed} removed` : ''}
+        </span>
       </div>
       <div className="flex gap-2">
         <Button
@@ -327,32 +328,82 @@ function LockedFurnitureFields({
 /** A tile coordinate for the inspector: whole tiles as `2`, half-tile pin positions (M15) as `2.5`. */
 const fmtTile = (v: number): string => (Number.isInteger(v) ? String(v) : v.toFixed(1));
 
-/** The selected furniture item: kind, interior-relative position and size, Locked/Generated, Lock / Release. */
+const FACINGS: { facing: Facing; label: string }[] = [
+  { facing: 'n', label: 'N' },
+  { facing: 'e', label: 'E' },
+  { facing: 's', label: 'S' },
+  { facing: 'w', label: 'W' },
+];
+
+/** The selected furniture item: kind, interior-relative position and size, Locked/Generated/Removed, Lock / Release / Restore, Facing. */
 function FurnitureItemFields({
   room,
   selection,
   onLock,
   onRelease,
+  onRestore,
+  onFace,
 }: {
   room: LayoutRoom;
   selection: FurnitureSelection;
   onLock: (pin: PinnedFurniture) => void;
   onRelease: (index: number) => void;
+  onRestore: (index: number) => void;
+  /** Sets the facing of the selected item (a generated one is locked in the same step). */
+  onFace: (facing: Facing) => void;
 }) {
   const pinned = 'pinIndex' in selection;
   const item = pinned ? room.furniture?.[selection.pinIndex] : selection.generated;
   if (!item) return null;
+  const ghost = !!item.suppressed;
+  const rotatable = !ghost && isRotatable(item.kind);
+  const facing = item.facing ?? 's';
   return (
     <div className="space-y-2 border-t border-ink-700 p-2.5">
       <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-ink-400">
         <span>Selected item</span>
-        <span className={pinned ? 'normal-case text-amber-300' : 'normal-case text-ink-300'}>{pinned ? '\u{1F512} Locked' : 'Generated'}</span>
+        <span className={pinned ? 'normal-case text-amber-300' : 'normal-case text-ink-300'}>{ghost ? 'Removed' : pinned ? '\u{1F512} Locked' : 'Generated'}</span>
       </div>
-      <div className="text-[12px] text-ink-100">{kindLabel(item.kind)}</div>
+      <div className="flex items-center gap-2 text-[12px] text-ink-100">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-ink-600 bg-ink-900 text-sm leading-none" aria-hidden>
+          {kindGlyph(item.kind)}
+        </span>
+        {kindLabel(item.kind)}
+      </div>
       <div className="font-mono text-[11px] text-ink-400">
-        at {fmtTile(item.x)}, {fmtTile(item.y)} · {item.w} x {item.h}
+        at {fmtTile(item.x)}, {fmtTile(item.y)} · {fmtTile(item.w)} x {fmtTile(item.h)}
       </div>
-      {pinned ? (
+      {ghost && <p className="text-[11px] text-ink-300">Removed from generation: nothing is placed in this slot.</p>}
+      {rotatable && (
+        <div>
+          <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wide text-ink-400">
+            <span>Facing</span>
+            <kbd className="rounded bg-ink-700 px-1 py-0.5 font-mono text-[10px] normal-case text-ink-300">R</kbd>
+          </div>
+          <div className="grid grid-cols-4 gap-1" role="group" aria-label="Facing">
+            {FACINGS.map((f) => (
+              <button
+                key={f.facing}
+                type="button"
+                aria-pressed={facing === f.facing}
+                disabled={!facingSupported(item.kind as FurnitureKind, f.facing)}
+                onClick={() => onFace(f.facing)}
+                className={
+                  'rounded border py-1 text-[11px] transition-colors duration-100 disabled:opacity-40 ' +
+                  (facing === f.facing ? 'border-cozy bg-cozy/20 text-cozy' : 'border-ink-700 bg-ink-900 text-ink-200 hover:bg-ink-800')
+                }
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {ghost && pinned ? (
+        <Button className="w-full" variant="primary" onClick={() => onRestore(selection.pinIndex)} title="Delete / Backspace">
+          Restore
+        </Button>
+      ) : pinned ? (
         <Button className="w-full" onClick={() => onRelease(selection.pinIndex)} title="Delete / Backspace">
           Release to procedural
         </Button>
@@ -380,6 +431,8 @@ function RoomFields({
   lockOverflow,
   onLockFurniture,
   onReleaseFurniture,
+  onRestoreFurniture,
+  onFaceFurniture,
   onLockAll,
   onReleaseAll,
 }: {
@@ -389,6 +442,8 @@ function RoomFields({
   lockOverflow: number;
   onLockFurniture: (pin: PinnedFurniture) => void;
   onReleaseFurniture: (index: number) => void;
+  onRestoreFurniture: (index: number) => void;
+  onFaceFurniture: (facing: Facing) => void;
   onLockAll: () => void;
   onReleaseAll: () => void;
   furnishDefaults: OfficeLayoutInput['furnishDefaults'];
@@ -442,7 +497,7 @@ function RoomFields({
         </div>
       </div>
       {room.type !== 'stairs' && selectedFurniture && selectedFurniture.roomId === room.id && (
-        <FurnitureItemFields room={room} selection={selectedFurniture} onLock={onLockFurniture} onRelease={onReleaseFurniture} />
+        <FurnitureItemFields room={room} selection={selectedFurniture} onLock={onLockFurniture} onRelease={onReleaseFurniture} onRestore={onRestoreFurniture} onFace={onFaceFurniture} />
       )}
       {room.type !== 'stairs' && <LockedFurnitureFields room={room} lockable={lockableCount} overflow={lockOverflow} onLockAll={onLockAll} onReleaseAll={onReleaseAll} />}
       {furnishable && (
@@ -470,6 +525,8 @@ export function Inspector({
   lockOverflow,
   onLockFurniture,
   onReleaseFurniture,
+  onRestoreFurniture,
+  onFaceFurniture,
   onLockAll,
   onReleaseAll,
 }: {
@@ -478,6 +535,8 @@ export function Inspector({
   lockOverflow: number;
   onLockFurniture: (roomId: string, pin: PinnedFurniture) => void;
   onReleaseFurniture: (roomId: string, index: number) => void;
+  onRestoreFurniture: (roomId: string, index: number) => void;
+  onFaceFurniture: (roomId: string, facing: Facing) => void;
   onLockAll: (roomId: string) => void;
   onReleaseAll: (roomId: string) => void;
   draft: OfficeLayoutInput;
@@ -511,6 +570,8 @@ export function Inspector({
           lockOverflow={lockOverflow}
           onLockFurniture={(pin) => onLockFurniture(selectedRoom.id, pin)}
           onReleaseFurniture={(index) => onReleaseFurniture(selectedRoom.id, index)}
+          onRestoreFurniture={(index) => onRestoreFurniture(selectedRoom.id, index)}
+          onFaceFurniture={(facing) => onFaceFurniture(selectedRoom.id, facing)}
           onLockAll={() => onLockAll(selectedRoom.id)}
           onReleaseAll={() => onReleaseAll(selectedRoom.id)}
         />

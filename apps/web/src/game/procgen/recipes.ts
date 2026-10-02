@@ -1,6 +1,18 @@
-import type { FurnishDensity, RoomType } from '@tagconn/shared';
-import { coveredTileRect } from './geometry';
-import type { FurnitureKind, Rect } from './types';
+import type { Facing, FurnishDensity, RoomType } from '@tagconn/shared';
+import {
+  bestCandidate,
+  CANDIDATES,
+  decorateWithContext,
+  fillRows,
+  mergeStacks,
+  seatsFor,
+  type DecorContext,
+  type HarmonyScore,
+  type RowSlot,
+} from './harmony';
+import type { FurnitureKind, Point, Rect } from './types';
+
+export { seatsFor };
 
 export interface RecipeItem {
   kind: FurnitureKind;
@@ -10,6 +22,12 @@ export interface RecipeItem {
   h: number;
   blocking: boolean;
   variant: number;
+  /** M16: stable slot id `<group>:<ordinal-in-plan>` (furnishing.md 3.2); set by the group recipe, absent on the legacy one. */
+  slotId?: string;
+  /** M16: the group instance (`<group>#<n>`). */
+  groupId?: string;
+  /** M16: omitted = `s`. Only set when the kind supports it (`FACING_SUPPORT`). */
+  facing?: Facing;
 }
 export interface RecipeSeat {
   x: number;
@@ -35,82 +53,20 @@ export interface RecipeResult {
   /** Set when `seatsTarget` was requested but the room could only fit fewer (generate.ts turns this
    *  into an `unreachable-seat` warning issue: the closest existing code for "a seat didn't work out"). */
   seatsShortfall?: { wanted: number; fit: number };
+  /** M16: the winning candidate's score (group recipe only). */
+  score?: HarmonyScore;
+  /** M16: plan slots the recipe could not place (group recipe only; consumed slots are not listed). */
+  skippedSlots?: string[];
 }
-
-/**
- * Row-fill plan per density: `stack` rows are packed back-to-back sharing a single `aisle` gap after
- * the whole stack (e.g. a server room's cold/hot aisle sits between two racks, not after every single
- * rack), and `colGap` is the gap left between items along a row. Coverage rises with `stack` (less of
- * the room spent on aisles) and falls with `colGap`; `fillRows` also always reserves one full-height
- * "spine" column so a `colGap` of 0 can never wall a row off from its neighbours (M8 8n: this is what
- * lets `dense`/`packed` push coverage well past what a naive `colGap: 0` grid could safely reach).
- */
-const DENSITY_PLAN: Record<FurnishDensity, { stack: number; colGap: number }> = {
-  sparse: { stack: 1, colGap: 1 },
-  normal: { stack: 2, colGap: 1 },
-  dense: { stack: 4, colGap: 0 },
-  packed: { stack: 10, colGap: 0 },
-};
-
-/**
- * Generic row filler (guild-hall.md section 4 step 8, generalised for density): tiles `itemW x
- * itemH` blocking items left-to-right across `r`'s width, `stack` rows deep before the next `aisle`
- * gap (guild-hall.md 8n's cold/hot aisle pattern - one walkway per stack, not per row). One column is
- * always left as a full-height gap (skipped even at `colGap: 0`) so every stacked row band is still
- * reachable from the next one without depending on the room's width happening to leave a remainder.
- * Returns the top-left of every item (`itemH` apart within a stack) plus `atStart`/`atEnd`: whether
- * it is the first/last row of its stack, so a caller can seat the outward (aisle-facing) side of a
- * stack only, instead of trying to seat a row that is sandwiched between two other items.
- *
- * Always insets `r` by 1 tile on every side first (when there's room to spare): a door can open onto
- * any point of a room's wall, so furniture packed flush against the interior's very first row/column
- * can box a door in on three sides with nothing left but the one gap the door itself reserves (M8 8n
- * regression: a dense library's shelves did exactly this and the local reachability retry had to
- * strip most of the room before it found the one item actually sealing the door off). A 1-tile
- * perimeter walkway means a door always opens onto open floor that already wraps the whole room.
- */
-interface RowSlot {
-  x: number;
-  y: number;
-  atStart: boolean;
-  atEnd: boolean;
-}
-function fillRows(rOuter: Rect, itemW: number, itemH: number, aisle: number, density: FurnishDensity): RowSlot[] {
-  const canInset = rOuter.w > itemW + 2 && rOuter.h > itemH + 2;
-  const r: Rect = canInset ? { x: rOuter.x + 1, y: rOuter.y + 1, w: rOuter.w - 2, h: rOuter.h - 2 } : rOuter;
-  const { stack, colGap } = DENSITY_PLAN[density];
-  const colPitch = itemW + colGap;
-  const stackHeight = itemH * stack;
-  const rowPitch = stackHeight + aisle;
-  const spineX = r.x + Math.max(0, r.w - 1); // reserved full-height gap, never covered by an item
-  const out: RowSlot[] = [];
-  for (let y = r.y; y + itemH <= r.y + r.h; y += rowPitch) {
-    const rowsInStack = Math.min(stack, Math.floor((r.y + r.h - y) / itemH));
-    for (let x = r.x; x + itemW <= r.x + r.w; x += colPitch) {
-      if (x <= spineX && x + itemW > spineX) continue; // would cover the spine
-      for (let s = 0; s < rowsInStack; s++) {
-        out.push({ x, y: y + itemH * s, atStart: s === 0, atEnd: s === rowsInStack - 1 });
-      }
-    }
-  }
-  return out;
-}
-
-/** Collapses a stack of 1-tall `fillRows` slots at the same column back into one tall rect (a
- *  server room's rack-row is naturally "however many 1-tall slots the stack contains", not one item
- *  per slot) - relies on `fillRows` emitting a stack's slots consecutively, in `atStart..atEnd` order. */
-function mergeStacks(positions: readonly RowSlot[]): { x: number; y: number; h: number }[] {
-  const groups: { x: number; y: number; h: number }[] = [];
-  let current: { x: number; y: number; h: number } | null = null;
-  for (const p of positions) {
-    if (p.atStart) current = { x: p.x, y: p.y, h: 1 };
-    else if (current) current.h++;
-    if (p.atEnd && current) {
-      groups.push(current);
-      current = null;
-    }
-  }
-  return groups;
+/** M16: what the generator knows about a room before furnishing it (furnishing.md 1.4). */
+export interface FurnishContext {
+  /** Door apron tiles (absolute "x,y"), kept clear. */
+  aprons: ReadonlySet<string>;
+  /** Interior sides that are solid wall; walled rooms: all four. */
+  wallSides: ReadonlySet<Facing>;
+  /** Pins already placed in this room (absolute rects) and the slots they consume. */
+  pinned: readonly Rect[];
+  consumedSlots: ReadonlySet<string>;
 }
 
 /** Lounge extra-row slot kinds by placed-slot index; later slots stay plain tables. */
@@ -122,7 +78,21 @@ const LOUNGE_SLOT_KINDS: readonly FurnitureKind[] = ['ping-pong', 'board-game-ta
  * own seeded stream (`room:<id>` or `room:<id>:<furnish.seed>`), so editing one room's density never
  * reshuffles another room's, and re-rolling a room's `furnish.seed` never touches the layout seed.
  */
-export function furnishRoom(type: RoomType, r: Rect, rand: () => number, opts: FurnishOptions): RecipeResult {
+export function furnishRoom(type: RoomType, r: Rect, rand: () => number, opts: FurnishOptions, ctx?: FurnishContext): RecipeResult {
+  // M16: with a context the room is furnished from groups (harmony.ts); without one, the legacy per-type recipe below
+  // (what generate.ts calls until F5 integrates the context; deleted then).
+  if (ctx) return furnishRoomGroups(type, r, rand, opts, ctx);
+  return furnishRoomLegacy(type, r, rand, opts);
+}
+
+function furnishRoomGroups(type: RoomType, r: Rect, rand: () => number, opts: FurnishOptions, ctx: FurnishContext): RecipeResult {
+  const best = bestCandidate(type, { ...ctx, interior: r, density: opts.density, aisle: opts.aisle, decor: opts.decor }, rand, CANDIDATES[opts.density]);
+  let seatsShortfall: RecipeResult['seatsShortfall'];
+  if (opts.seatsTarget !== undefined && best.seats.length < opts.seatsTarget) seatsShortfall = { wanted: opts.seatsTarget, fit: best.seats.length };
+  return { furniture: best.items, seats: best.seats, seatsShortfall, score: best.score, skippedSlots: best.skippedSlots };
+}
+
+function furnishRoomLegacy(type: RoomType, r: Rect, rand: () => number, opts: FurnishOptions): RecipeResult {
   const furniture: RecipeItem[] = [];
   const seats: RecipeSeat[] = [];
   const x2 = r.x + r.w - 1;
@@ -376,76 +346,6 @@ export function furnishRoom(type: RoomType, r: Rect, rand: () => number, opts: F
 }
 
 /**
- * The seats a single item of `kind` at `rect` offers inside `interior` (M12 G4: pinned furniture brings its
- * own seats). Mirrors `furnishRoom`'s per-kind rules: desks, booths and reading tables sit on the outward
- * row below (else above); tables ring; benches, lab benches, shelves, racks and counters stand below (else
- * above), every 2 tiles for the long ones; a console sits to its left; sofas and armchairs sit on themselves.
- */
-export function seatsFor(kind: FurnitureKind, rect: Rect, interior: Rect): RecipeSeat[] {
-  const out: RecipeSeat[] = [];
-  // M15: seats are whole tiles, so a half-offset item seats the ring around (or the tiles under) the integer rect
-  // it covers; an integer rect is its own covered rect, so recipe output is unchanged.
-  rect = coveredTileRect(rect);
-  const x2 = rect.x + rect.w - 1;
-  const y2 = rect.y + rect.h - 1;
-  const iy2 = interior.y + interior.h - 1;
-  const inside = (x: number, y: number) => x >= interior.x && x < interior.x + interior.w && y >= interior.y && y <= iy2;
-  /** The row on the outward side: below the item when it fits, else above. */
-  const outwardY = (): number | null => (y2 + 1 <= iy2 ? y2 + 1 : rect.y - 1 >= interior.y ? rect.y - 1 : null);
-  const along = (seatKind: RecipeSeat['kind'], step: number) => {
-    const y = outwardY();
-    if (y === null) return;
-    for (let x = rect.x; x <= x2; x += step) out.push({ x, y, kind: seatKind });
-  };
-  switch (kind) {
-    case 'work-desk':
-    case 'lead-desk':
-    case 'booth':
-    case 'reading-table':
-      along('sit', 1);
-      break;
-    case 'table': {
-      for (let x = rect.x; x <= x2; x++) {
-        if (inside(x, rect.y - 1)) out.push({ x, y: rect.y - 1, kind: 'sit' });
-        if (inside(x, y2 + 1)) out.push({ x, y: y2 + 1, kind: 'sit' });
-      }
-      for (let y = rect.y; y <= y2; y++) {
-        if (inside(rect.x - 1, y)) out.push({ x: rect.x - 1, y, kind: 'sit' });
-        if (inside(x2 + 1, y)) out.push({ x: x2 + 1, y, kind: 'sit' });
-      }
-      break;
-    }
-    case 'bench':
-    case 'standing-table':
-      along('stand', 1);
-      break;
-    case 'lab-bench':
-    case 'workbench':
-    case 'shelf':
-    case 'shelf-stack':
-    case 'counter':
-      along('stand', 2);
-      break;
-    case 'rack':
-    case 'rack-row': {
-      const y = outwardY();
-      if (y !== null) out.push({ x: rect.x, y, kind: 'stand' });
-      break;
-    }
-    case 'console':
-      if (inside(rect.x - 1, rect.y)) out.push({ x: rect.x - 1, y: rect.y, kind: 'sit' });
-      break;
-    case 'sofa':
-    case 'armchair':
-      for (let y = rect.y; y <= y2; y++) for (let x = rect.x; x <= x2; x++) out.push({ x, y, kind: 'sit' });
-      break;
-    default:
-      break;
-  }
-  return out;
-}
-
-/**
  * Decoration pass (M8 8n): plants/rugs/lamps/crates/banners/wall-art/bins along walls and corners,
  * scaled by `decor` (0..1). Never blocking, and only on cells the caller says are free (not already
  * furniture, a seat, or a door apron). Called after the main recipe and after the reachability retry,
@@ -453,12 +353,20 @@ export function seatsFor(kind: FurnitureKind, rect: Rect, interior: Rect): Recip
  */
 const DECOR_KINDS: FurnitureKind[] = ['plant', 'rug', 'lamp', 'crate', 'banner', 'wall-art', 'bin'];
 
+export function decorateRoom(r: Rect, freeCells: readonly Point[], decor: number, rand: () => number): RecipeItem[];
+/** M16 (furnishing.md 3.5): per-item hashed positions and affinities; wall-art/banner only on a solid wall, lamps near seats. */
+export function decorateRoom(r: Rect, freeCells: readonly Point[], decor: number, roomSeed: string, ctx: DecorContext): RecipeItem[];
 export function decorateRoom(
   r: Rect,
-  freeCells: readonly { x: number; y: number }[],
+  freeCells: readonly Point[],
   decor: number,
-  rand: () => number,
+  randOrSeed: (() => number) | string,
+  ctx?: DecorContext,
 ): RecipeItem[] {
+  if (typeof randOrSeed === 'string') {
+    return ctx ? decorateWithContext(r, freeCells, decor, randOrSeed, ctx) : [];
+  }
+  const rand = randOrSeed;
   if (decor <= 0 || freeCells.length === 0) return [];
   const perimeter = 2 * (r.w + r.h);
   const count = Math.min(freeCells.length, Math.round(perimeter * decor * 0.25));

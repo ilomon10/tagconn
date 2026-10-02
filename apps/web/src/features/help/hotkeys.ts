@@ -60,7 +60,7 @@ export const HOTKEY_GROUPS: HotkeyGroup[] = [
     title: 'Hall Planner',
     entries: [
       { combos: ['V'], description: 'Select tool' },
-      { combos: ['R'], description: 'Room tool' },
+      { combos: ['R'], description: 'Room tool (a selected furniture item: rotate it)' },
       { combos: ['S'], description: 'Stairs tool' },
       { combos: ['D'], description: 'Doors tool' },
       { combos: ['H', 'Space'], description: 'Hand tool' },
@@ -68,7 +68,7 @@ export const HOTKEY_GROUPS: HotkeyGroup[] = [
       { combos: ['Arrows'], description: 'Nudge the selection by 1 tile' },
       { combos: ['Shift+Arrows'], description: 'Nudge the selection by 5 tiles' },
       { combos: ['Alt+Arrows'], description: 'Resize the selection by 1 tile (a locked furniture item: nudge by half a tile)' },
-      { combos: ['Delete', 'Backspace'], description: 'Delete the selection' },
+      { combos: ['Delete', 'Backspace'], description: 'Delete the selection (a generated furniture item leaves a ghost; Delete again restores it)' },
       { combos: ['Ctrl/Cmd+D'], description: 'Duplicate the selection' },
       { combos: ['Ctrl/Cmd+Z'], description: 'Undo' },
       { combos: ['Ctrl/Cmd+Shift+Z', 'Ctrl+Y'], description: 'Redo' },

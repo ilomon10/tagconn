@@ -8,7 +8,8 @@ import {
   type RoomType,
 } from '@tagconn/shared';
 import { generateMap } from '../generate';
-import { furnishRoom } from '../recipes';
+import { CANDIDATE_DRAWS, CANDIDATES } from '../harmony';
+import { furnishRoom, type FurnishContext } from '../recipes';
 import { mulberry32 } from '../rng';
 import { reachableFrom } from '../regions';
 import type { Rect } from '../types';
@@ -20,10 +21,19 @@ import type { Rect } from '../types';
  * sofas/benches/mats are soft decor, not blocking), so the assertions below check that every density
  * step is clearly higher than the last, and land in a realistic band for that room type, rather than
  * pinning every type to the exact same numbers.
+ *
+ * M16 F1: re-baselined onto the group recipe (`furnishRoom` with a `FurnishContext`) with the SAME bands. The legacy
+ * per-type recipe (no context) is what generate.ts still calls until F5; a few tests below keep it covered.
  */
+const WALLED: FurnishContext = {
+  aprons: new Set<string>(),
+  wallSides: new Set(['n', 'e', 's', 'w'] as const),
+  pinned: [],
+  consumedSlots: new Set<string>(),
+};
 function coverage(type: RoomType, w: number, h: number, density: FurnishDensity, seed = 1): number {
   const interior: Rect = { x: 0, y: 0, w, h };
-  const { furniture } = furnishRoom(type, interior, mulberry32(seed), { density, decor: 0.35, aisle: 1 });
+  const { furniture } = furnishRoom(type, interior, mulberry32(seed), { density, decor: 0.35, aisle: 1 }, WALLED);
   const blockedTiles = furniture.filter((f) => f.blocking).reduce((s, f) => s + f.w * f.h, 0);
   return blockedTiles / (w * h);
 }
@@ -71,16 +81,20 @@ describe('furnishRoom: density -> coverage bands (M8 8n)', () => {
 
   it('is deterministic: the same room type/size/density/seed gives byte-identical furniture', () => {
     const interior: Rect = { x: 2, y: 3, w: 20, h: 14 };
-    const a = furnishRoom('server-room', interior, mulberry32(42), { density: 'dense', decor: 0.5, aisle: 1 });
-    const b = furnishRoom('server-room', interior, mulberry32(42), { density: 'dense', decor: 0.5, aisle: 1 });
+    const a = furnishRoom('server-room', interior, mulberry32(42), { density: 'dense', decor: 0.5, aisle: 1 }, WALLED);
+    const b = furnishRoom('server-room', interior, mulberry32(42), { density: 'dense', decor: 0.5, aisle: 1 }, WALLED);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    // the legacy recipe (no context) stays deterministic too
+    const c = furnishRoom('server-room', interior, mulberry32(42), { density: 'dense', decor: 0.5, aisle: 1 });
+    const d = furnishRoom('server-room', interior, mulberry32(42), { density: 'dense', decor: 0.5, aisle: 1 });
+    expect(JSON.stringify(c)).toBe(JSON.stringify(d));
   });
 });
 
 describe('furnishRoom: seats target', () => {
   it('places exactly the requested seat count when it fits', () => {
     const interior: Rect = { x: 0, y: 0, w: 30, h: 20 };
-    const { seats, seatsShortfall } = furnishRoom('desks', interior, mulberry32(1), { density: 'normal', decor: 0.35, aisle: 1, seatsTarget: 8 });
+    const { seats, seatsShortfall } = furnishRoom('desks', interior, mulberry32(1), { density: 'normal', decor: 0.35, aisle: 1, seatsTarget: 8 }, WALLED);
     // The recipe naturally produces more than 8 seats at this size/density; seatsTarget only reports
     // a shortfall, it doesn't truncate extra capacity (an office isn't obligated to waste floor space).
     expect(seats.length).toBeGreaterThanOrEqual(8);
@@ -89,7 +103,7 @@ describe('furnishRoom: seats target', () => {
 
   it('reports a shortfall when the room is too small for the requested seat count', () => {
     const interior: Rect = { x: 0, y: 0, w: 4, h: 3 };
-    const { seats, seatsShortfall } = furnishRoom('review-booth', interior, mulberry32(1), { density: 'sparse', decor: 0, aisle: 1, seatsTarget: 100 });
+    const { seats, seatsShortfall } = furnishRoom('review-booth', interior, mulberry32(1), { density: 'sparse', decor: 0, aisle: 1, seatsTarget: 100 }, WALLED);
     expect(seatsShortfall).toBeDefined();
     expect(seatsShortfall!.wanted).toBe(100);
     expect(seatsShortfall!.fit).toBe(seats.length);
@@ -190,7 +204,7 @@ describe('furnishRoom: lounge recipe slots (M13 W1-10)', () => {
   const opts = { density: 'normal' as FurnishDensity, decor: 0, aisle: 1 };
 
   it('places the amenities by slot index and keeps later slots as tables', () => {
-    const { furniture } = furnishRoom('lounge', rect, mulberry32(3), opts);
+    const { furniture } = furnishRoom('lounge', rect, mulberry32(3), opts, WALLED);
     const kinds = furniture.filter((f) => f.blocking && f.y >= 4).map((f) => f.kind);
     expect(kinds.slice(0, 4)).toEqual(['ping-pong', 'board-game-table', 'foosball', 'arcade']);
     expect(kinds.slice(4).every((k) => k === 'table')).toBe(true);
@@ -198,11 +212,20 @@ describe('furnishRoom: lounge recipe slots (M13 W1-10)', () => {
     expect([arcade.w, arcade.h]).toEqual([1, 1]);
   });
 
-  it('leaves the seats and the rand() stream identical to the all-tables lounge', () => {
+  it('advances the room stream by exactly CANDIDATE_DRAWS per candidate, whatever the plan placed', () => {
+    for (const type of ['lounge', 'desks', 'server-room'] as RoomType[]) {
+      const a = mulberry32(5);
+      const r = furnishRoom(type, rect, a, opts, WALLED);
+      expect(r.seats.length).toBeGreaterThan(0);
+      const b = mulberry32(5);
+      for (let i = 0; i < CANDIDATES.normal * CANDIDATE_DRAWS; i++) b();
+      expect(a(), type).toBe(b());
+    }
+  });
+
+  it('the legacy recipe still draws one rand() per item (generate.ts depends on it until F5)', () => {
     const a = mulberry32(5);
     const r = furnishRoom('lounge', rect, a, opts);
-    expect(r.seats.length).toBeGreaterThan(0);
-    // one rand() per block: same count of variant draws as items
     const b = mulberry32(5);
     for (let i = 0; i < r.furniture.length; i++) b();
     expect(a()).toBe(b());

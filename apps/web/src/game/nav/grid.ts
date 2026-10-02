@@ -6,7 +6,7 @@
 // free. Pure TS, no Phaser: `generate.ts` builds it (`buildNavGrid`) and derives `walkable` from it.
 import type { GeneratedMap, PlacedFurniture, Point, Rect } from '../procgen/types';
 import { CELL_PX, CLEARANCE_MAX, FULL_MASK, SUB, SUB_SHIFT, TILE_FLAG_DOOR, TILE_FLAG_FLOOR, TILE_FLAG_SOFT, TILE_FLAGS, TILE_PX } from './constants';
-import { blockedCells, KIND_SHAPE, type NavShape } from './shapes';
+import { blockedCells, KIND_SHAPE, rotateShape, type NavShape } from './shapes';
 import type { CellRect, NavGrid } from './types';
 
 export type { CellRect, NavGrid } from './types';
@@ -127,9 +127,23 @@ export function applyFurniture(g: NavGrid, items: readonly PlacedFurniture[], sh
       for (let ty = cells.y0 >> SUB_SHIFT; ty <= ty1; ty++) for (let tx = cells.x0 >> SUB_SHIFT; tx <= tx1; tx++) setTileFlags(g, tx, ty, TILE_FLAG_SOFT);
       continue;
     }
-    const shape = shapes[item.kind] ?? 'full';
+    const shape = rotateShape(Object.hasOwn(shapes, item.kind) ? shapes[item.kind]! : 'full', item.facing);
     if (shape === 'none') continue;
-    const blocked = blockedCells(shape, cells);
+    const shaped = blockedCells(shape, cells);
+    // A shaped footprint never frees a whole tile: a tile it touches keeps its covered cells when the shape would leave it with
+    // none, so `walkable` still blocks exactly `coveredTiles(item)` and only the `small` class gains the gaps (property 1).
+    const blocked =
+      shape === 'full'
+        ? shaped
+        : (cx: number, cy: number): boolean => {
+            if (shaped(cx, cy)) return true;
+            const x0 = Math.max(cells.x0, (cx >> SUB_SHIFT) << SUB_SHIFT);
+            const y0 = Math.max(cells.y0, (cy >> SUB_SHIFT) << SUB_SHIFT);
+            const x1 = Math.min(cells.x1, ((cx >> SUB_SHIFT) + 1) << SUB_SHIFT);
+            const y1 = Math.min(cells.y1, ((cy >> SUB_SHIFT) + 1) << SUB_SHIFT);
+            for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (shaped(x, y)) return false;
+            return true;
+          };
     for (let cy = cells.y0; cy < cells.y1; cy++) for (let cx = cells.x0; cx < cells.x1; cx++) if (blocked(cx, cy)) setCell(g, cx, cy, false);
     dirty = dirty
       ? { x0: Math.min(dirty.x0, cells.x0), y0: Math.min(dirty.y0, cells.y0), x1: Math.max(dirty.x1, cells.x1), y1: Math.max(dirty.y1, cells.y1) }

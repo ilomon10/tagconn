@@ -171,7 +171,7 @@ either visual style before you save.
 
 | Key | Action |
 |---|---|
-| `V` / `R` / `S` / `D` / `F` / `H` (or Space) | Select / Room / Stairs / Doors / Furniture / Hand tool |
+| `V` / `R` / `S` / `D` / `F` / `H` (or Space) | Select / Room / Stairs / Doors / Furniture / Hand tool (`R` rotates instead while a furniture item is selected) |
 | Drag (Room/Stairs tool) | Draw a room; release to pick its type |
 | `1`–`9`, `0` | Pick a room type from the popover |
 | Click / Shift+click | Select / add to selection |
@@ -189,7 +189,10 @@ either visual style before you save.
 | Furniture tool: click a furniture item | Select it (shows kind, position, size; buttons to Lock or Release) |
 | Furniture tool: drag a selected item | Move it (or Lock it in place if it is not already pinned) |
 | Furniture tool: Arrows | Nudge the selected pin by 1 tile (Shift+Arrows = 5 tiles) |
-| Furniture tool: Delete | Release a locked pin back to procedural generation |
+| Furniture tool: Delete | A generated item: remove it from the room (it stays as a dashed ghost). A ghost: restore it. A locked or placed item: release it / remove it |
+| Furniture tool: `R` | Rotate the selected item (N / E / S / W; width and height swap). Refused when it would not fit; fixed pieces (desks, appliances) do not rotate |
+| Furniture tool: palette | Pick a piece from **Add furniture**, then click inside a room to place it (Esc cancels); it is a locked item you can drag or rotate |
+| Furniture tool: drag (hold Alt) | Edges and centres snap to neighbouring pieces and the room walls, with cyan guides; hold Alt for free placement |
 | Room section: **Lock all** | Lock every pinnable generated furniture in the room (limit 48 per room) |
 | Room section: **Release all** | Release all locked furniture in the room to procedural generation |
 | Ctrl/Cmd+Z | Undo |
@@ -208,6 +211,8 @@ either visual style before you save.
 Locked furniture (marked with a **padlock** 🔒 icon on the canvas) stays in place when you change
 the seed or regenerate. Generated furniture can be dragged to lock in place; once locked, locked
 furniture can be nudged with arrow keys or dragged to a new position.
+
+**Removing and placing furniture:** dragging a generated piece locks it, and the generator no longer places a second copy of it (a dragged desk stays one desk). `Delete` on a generated piece removes it from the room: it is drawn as a dashed ghost with a faded icon, counts toward the 48-item limit, and can be brought back with `Delete` again, the Inspector's **Restore** button, or Undo. The Furniture tool's **Add furniture** palette places new pieces; the Inspector's Facing control (N / E / S / W) does what `R` does. Pieces show a small icon and their name on the plan, and a triangle on the side they face.
 
 **Half-tile placement:** furniture positions are now multiples of 0.5 tiles (8 px). Dragging snaps to the half-tile grid; the inspector shows positions like `at 2.5, 1` (tile 2 plus half). Sizes stay whole tiles. A piece placed at `x = 2.5` with `w = 2` covers parts of tiles 2 and 3, and any footprint that overlaps a tile blocks navigation through that full tile — so a half-offset sofa still makes the tiles it touches unusable for standing and sitting.
 

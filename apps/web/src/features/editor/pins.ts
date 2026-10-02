@@ -1,5 +1,7 @@
 import { HALF_TILE, LAYOUT_LIMITS, coveredTileRect, isRoomWalled, roomInterior, type Facing, type LayoutRoom, type PinnedFurniture } from '@tagconn/shared';
 import type { GeneratedMap, PlacedFurniture } from '../../game/procgen';
+import type { FurnitureKind } from '../../game/procgen/types';
+import { FACING_SUPPORT, facingSupported, footprintFor, nextFacing } from '../../game/procgen/facingSpec';
 
 /**
  * Pure helpers for locking furniture in the Hall Planner (M12, docs/design/game-office.md section 5.4).
@@ -33,6 +35,14 @@ export function isPinnableKind(kind: string): boolean {
   return kind !== 'stairs-up' && kind !== 'stairs-down';
 }
 
+/**
+ * A kind a suppressed pin (a "deleted from generation" ghost) may carry: pinnable AND a real furniture kind
+ * (own-property, so `constructor` / `__proto__` from stored data never pass; threat check #4).
+ */
+export function isSuppressibleKind(kind: string): boolean {
+  return isPinnableKind(kind) && Object.hasOwn(FACING_SUPPORT, kind);
+}
+
 /** False for stairs and for items wider/taller than a pin may be ("Too large to lock"). */
 export function isPinnableItem(item: { kind: string; w: number; h: number }): boolean {
   return isPinnableKind(item.kind) && item.w <= MAX_PIN_SIDE && item.h <= MAX_PIN_SIDE;
@@ -53,6 +63,24 @@ export function pinFromPlaced(item: Rect & { kind: string; variant?: number; fac
   if (item.facing !== undefined) pin.facing = item.facing;
   if (item.slotId !== undefined) pin.fromSlot = item.slotId;
   return pin;
+}
+
+/**
+ * The pin after one R press: next facing of its kind with the footprint swapped (w <-> h) for e/w, kept
+ * centred on the old rect, re-clamped and snapped. Null when the kind is fixed, the pin is a ghost, or the
+ * rotated rect does not fit (`to` picks the facing instead of the next one; `ignoreIndex`: the pin's own index; omit for a not-yet-locked generated item).
+ */
+export function rotatedPin(room: LayoutRoom, pin: PinnedFurniture, ignoreIndex?: number, to?: Facing): PinnedFurniture | null {
+  if (pin.suppressed || !Object.hasOwn(FACING_SUPPORT, pin.kind)) return null;
+  const kind = pin.kind as FurnitureKind;
+  const cur = pin.facing ?? 's';
+  const next = to ?? nextFacing(kind, cur); // `to` (the inspector's N/E/S/W control) must be a facing the kind supports
+  if (next === cur || !facingSupported(kind, next)) return null;
+  const canonical = footprintFor(pin, cur); // e/w swap is its own inverse
+  const size = footprintFor(canonical, next);
+  const at = clampPinPos(room, { ...pin, ...size }, { x: pin.x + (pin.w - size.w) / 2, y: pin.y + (pin.h - size.h) / 2 });
+  const out: PinnedFurniture = { ...pin, ...size, ...at, facing: next };
+  return pinFits(room, out, ignoreIndex) ? out : null;
 }
 
 /** A pin as an absolute world-tile rect. */
@@ -89,7 +117,8 @@ function onDoorApron(room: LayoutRoom, pin: Rect): boolean {
 export function pinFits(room: LayoutRoom, pin: PinnedFurniture, ignoreIndex?: number): boolean {
   const inner = roomInterior(room);
   if (pin.x < 0 || pin.y < 0 || pin.x + pin.w > inner.w || pin.y + pin.h > inner.h) return false;
-  if ((room.furniture ?? []).some((p, i) => i !== ignoreIndex && intersects(p, pin))) return false;
+  if (pin.suppressed) return true; // a ghost occupies nothing: only its bounds matter
+  if ((room.furniture ?? []).some((p, i) => i !== ignoreIndex && !p.suppressed && intersects(p, pin))) return false;
   return !onDoorApron(room, pin);
 }
 
@@ -119,7 +148,8 @@ export function clampPinPos(room: LayoutRoom, pin: PinnedFurniture, pos: { x: nu
 export function prunePins(room: LayoutRoom, source: readonly PinnedFurniture[] | undefined = room.furniture): LayoutRoom {
   if (!source?.length) return room;
   const inner = roomInterior(room);
-  const kept = source.filter((p) => p.x + p.w <= inner.w && p.y + p.h <= inner.h && !onDoorApron(room, p));
+  // A suppressed ghost blocks nothing, so only leaving the interior drops it (never a door apron).
+  const kept = source.filter((p) => p.x + p.w <= inner.w && p.y + p.h <= inner.h && (p.suppressed || !onDoorApron(room, p)));
   if (kept.length === source.length && source === room.furniture) return room;
   return { ...room, furniture: kept.length ? kept : undefined };
 }
@@ -155,7 +185,11 @@ export function hitFurnitureAt(map: GeneratedMap | null, rooms: readonly LayoutR
   for (let i = furniture.length - 1; i >= 0; i--) {
     const f = furniture[i]!;
     if (f.roomId !== room.id || f.pinned || !covers(f, at)) continue;
-    return { room, item: { kind: f.kind, x: f.x, y: f.y, w: f.w, h: f.h, variant: f.variant }, pinIndex: null };
+    return {
+      room,
+      item: { kind: f.kind, x: f.x, y: f.y, w: f.w, h: f.h, variant: f.variant, ...(f.facing !== undefined ? { facing: f.facing } : {}), ...(f.slotId !== undefined ? { slotId: f.slotId } : {}) },
+      pinIndex: null,
+    };
   }
   return null;
 }

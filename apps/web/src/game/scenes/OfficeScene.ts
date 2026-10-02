@@ -222,6 +222,7 @@ function sliceMapForRect(map: GeneratedMap, rect: Rect): GeneratedMap {
     decor: map.decor.filter((d) => rectContains(rect, d.x, d.y)),
     furniture: map.furniture.filter((f) => rectContains(rect, f.x, f.y)),
     stairs: map.stairs.filter((s) => rectContains(rect, s.x, s.y)),
+    lights: map.lights?.filter((l) => rectContains(rect, l.x, l.y)),
   };
 }
 

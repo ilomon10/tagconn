@@ -1,5 +1,6 @@
 import type * as Phaser from 'phaser';
 import type { FurnitureKind, PlacedFurniture } from '../../procgen/types';
+import { paintForFacing } from './facing';
 import { lighten, rectFn, type RectFn } from './util';
 
 type Painter = (g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number, rect: RectFn) => void;
@@ -282,5 +283,5 @@ const RIFT: Record<FurnitureKind, Painter> = {
 };
 
 export function paintRiftFurniture(g: Phaser.GameObjects.Graphics, f: PlacedFurniture, T: number): void {
-  RIFT[f.kind](g, f, T, rectFn(g));
+  paintForFacing(g, f, T, (gg, ff, TT) => RIFT[ff.kind](gg, ff, TT, rectFn(gg)));
 }

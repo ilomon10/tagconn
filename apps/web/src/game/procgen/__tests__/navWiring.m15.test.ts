@@ -198,14 +198,20 @@ describe('M15 W1: half-tile pins through validateLayout → generateMap → walk
         expect(map.walkable[t.y]![t.x], `${roomId} ${pin.kind}: walkable ${t.x},${t.y}`).toBe(blocking ? 1 : 0);
         expect(isTileStandable(map.nav, t.x, t.y), `${roomId} ${pin.kind}: standable ${t.x},${t.y}`).toBe(!blocking);
         // The half-tile model: inside the rect every cell is closed; the uncovered half of a touched tile stays open.
+        // M16 insets: a desk's chair-side cells inside the rect may stay open, but every covered tile keeps one closed cell.
+        let closed = 0;
         for (let sy = 0; sy < SUB; sy++) {
           for (let sx = 0; sx < SUB; sx++) {
             const cx = t.x * SUB + sx;
             const cy = t.y * SUB + sy;
             const inRect = cx >= cells.x0 && cx < cells.x1 && cy >= cells.y0 && cy < cells.y1;
-            expect(isWalkableCell(map.nav, cx, cy), `${roomId} ${pin.kind}: cell ${cx},${cy} (inRect=${inRect})`).toBe(blocking ? !inRect : true);
+            const open = isWalkableCell(map.nav, cx, cy);
+            if (!open) closed++;
+            if (!inRect) expect(open, `${roomId} ${pin.kind}: cell ${cx},${cy} outside the rect`).toBe(true);
+            else if (!blocking || pin.kind !== 'work-desk') expect(open, `${roomId} ${pin.kind}: cell ${cx},${cy} inside the rect`).toBe(!blocking);
           }
         }
+        if (blocking) expect(closed, `${roomId} ${pin.kind}: closed cells in tile ${t.x},${t.y}`).toBeGreaterThan(0);
       }
       return abs;
     };

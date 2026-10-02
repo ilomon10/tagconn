@@ -287,9 +287,9 @@ Plan: `~/.claude-sessions/profiles/ilomon/plans/pasted-content-id-1097-tagconn-f
 fractional sizes). Designs: `docs/design/lighting.md`, `docs/design/furnishing.md`.
 
 - [x] W0 designs (lighting + furnishing) + threat check + contract (server clock in snapshot, `office.lighting.*`, `facing`/`slotId` on furniture and pins) [Architect]
-- [ ] Host-clock sun cycle (server time + tz, dawn/dusk ramps, fixed/accelerated modes, HUD slider)
+- [~] Host-clock sun cycle (server time + tz, dawn/dusk ramps, fixed/accelerated modes, HUD slider)
 - [ ] Lightmap with wall occlusion (visibility polygons), room-filling lights, window sun shafts, furniture + character shadows
-- [ ] Furniture harmony: functional groups, wall/corner/centre affinity, facing, clearance, candidate scoring; collision insets per kind (M15 W4)
+- [~] Furniture harmony: functional groups, wall/corner/centre affinity, facing, clearance, candidate scoring; collision insets per kind (M15 W4)
 - [ ] Furniture editor: no duplicate on drag (slot consumption), stable decor, displaced items move, labels/icons, rotate/delete/palette
 - [ ] Gate → v0.10.0
 

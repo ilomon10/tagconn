@@ -35,7 +35,7 @@ import { maxRoomsLayout, toLayout } from './perfLayout';
 
 // ------------------------------------------------------------------ helpers
 
-const item = (r: Rect, blocking = true, kind: PlacedFurniture['kind'] = 'work-desk'): PlacedFurniture => ({
+const item = (r: Rect, blocking = true, kind: PlacedFurniture['kind'] = 'cabinet'): PlacedFurniture => ({
   ...r,
   kind,
   blocking,
@@ -288,12 +288,29 @@ describe('applyFurniture', () => {
   it('uses the shape of the kind: none leaves cells open, an inset shrinks the footprint, unknown kinds block fully', () => {
     const shapes: Record<string, NavShape> = { 'work-desk': { inset: { n: 0, e: 0, s: 1, w: 0 } }, rug: 'none' };
     const g = openGrid(4, 4);
-    applyFurniture(g, [item({ x: 1, y: 1, w: 2, h: 1 }), item({ x: 0, y: 0, w: 1, h: 1 }, true, 'rug'), item({ x: 3, y: 3, w: 1, h: 1 }, true, 'mystery' as PlacedFurniture['kind'])], shapes);
+    applyFurniture(g, [item({ x: 1, y: 1, w: 2, h: 1 }, true, 'work-desk'), item({ x: 0, y: 0, w: 1, h: 1 }, true, 'rug'), item({ x: 3, y: 3, w: 1, h: 1 }, true, 'mystery' as PlacedFurniture['kind'])], shapes);
     expect(isWalkableCell(g, 2, 2)).toBe(false); // top row of the desk
     expect(isWalkableCell(g, 2, 3)).toBe(true); // bottom row open (inset s = 1)
     expect(isTileStandable(g, 1, 1)).toBe(false); // conservative: a partially blocked tile is not standable
     expect(isTileStandable(g, 0, 0)).toBe(true);
     expect(isTileStandable(g, 3, 3)).toBe(false);
+  });
+
+  it('rotates an inset by item.facing, and a kind that is not an own key of the table blocks fully', () => {
+    const shapes: Record<string, NavShape> = { 'work-desk': { inset: { n: 0, e: 0, s: 1, w: 0 } } };
+    const g = openGrid(4, 4);
+    applyFurniture(g, [{ ...item({ x: 1, y: 1, w: 2, h: 1 }, true, 'work-desk'), facing: 'n' }, item({ x: 0, y: 3, w: 1, h: 1 }, true, 'constructor' as PlacedFurniture['kind'])], shapes);
+    expect(isWalkableCell(g, 2, 2)).toBe(true); // facing n: the north row is the open chair side
+    expect(isWalkableCell(g, 2, 3)).toBe(false);
+    expect(isTileStandable(g, 0, 3)).toBe(false);
+    expect(isWalkableCell(g, 0, 6)).toBe(false);
+  });
+
+  it('a shaped footprint never frees a whole tile: a one-tile desk with its chair side open still blocks the tile', () => {
+    const g = openGrid(4, 4);
+    applyFurniture(g, [item({ x: 0.5, y: 1, w: 1, h: 1 }, true, 'work-desk')]); // KIND_SHAPE desk, chair side s: the half-covered tiles keep a closed cell
+    expect(isTileStandable(g, 0, 1)).toBe(false);
+    expect(isTileStandable(g, 1, 1)).toBe(false);
   });
 });
 
@@ -394,8 +411,14 @@ describe('buildNavGrid parity with map.walkable (property 1)', () => {
               const cy = y * SUB + sy;
               const world = isWalkableWorld(g, (cx + 0.5) * CELL_PX, (cy + 0.5) * CELL_PX);
               if (world !== isWalkableCell(g, cx, cy)) throw new Error(`${layout.id}: cell ${cx},${cy} world/cell mismatch`);
-              if (world !== standable) throw new Error(`${layout.id}: cell ${cx},${cy} of tile ${x},${y} is ${world} but the tile is ${standable ? 'standable' : 'blocked'}`);
+              // M16 insets: a standable tile is fully open; a blocked tile keeps at least one closed cell (checked below), but a desk's chair side may be open.
+              if (standable && !world) throw new Error(`${layout.id}: cell ${cx},${cy} of tile ${x},${y} is closed but the tile is standable`);
             }
+          }
+          if (!standable) {
+            let closed = 0;
+            for (let sy = 0; sy < SUB; sy++) for (let sx = 0; sx < SUB; sx++) if (!isWalkableCell(g, x * SUB + sx, y * SUB + sy)) closed++;
+            if (closed === 0 && map.tiles[y]![x] === 'floor') throw new Error(`${layout.id}: blocked tile ${x},${y} has no closed cell`);
           }
           const t = map.tiles[y]![x];
           const f = tileFlags(g, x, y);
@@ -448,8 +471,8 @@ describe('buildNavGrid parity with map.walkable (property 1)', () => {
     const a = buildNavGrid(map);
     const b = navGridFromWalkable(map.walkable);
     expect([b.cols, b.rows, b.ccols, b.crows]).toEqual([a.cols, a.rows, a.ccols, a.crows]);
-    expect(firstDiff(a.masks.map((m) => m & FULL_MASK), b.masks.map((m) => m & FULL_MASK))).toBe(-1);
-    expect(firstDiff(a.clearance, b.clearance)).toBe(-1);
+    // Tile level (M16: a desk's chair-side cells stay open in `a`, so cell bits and clearance may be richer than `b`'s).
+    for (let y = 0; y < a.rows; y++) for (let x = 0; x < a.cols; x++) expect(isTileStandable(a, x, y), `${x},${y}`).toBe(isTileStandable(b, x, y));
     expect(walkableFromNav(b)).toEqual(map.walkable);
     for (let y = 0; y < b.rows; y++) for (let x = 0; x < b.cols; x++) expect(tileFlags(b, x, y) & TILE_FLAG_FLOOR).toBe(map.walkable[y]![x] === 0 ? TILE_FLAG_FLOOR : 0);
     expect(navGridFromWalkable([]).masks.length).toBe(0);

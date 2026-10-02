@@ -12,6 +12,8 @@ export type ShortcutAction =
   | { type: 'undo' }
   | { type: 'redo' }
   | { type: 'delete' }
+  // `rotate` is R: the Furniture pick rotates; with none selected the caller falls back to the Room tool.
+  | { type: 'rotate' }
   | { type: 'escape' }
   | { type: 'duplicate' }
   | { type: 'save' }
@@ -76,7 +78,7 @@ export function resolveShortcut(e: KeyLike): ShortcutAction | null {
   if (key === '?') return { type: 'help' };
   if (lower === 'p') return { type: 'preview-toggle' };
   if (lower === 'v') return { type: 'tool', tool: 'select' };
-  if (lower === 'r') return { type: 'tool', tool: 'room' };
+  if (lower === 'r') return { type: 'rotate' };
   if (lower === 's') return { type: 'tool', tool: 'stairs' };
   if (lower === 'd') return { type: 'tool', tool: 'doors' };
   if (lower === 'f') return { type: 'tool', tool: 'furniture' };

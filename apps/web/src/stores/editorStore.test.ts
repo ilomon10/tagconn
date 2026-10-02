@@ -783,3 +783,165 @@ describe('editorStore door edits prune stale pins (M12 gate 2)', () => {
     expect(s().pruneNotice).toEqual({ count: 1 });
   });
 });
+
+describe('editorStore M16 furnishing: slots, ghosts, rotate, palette', () => {
+  beforeEach(closeStore);
+  // Room 'a': 8x7 walled -> interior 6x5.
+  type Pin = import('@tagconn/shared').PinnedFurniture;
+  const p = (over: Partial<Pin> = {}): Pin => ({ kind: 'plant', x: 0, y: 0, w: 1, h: 1, ...over });
+  const s = () => useEditorStore.getState();
+  const pins = () => s().draft?.rooms[0]?.furniture;
+  const load = (r: Partial<LayoutRoom> = {}) => s().load(layout({ rooms: [room({ w: 8, h: 7, walled: true, ...r })] }));
+  const noPinIssues = () => expect(validateLayout(s().draft!).filter((i) => i.code === 'pinned-invalid')).toEqual([]);
+
+  it('a dragged generated item keeps its recipe slot as fromSlot (it is consumed, not duplicated)', () => {
+    load();
+    s().beginGesture();
+    const idx = s().pinDirect('a', { kind: 'work-desk', x: 1, y: 1, w: 2, h: 1, fromSlot: 'desk:3' });
+    s().setPinPos('a', idx, { x: 2, y: 1 });
+    s().endGesture();
+    expect(pins()).toEqual([{ kind: 'work-desk', x: 2, y: 1, w: 2, h: 1, fromSlot: 'desk:3' }]);
+    expect(s().history).toHaveLength(1);
+  });
+  // Needs the generator to skip consumed slots (F5, wave 2): generateMap(draft) must keep the same number of work-desks after a drag.
+  it.todo('dragging a work-desk of the desks room by a tile does not duplicate it (enabled with F5)');
+
+  it('suppressSlot adds a ghost in one commit; undo removes it; a repeat is refused', () => {
+    load();
+    s().suppressSlot('a', p({ kind: 'work-desk', w: 2, fromSlot: 'desk:0' }));
+    expect(pins()).toEqual([p({ kind: 'work-desk', w: 2, fromSlot: 'desk:0', suppressed: true })]);
+    expect(s().history).toHaveLength(1);
+    s().suppressSlot('a', p({ kind: 'work-desk', w: 2, fromSlot: 'desk:0' }));
+    expect(pins()).toHaveLength(1);
+    s().undo();
+    expect(pins()).toBeUndefined();
+    s().redo();
+    expect(pins()).toHaveLength(1);
+    noPinIssues();
+  });
+
+  it('suppressSlot refuses stairs, unknown/prototype kinds and pins without a slot', () => {
+    load();
+    s().suppressSlot('a', p({ kind: 'stairs-up', fromSlot: 'stairs:0' }));
+    s().suppressSlot('a', p({ kind: 'constructor', fromSlot: 'x:0' }));
+    s().suppressSlot('a', p({ kind: 'toString', fromSlot: 'x:1' }));
+    s().suppressSlot('a', p({ kind: 'plant' })); // no fromSlot: nothing to consume
+    expect(pins()).toBeUndefined();
+    expect(s().history).toHaveLength(0);
+  });
+
+  it('ghosts count toward the 48 cap', () => {
+    const full = Array.from({ length: 47 }, (_, i) => p({ kind: 'crate', x: i % 6, y: Math.floor(i / 6) % 5, suppressed: true, fromSlot: `crate:${i}` }));
+    load({ furniture: full });
+    s().suppressSlot('a', p({ kind: 'plant', x: 5, y: 4, fromSlot: 'plant:0' }));
+    expect(pins()).toHaveLength(48);
+    s().suppressSlot('a', p({ kind: 'plant', x: 5, y: 3, fromSlot: 'plant:1' }));
+    s().addPin('a', p({ kind: 'plant', x: 4, y: 4 }));
+    expect(pins()).toHaveLength(48);
+  });
+
+  it('a ghost blocks nothing: a real pin may sit on it, and it can neither move nor rotate', () => {
+    load({ furniture: [p({ kind: 'chair', x: 1, y: 1, suppressed: true, fromSlot: 'chair:0' })] });
+    s().addPin('a', p({ kind: 'lamp', x: 1, y: 1 }));
+    expect(pins()).toHaveLength(2);
+    s().nudgePin('a', 0, 1, 0);
+    s().rotatePin('a', 0);
+    expect(pins()?.[0]).toMatchObject({ x: 1, y: 1 });
+    expect(pins()?.[0]?.facing).toBeUndefined();
+    noPinIssues();
+  });
+
+  it('restoreSlot removes the ghost in one commit and ignores a real pin', () => {
+    load({ furniture: [p({ x: 3 }), p({ kind: 'chair', suppressed: true, fromSlot: 'chair:0' })] });
+    s().restoreSlot('a', 0);
+    expect(pins()).toHaveLength(2);
+    s().restoreSlot('a', 1);
+    expect(pins()).toEqual([p({ x: 3 })]);
+    expect(s().history).toHaveLength(1);
+    s().undo();
+    expect(pins()).toHaveLength(2);
+  });
+
+  it('rotatePin cycles facing with the w/h swap, one commit each, and undoes', () => {
+    load({ furniture: [p({ kind: 'bench', x: 1, y: 1, w: 2, h: 1 })] });
+    s().rotatePin('a', 0);
+    expect(pins()?.[0]).toMatchObject({ facing: 'w', w: 1, h: 2 }); // s -> w -> n -> e
+    expect(s().history).toHaveLength(1);
+    s().rotatePin('a', 0);
+    expect(pins()?.[0]).toMatchObject({ facing: 'n', w: 2, h: 1 });
+    s().undo();
+    expect(pins()?.[0]).toMatchObject({ facing: 'w', w: 1, h: 2 });
+    noPinIssues();
+  });
+
+  it('rotatePin is refused (nothing changes) when the rotated rect does not fit, or the kind is fixed', () => {
+    load({ furniture: [p({ kind: 'bench', x: 0, y: 0, w: 2, h: 1 }), p({ kind: 'crate', x: 0, y: 1 })] });
+    s().rotatePin('a', 0); // 1x2 would cover (0,1): the crate
+    expect(pins()?.[0]).toMatchObject({ w: 2, h: 1 });
+    expect(pins()?.[0]?.facing).toBeUndefined();
+    expect(s().history).toHaveLength(0);
+    load({ furniture: [p({ kind: 'work-desk', w: 2 })] });
+    s().rotatePin('a', 0);
+    expect(s().history).toHaveLength(0);
+  });
+
+  it('rotateGenerated locks the item already rotated, keeping its slot, in one commit', () => {
+    load();
+    s().rotateGenerated('a', p({ kind: 'sofa', x: 1, y: 1, w: 3, h: 1, fromSlot: 'sofa:0' }));
+    expect(pins()).toEqual([expect.objectContaining({ kind: 'sofa', facing: 'w', w: 1, h: 3, fromSlot: 'sofa:0' })]);
+    expect(s().history).toHaveLength(1);
+    expect(s().selectedFurniture).toEqual({ roomId: 'a', pinIndex: 0 });
+    s().undo();
+    expect(pins()).toBeUndefined();
+  });
+
+  it('rotatePin to a given facing (inspector control) only accepts supported facings', () => {
+    load({ furniture: [p({ kind: 'bench', x: 1, y: 1, w: 2, h: 1 })] });
+    s().rotatePin('a', 0, 'w');
+    expect(pins()?.[0]).toMatchObject({ facing: 'w', w: 1, h: 2 });
+    load({ furniture: [p({ kind: 'work-desk', w: 2 })] });
+    s().rotatePin('a', 0, 'n');
+    expect(pins()?.[0]?.facing).toBeUndefined();
+  });
+
+  it('addPin places a free pin in one commit, selects it, and refuses an overlap, stairs or a builtin', () => {
+    load({ furniture: [p()] });
+    s().addPin('a', p({ kind: 'sofa', x: 1, y: 2, w: 3 }));
+    expect(pins()).toHaveLength(2);
+    expect(s().selectedFurniture).toEqual({ roomId: 'a', pinIndex: 1 });
+    expect(s().history).toHaveLength(1);
+    s().addPin('a', p({ kind: 'lamp', x: 1, y: 2 })); // overlaps the sofa
+    s().addPin('a', p({ kind: 'stairs-up', x: 5, y: 4 }));
+    expect(pins()).toHaveLength(2);
+    s().load(layout({ builtin: true, rooms: [room({ w: 8, h: 7 })] }));
+    s().addPin('a', p({ x: 1, y: 1 }));
+    expect(pins()).toBeUndefined();
+  });
+
+  it('placing is armed by the palette and cleared by a tool change, load and close', () => {
+    load();
+    s().setTool('furniture');
+    s().setPlacing({ kind: 'plant', w: 1, h: 1 });
+    expect(s().placing).toEqual({ kind: 'plant', w: 1, h: 1 });
+    s().setTool('select');
+    expect(s().placing).toBeNull();
+    s().setTool('furniture');
+    s().setPlacing({ kind: 'plant', w: 1, h: 1 });
+    s().close();
+    expect(s().placing).toBeNull();
+  });
+
+  it('shrinking the room drops a ghost only when it leaves the interior (never over a door apron)', () => {
+    load({ doors: [{ side: 'n', offset: 2 }], furniture: [p({ kind: 'chair', x: 1, y: 0, suppressed: true, fromSlot: 'chair:0' }), p({ x: 5, y: 4 })] });
+    expect(pins()).toHaveLength(2); // the ghost on the door apron stays
+    s().updateRoom('a', { w: 6, h: 5 }); // interior 4x3: the pin at (5,4) leaves, the ghost stays
+    expect(pins()).toEqual([expect.objectContaining({ suppressed: true })]);
+    noPinIssues();
+  });
+
+  it('lockFurniture does not treat a ghost at the same rect as an existing pin', () => {
+    load({ furniture: [p({ kind: 'chair', x: 1, y: 1, suppressed: true, fromSlot: 'chair:0' })] });
+    s().lockFurniture('a', p({ kind: 'chair', x: 1, y: 1 }));
+    expect(pins()).toHaveLength(2);
+  });
+});

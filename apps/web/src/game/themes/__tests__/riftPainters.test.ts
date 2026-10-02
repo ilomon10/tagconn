@@ -5,7 +5,8 @@ import type { FurnitureKind, PlacedFurniture, WallDecorKind, WallDecorSlot } fro
 import { guildTheme } from '../guild';
 import { riftTheme } from '../rift';
 import { paintRiftBackWall, paintRiftWallDecor } from '../paint/riftWalls';
-import { makeBoundsGraphics, makeStubGraphics } from './testUtils';
+import { ROTATION_SAFE_KINDS } from '../paint/facing';
+import { fractionalBoundsFailures, makeBoundsGraphics, makeStubGraphics, rotatedBoundsFailures } from './testUtils';
 
 // A compile-time-exhaustive list, mirroring painters.test.ts's coverage for modern/guild — adding a
 // FurnitureKind without adding it here fails to typecheck.
@@ -225,6 +226,18 @@ describe('rift theme painters (implements every FurnitureKind/RoomType exhaustiv
         expect(Math.max(...rects.map((r) => r.y + r.h))).toBeLessThanOrEqual((f.y + 1) * T + 1);
       }
     }
+  });
+
+  // M16 F3 painter audit (furnishing.md section 5.1) ----------------------------------------------
+
+  it('keeps every kind within its integer-size overhang at half-tile footprints (1, 1.5, 2, 2.5 per axis)', () => {
+    const fails = FURNITURE_KINDS.flatMap((kind) => fractionalBoundsFailures((g, f, T) => riftTheme.paintFurniture(g, f, T), kind));
+    expect(fails).toEqual([]);
+  });
+
+  it('keeps the rotation-safe kinds within bounds facing n, e and w', () => {
+    const fails = [...ROTATION_SAFE_KINDS].flatMap((kind) => rotatedBoundsFailures((g, f, T) => riftTheme.paintFurniture(g, f, T), kind));
+    expect(fails).toEqual([]);
   });
 
   it('paints the back-wall face (cap, face, band-with-baseboard, and door gap) without throwing (M8 8p)', () => {

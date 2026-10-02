@@ -222,7 +222,7 @@ describe('Navigator for small creatures', () => {
     // 8 x 5 floor; a row of desks across y = 2 (x = 0 w 2, x = 2, x = 3.5, x = 4.5 w 4) leaves one cell
     // free in that row: x = 6 (tile 3, left half). Crossing north to south means passing that cell.
     const g = floorGrid(8, 5);
-    applyFurniture(g, [item({ x: 0, y: 2, w: 2, h: 1 }), item({ x: 2, y: 2, w: 1, h: 1 }), item({ x: 3.5, y: 2, w: 1, h: 1 }), item({ x: 4.5, y: 2, w: 4, h: 1 })]);
+    applyFurniture(g, [item({ x: 0, y: 2, w: 2, h: 1 }, 'cabinet'), item({ x: 2, y: 2, w: 1, h: 1 }, 'cabinet'), item({ x: 3.5, y: 2, w: 1, h: 1 }, 'cabinet'), item({ x: 4.5, y: 2, w: 4, h: 1 }, 'cabinet')]);
     computeClearance(g);
     for (let x = 0; x < 8; x++) expect(isTileStandable(g, x, 2), `tile ${x},2 blocked`).toBe(false);
     for (let cx = 0; cx < g.ccols; cx++) for (let cy = 4; cy < 6; cy++) expect(fits(g, cx, cy, 1), `cell ${cx},${cy}`).toBe(cx === 6);
@@ -237,6 +237,28 @@ describe('Navigator for small creatures', () => {
     const ends = validateSegments(g, small!, 'gap');
     // The route threads the gap column (cell x = 6).
     expect(ends.some((p) => Math.floor(p.x / CELL_PX) === 6)).toBe(true);
+  });
+
+  it('insets: a desk row blocks person but small passes under its chair side; facing n opens the north side instead', () => {
+    for (const facing of ['s', 'n'] as const) {
+      const g = floorGrid(8, 5);
+      applyFurniture(g, [{ ...item({ x: 0, y: 2, w: 8, h: 1 }), facing }]);
+      computeClearance(g);
+      for (let x = 0; x < 8; x++) expect(isTileStandable(g, x, 2), `tile ${x},2`).toBe(false);
+      // The open half is the south cells for `s` (cy 5), the north cells for `n` (cy 4).
+      const open = facing === 's' ? 5 : 4;
+      const shut = facing === 's' ? 4 : 5;
+      for (let cx = 0; cx < g.ccols; cx++) {
+        expect(fits(g, cx, open, 1), `${facing} open ${cx}`).toBe(true);
+        expect(fits(g, cx, shut, 1), `${facing} shut ${cx}`).toBe(false);
+      }
+      const nav = new Navigator(g);
+      expect(nav.findPath(navPointOfTile({ x: 3, y: 0 }), navPointOfTile({ x: 3, y: 4 }), 'person')).toBeNull();
+      // A cell row is one cell tall: a k = 1 creature walks along it but cannot cross the shut row.
+      const path = nav.findPath(tileAnchorPoint(g, { x: 0, y: 2 }, 1), tileAnchorPoint(g, { x: 7, y: 2 }, 1), 'small');
+      expect(path, facing).not.toBeNull();
+      validateSegments(g, path!, `desk-${facing}`);
+    }
   });
 
   it('tileAnchorPoint: the tile centre for a person, the first fitting cell for small, the top-left anchor for large', () => {

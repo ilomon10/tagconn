@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateLayout, type LayoutRoom, type PinnedFurniture } from '@tagconn/shared';
 import type { GeneratedMap } from '../../game/procgen';
-import { clampPinPos, hitFurnitureAt, isPinnableItem, pinFits, pinFromPlaced, planLockAll, pinsForLockAll, prunePins, snapHalf, unpinnableReason } from './pins';
+import { clampPinPos, hitFurnitureAt, isPinnableItem, isSuppressibleKind, pinFits, pinFromPlaced, planLockAll, pinsForLockAll, prunePins, rotatedPin, snapHalf, unpinnableReason } from './pins';
 
 // A walled (explicit) desks room at (2,2) 10x8: interior (3,3) 8x6.
 const room = (over: Partial<LayoutRoom> = {}): LayoutRoom => ({ id: 'a', type: 'desks', x: 2, y: 2, w: 10, h: 8, walled: true, ...over });
@@ -153,5 +153,51 @@ describe('planLockAll', () => {
     expect(plan.pins).toHaveLength(48);
     expect(plan.overflow).toBe(6);
     expect(planLockAll(null, r)).toEqual({ pins: [], overflow: 0 });
+  });
+});
+
+describe('M16: ghosts, rotation, slots', () => {
+  it('pinFromPlaced keeps slotId as fromSlot and facing', () => {
+    expect(pinFromPlaced({ kind: 'chair', x: 5, y: 4, w: 1, h: 1, facing: 'n', slotId: 'desk:2' }, { x: 3, y: 3, w: 8, h: 6 })).toEqual({
+      kind: 'chair', x: 2, y: 1, w: 1, h: 1, facing: 'n', fromSlot: 'desk:2',
+    });
+  });
+  it('hitFurnitureAt carries slotId and facing of a generated item', () => {
+    const hit = hitFurnitureAt(mapOf([{ roomId: 'a', kind: 'chair', x: 4, y: 4, w: 1, h: 1, facing: 'e', slotId: 'desk:1' }]), [room()], { x: 4.2, y: 4.2 });
+    expect(hit?.item).toMatchObject({ facing: 'e', slotId: 'desk:1' });
+  });
+  it('a ghost is hit-testable and overlaps/aprons do not apply to it', () => {
+    const ghost = pin({ kind: 'chair', x: 1, y: 0, suppressed: true, fromSlot: 'chair:0' });
+    const r = room({ furniture: [ghost], doors: [{ side: 'n', offset: 2, width: 1 }] });
+    expect(hitFurnitureAt(null, [r], { x: 4.5, y: 3.5 })?.pinIndex).toBe(0);
+    expect(pinFits(r, ghost)).toBe(true); // a ghost on a door apron is fine
+    expect(pinFits(room({ furniture: [ghost] }), pin({ x: 1, y: 0 }))).toBe(true); // a real pin may overlap a ghost
+    expect(prunePins(r)).toBe(r);
+  });
+  it('isSuppressibleKind is own-property and rejects stairs', () => {
+    expect(isSuppressibleKind('work-desk')).toBe(true);
+    expect(isSuppressibleKind('stairs-up')).toBe(false);
+    expect(isSuppressibleKind('constructor')).toBe(false);
+    expect(isSuppressibleKind('__proto__')).toBe(false);
+  });
+  it('rotatedPin cycles with the swap, keeps the centre, and refuses fixed kinds, ghosts and misfits', () => {
+    const r = room();
+    const sofa = rotatedPin(r, pin({ kind: 'sofa', x: 2, y: 2, w: 3, h: 1 }));
+    expect(sofa).toMatchObject({ facing: 'w', w: 1, h: 3, x: 3, y: 1 });
+    expect(rotatedPin(r, pin({ kind: 'work-desk', w: 2 }))).toBeNull();
+    expect(rotatedPin(r, pin({ kind: 'bench', w: 2, suppressed: true, fromSlot: 'bench:0' }))).toBeNull();
+    expect(rotatedPin(r, pin({ kind: 'constructor', w: 2 }))).toBeNull();
+    // 'n' -> back to canonical size, from an 'e' pin
+    expect(rotatedPin(r, pin({ kind: 'bench', x: 1, y: 1, w: 1, h: 2, facing: 'w' }))).toMatchObject({ facing: 'n', w: 2, h: 1 });
+  });
+  it('planLockAll copies the slot, so Lock all never duplicates', () => {
+    const out = planLockAll(mapOf([{ roomId: 'a', kind: 'work-desk', x: 4, y: 4, w: 2, h: 1, slotId: 'desk:0' }]), room());
+    expect(out.pins[0]).toMatchObject({ fromSlot: 'desk:0' });
+  });
+  it('ghosts count toward the planLockAll cap', () => {
+    const ghosts = Array.from({ length: 48 }, (_, i) => pin({ kind: 'crate', x: i % 8, y: Math.floor(i / 8), suppressed: true, fromSlot: `crate:${i}` }));
+    const out = planLockAll(mapOf([{ roomId: 'a', kind: 'plant', x: 9, y: 8, w: 1, h: 1 }]), room({ furniture: ghosts }));
+    expect(out.pins).toEqual([]);
+    expect(out.overflow).toBe(1);
   });
 });

@@ -7,7 +7,8 @@ import { modernTheme } from '../modern';
 import { paintModernWallDecor, paintGuildWallDecor } from '../paint/wallDecor';
 import { paintModernBackWall, paintGuildBackWall } from '../paint/walls';
 import type { ThemeDefinition } from '../types';
-import { makeBoundsGraphics, makeStubGraphics } from './testUtils';
+import { ROTATION_SAFE_KINDS } from '../paint/facing';
+import { fractionalBoundsFailures, makeBoundsGraphics, makeStubGraphics, rotatedBoundsFailures } from './testUtils';
 
 // A compile-time-exhaustive list: adding a FurnitureKind without adding it here fails to typecheck.
 const FURNITURE_KIND_SET: Record<FurnitureKind, true> = {
@@ -221,6 +222,18 @@ describe.each(THEMES)('%s theme painters', (name, theme) => {
         }
       }
     }
+  });
+
+  // M16 F3 painter audit (furnishing.md section 5.1) ----------------------------------------------
+
+  it('keeps every kind within its integer-size overhang at half-tile footprints (1, 1.5, 2, 2.5 per axis)', () => {
+    const fails = FURNITURE_KINDS.flatMap((kind) => fractionalBoundsFailures((g, f, T) => theme.paintFurniture(g, f, T), kind));
+    expect(fails).toEqual([]);
+  });
+
+  it('keeps the rotation-safe kinds within bounds facing n, e and w', () => {
+    const fails = [...ROTATION_SAFE_KINDS].flatMap((kind) => rotatedBoundsFailures((g, f, T) => theme.paintFurniture(g, f, T), kind));
+    expect(fails).toEqual([]);
   });
 
   // M8 8p (back wall + appliances) --------------------------------------------------------------

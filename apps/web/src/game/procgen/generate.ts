@@ -33,6 +33,7 @@ import { dedupePinIssues, resolvePins } from './pins';
 import { decorateRoom, furnishRoom, seatsFor, type FurnishOptions, type RecipeItem, type RecipeSeat } from './recipes';
 import { buildRegionAtGrid, buildRoomToRegion, findRegions, findVoidAreas, reachableFrom, regionCentroid, type Region } from './regions';
 import { rngFor, randInt } from './rng';
+import { planRoomLights } from './roomLights';
 import { assignTriggers } from './triggers';
 import { applyFurniture, buildNavGrid, updateClearance, walkableFromNav } from '../nav/grid';
 import type {
@@ -1099,6 +1100,6 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     frontDoor,
     issues: dedupePinIssues(issues),
     reachability: { unreachableRooms, unreachableSeats: unreachableSeatsTotal },
-    lights: [], // M16: planRoomLights (procgen/roomLights.ts, L3)
+    lights: planRoomLights(generatedRooms),
   };
 }
