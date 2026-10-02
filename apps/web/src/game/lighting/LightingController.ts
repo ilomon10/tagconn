@@ -116,6 +116,9 @@ export class LightingController {
   private flickers: Flicker[] = [];
 
   private _sun: SunState | null = null;
+  private fallbackSun: { theme: ThemeDefinition; sun: SunState } | null = null;
+  private lastQuality: LightingQuality | null = null;
+  private lastWebgl = true;
   private lastStep = Number.NaN;
   private lastPhase: SunPhase | null = null;
   private lastBakeAt = Number.NEGATIVE_INFINITY;
@@ -131,23 +134,30 @@ export class LightingController {
 
   /** The current sun (HUD label, tests). Noon until the first bake. */
   get sun(): SunState {
-    return this._sun ?? sunAt(12, defaultSunParams(), lightingColours(this.host.theme()));
+    if (this._sun) return this._sun;
+    // Read often (NPC director) before the first bake: allocate once per theme, not per call.
+    const theme = this.host.theme();
+    if (this.fallbackSun?.theme !== theme) this.fallbackSun = { theme, sun: sunAt(12, defaultSunParams(), lightingColours(theme)) };
+    return this.fallbackSun.sun;
   }
 
   /** buildWorld / applySkin: rebuild occluders, sources, polygons, the render target; re-bake. */
   setMap(): void {
     this.geometryDirty = true;
+    // A theme/floor switch can keep the same sun phase: force the next bake to re-announce it so the host re-reads the theme (ambience).
+    this.lastPhase = null;
     if (this.lighting) this.bake();
   }
 
   /** setOfficeState: re-bakes if anything that feeds the plan changed (throttled; see `update`). */
   applySettings(office: OfficeSettings, clock: ClockSync | undefined, override: LightingOverride | undefined): void {
-    const key = JSON.stringify([office.lighting, office.theme, this.host.quality(), this.host.webgl(), this.host.reducedMotion(), clock ?? null, override ?? null]);
+    const key = JSON.stringify([office.lighting, office.theme, this.host.quality(), this.host.webgl(), this.host.reducedMotion(), clock ? [clock.skewMs, clock.tzOffsetMin, clock.tz ?? null] : null, override ?? null]);
     if (key === this.settingsKey) return;
     this.settingsKey = key;
     const prev = this.lighting;
     this.lighting = office.lighting;
     this.themeMode = office.theme;
+    // `undefined` keeps the last known clock (a reconnect without one must not reset the sync).
     if (clock) this.clock = clock;
     this.override = override ?? null;
     const cycle = resolveCycle(office.theme, office.lighting, this.override);
@@ -161,6 +171,8 @@ export class LightingController {
     const next = resolveLightingMode(this.host.webgl(), this.host.quality(), office.lighting, this.host.reducedMotion());
     if (next.render !== this.mode.render || next.resolution !== this.mode.resolution || next.bands !== this.mode.bands) this.geometryDirty = true;
     this.mode = next;
+    this.lastQuality = this.host.quality();
+    this.lastWebgl = this.host.webgl();
     this.dirty = true;
     this.tryBake(this.host.now());
   }
@@ -171,6 +183,16 @@ export class LightingController {
     const cycle = this.cycle;
     if (!lighting || !cycle) return;
     const now = this.host.now();
+    // A runtime auto quality downgrade / context loss changes the mode without a settings change.
+    const q = this.host.quality();
+    const gl = this.host.webgl();
+    if (q !== this.lastQuality || gl !== this.lastWebgl) {
+      this.lastQuality = q;
+      this.lastWebgl = gl;
+      this.mode = resolveLightingMode(gl, q, lighting, this.host.reducedMotion());
+      this.geometryDirty = true;
+      this.dirty = true;
+    }
     const hour = cycleHour(cycle, this.clock, now, this.epochMs);
     const step = sunStep(hour, effectiveSunStep(lighting));
     if (step !== this.lastStep) this.dirty = true;
@@ -222,7 +244,7 @@ export class LightingController {
     const quality = this.host.quality();
 
     const hour = cycleHour(cycle, this.clock, now, this.epochMs);
-    const dayIndex = Math.floor((now + this.clock.skewMs) / DAY_MS);
+    const dayIndex = Math.floor((now + this.clock.skewMs + this.clock.tzOffsetMin * 60_000) / DAY_MS);
     const sun = sunAt(hour, lighting, colours, dayIndex);
     this._sun = sun;
     this.lastStep = sunStep(hour, effectiveSunStep(lighting));
@@ -261,6 +283,8 @@ export class LightingController {
 
   private rebuildGeometry(map: GeneratedMap, lighting: LightingSettings, quality: LightingQuality): void {
     this.geometryDirty = false;
+    // Recompute from settings: the GPU-size fallback below overwrites the mode and a smaller map must be able to leave it.
+    this.mode = resolveLightingMode(this.host.webgl(), quality, lighting, this.host.reducedMotion());
     this.destroyLayers();
     const T = map.tileSize;
     const regions = this.regions();

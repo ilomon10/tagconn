@@ -214,7 +214,9 @@ furniture can be nudged with arrow keys or dragged to a new position.
 
 **Removing and placing furniture:** dragging a generated piece locks it, and the generator no longer places a second copy of it (a dragged desk stays one desk). `Delete` on a generated piece removes it from the room: it is drawn as a dashed ghost with a faded icon, counts toward the 48-item limit, and can be brought back with `Delete` again, the Inspector's **Restore** button, or Undo. The Furniture tool's **Add furniture** palette places new pieces; the Inspector's Facing control (N / E / S / W) does what `R` does. Pieces show a small icon and their name on the plan, and a triangle on the side they face.
 
-**Half-tile placement:** furniture positions are now multiples of 0.5 tiles (8 px). Dragging snaps to the half-tile grid; the inspector shows positions like `at 2.5, 1` (tile 2 plus half). Sizes stay whole tiles. A piece placed at `x = 2.5` with `w = 2` covers parts of tiles 2 and 3, and any footprint that overlaps a tile blocks navigation through that full tile — so a half-offset sofa still makes the tiles it touches unusable for standing and sitting.
+**Pieces in front of doors:** a locked blocking piece placed in front of a door is kept where you put it, and the planner reports a `pinned-blocks` warning. It can cut a room off, so move it if the room shows as unreachable.
+
+**Half-tile placement:** furniture positions are now multiples of 0.5 tiles (8 px). Dragging snaps to the half-tile grid; the inspector shows positions like `at 2.5, 1` (tile 2 plus half). Sizes can be halves too (for example 1.5 tiles). A piece placed at `x = 2.5` with `w = 2` covers parts of tiles 2 and 3, and any footprint that overlaps a tile blocks navigation through that full tile — so a half-offset sofa still makes the tiles it touches unusable for standing and sitting.
 
 **Nudging:** arrow keys move by 1 tile; **Shift+Arrows** move by 5 tiles. **Alt+Arrows** move by half a tile (0.5) when a locked furniture item is selected. Shift+Alt = 2.5 tiles per step. Rooms and room-selection nudges ignore Alt (rooms stay on whole tiles).
 

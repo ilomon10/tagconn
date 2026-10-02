@@ -244,14 +244,63 @@ describe('pins: helpers', () => {
     expect(res.items[1]!.facing).toBeUndefined();
   });
 
-  it('M16: the engine plans around a pin, so a one-tile pin never deletes a desk (relocate is only the fallback)', () => {
+  it('M16: a one-tile plant pin loses at most one desk (the engine plans around it; relocate is only the fallback)', () => {
     const desks = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'desks')!;
     const base = generateMap(DEFAULT_LAYOUT);
     const n = base.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk').length;
     const plant: PinnedFurniture = { kind: 'plant', x: 0, y: 0, w: 1, h: 1 };
     const m = generateMap({ ...DEFAULT_LAYOUT, rooms: DEFAULT_LAYOUT.rooms.map((r) => (r.id === desks.id ? { ...r, furniture: [plant] } : r)) });
-    // the engine plans around the pin, so no desk disappears for a one-tile plant
+    // at most one desk may give way to a one-tile plant
     expect(m.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk').length).toBeGreaterThanOrEqual(n - 1);
+  });
+
+  it('M16: dragging any generated desk by one tile loses at most one other desk and never places its slot twice', () => {
+    const desks = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'desks')!;
+    const interior = roomInterior(desks);
+    const base = generateMap(DEFAULT_LAYOUT);
+    const deskCount = (m: GeneratedMap) => m.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk').length;
+    const n = deskCount(base);
+    const slots = base.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk' && f.slotId);
+    expect(slots.length).toBe(n);
+    for (const d of slots) {
+      for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) {
+        const pin: PinnedFurniture = { kind: 'work-desk', x: d.x - interior.x + dx, y: d.y - interior.y + dy, w: d.w, h: d.h, fromSlot: d.slotId! };
+        const m = generateMap({ ...DEFAULT_LAYOUT, builtin: false, rooms: DEFAULT_LAYOUT.rooms.map((r) => (r.id === desks.id ? { ...r, furniture: [pin] } : r)) });
+        const label = `${d.slotId} ${dx},${dy}`;
+        expect(deskCount(m), label).toBeGreaterThanOrEqual(n - 1);
+        const inRoom = m.furniture.filter((f) => f.roomId === desks.id && f.kind === 'work-desk');
+        expect(inRoom.filter((f) => f.x === d.x + dx && f.y === d.y + dy && f.pinned), label).toHaveLength(1);
+        expect(inRoom.some((f) => !f.pinned && f.slotId === d.slotId), label).toBe(false);
+      }
+    }
+  });
+
+  it('M16: a desk pushed aside by a half-tile pin keeps its chairs and their seats', () => {
+    const desks = DEFAULT_LAYOUT.rooms.find((r) => r.type === 'desks')!;
+    const interior = roomInterior(desks);
+    const base = generateMap(DEFAULT_LAYOUT);
+    const first = base.furniture.find((f) => f.roomId === desks.id && f.slotId === 'desk:0')!;
+    const old = base.furniture.find((f) => f.roomId === desks.id && f.slotId === 'desk:6')!;
+    const pin: PinnedFurniture = { kind: 'work-desk', x: first.x - interior.x + 0.5, y: first.y - interior.y, w: first.w, h: first.h, fromSlot: 'desk:0' };
+    const m = generateMap({ ...DEFAULT_LAYOUT, builtin: false, rooms: DEFAULT_LAYOUT.rooms.map((r) => (r.id === desks.id ? { ...r, furniture: [pin] } : r)) });
+    const inRoom = m.furniture.filter((f) => f.roomId === desks.id);
+    const desk = inRoom.find((f) => f.slotId === 'desk:6')!;
+    expect(desk.x).not.toBe(old.x); // the relocate fallback ran
+    const chairs = inRoom.filter((f) => f.groupId === desk.groupId && f.kind === 'chair');
+    const oldChairs = base.furniture.filter((f) => f.roomId === desks.id && f.groupId === old.groupId && f.kind === 'chair');
+    expect(chairs.length).toBe(oldChairs.length);
+    // the chairs moved with the desk, by the same shift
+    for (const c of chairs) {
+      const o = oldChairs.find((q) => q.slotId === c.slotId)!;
+      expect(c.x - o.x).toBe(desk.x - old.x);
+      expect(c.y).toBe(o.y);
+    }
+    // chairs never overlap each other
+    const all = inRoom.filter((q) => q.kind === 'chair');
+    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) expect(overlaps(all[i]!, all[j]!)).toBe(false);
+    // each chair has its seat
+    const seats = m.rooms.find((r) => r.id === desks.id)!.seats;
+    for (const c of chairs) expect(seats.some((st) => st.x === Math.floor(c.x) && st.y === Math.floor(c.y))).toBe(true);
   });
 
   it('a pin that displaces a recipe item takes the item\'s recipe seats with it', () => {

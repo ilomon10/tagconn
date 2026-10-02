@@ -280,18 +280,18 @@ published first. Designs: `docs/design/dual-grid.md`, `docs/design/navigation.md
 - [→] W4 (optional): shape insets per kind, denser recipe pitches, painter audit for fractional sizes → moved to M16 (furniture harmony)
 - [x] Gate: QA (all suites green; frame-sampled walks smooth/any-angle, seats, toggle repaints with no reseat, half-tile editor, reduced motion, phone, zero writes) + review (1 Med: navigator repair returned null → teleport; lows) + security (no exploitable issues; Low: float-tolerant multipleOf) + docs → fixes [x] (give-up keeps last tile path, re-peek after arrive, exact half-step refine, door-frame corners square) → v0.9.0
 
-## M16: Light, time and harmonious rooms → v0.10.0 [in progress]
+## M16: Light, time and harmonious rooms → v0.10.0 [released 2026-10-02]
 
 Plan: `~/.claude-sessions/profiles/ilomon/plans/pasted-content-id-1097-tagconn-features-lucky-milner.md` (sections 15.1–15.4 of the
 2026-10-01 plan, renumbered M16), plus the M15 W4 carry-over (per-kind collision insets, denser recipe pitches, painter audit for
 fractional sizes). Designs: `docs/design/lighting.md`, `docs/design/furnishing.md`.
 
 - [x] W0 designs (lighting + furnishing) + threat check + contract (server clock in snapshot, `office.lighting.*`, `facing`/`slotId` on furniture and pins) [Architect]
-- [~] Host-clock sun cycle (server time + tz, dawn/dusk ramps, fixed/accelerated modes, HUD slider)
-- [ ] Lightmap with wall occlusion (visibility polygons), room-filling lights, window sun shafts, furniture + character shadows
-- [~] Furniture harmony: functional groups, wall/corner/centre affinity, facing, clearance, candidate scoring; collision insets per kind (M15 W4)
-- [ ] Furniture editor: no duplicate on drag (slot consumption), stable decor, displaced items move, labels/icons, rotate/delete/palette
-- [ ] Gate → v0.10.0
+- [x] Host-clock sun cycle (server time + tz, dawn/dusk ramps, fixed/accelerated modes, HUD slider)
+- [x] Lightmap with wall occlusion (visibility polygons), room-filling lights, window sun shafts, furniture + character shadows
+- [x] Furniture harmony: functional groups, wall/corner/centre affinity, facing, clearance, candidate scoring; collision insets per kind (M15 W4)
+- [x] Furniture editor: no duplicate on drag (slot consumption), stable decor, displaced items move, labels/icons, rotate/delete/palette
+- [x] Gate → v0.10.0 (QA browser smoke at 06/12/18/23 per style, review fixes: a dragged desk costs at most one neighbour, relocated desks keep their chairs, ambience follows a reskin; security clean; generate 1.22× v0.9.0)
 
 ## M17: Deep 3/4 RPG renderer (2.5D) → v1.0.0 [todo]
 
@@ -305,6 +305,7 @@ fractional sizes). Designs: `docs/design/lighting.md`, `docs/design/furnishing.m
 - [ ] Flaky under load (full turbo run): server `runs.lifecycle.test.ts` "L7: when run:start is rejected…"; supervisor `service.test.ts` timing cases ("SIGTERM first… tree kill"); server `heroes.test.ts` "takes over a long-idle live subagent's hero…" failed once in the full turbo run (passes alone); procgen bsp 128x96 300-seed cases time out at 60 s when headless Chrome is left running
 - [ ] Desktop CI: a tag push starts two `desktop` runs; one Windows run failed only in `smoke-desktop` temp-dir cleanup (EPERM on the Temp dir after all checks passed, v0.7.0). Make cleanup retry/ignore EPERM and dedupe the trigger
 - [ ] M14 follow-ups: a free-standing infirmary coffee machine is still painted with the 6 px north-wall overdraw; layouts with no lounge/entrance (or no free slot) get no infirmary; remove the deprecated `baseUpdatedAt` skills field after one release; BattleScene.leave() during entry may flash the half-built stage
+- [ ] M16 follow-ups: a palette piece placed over a dense desk row removes desks without a warning; daytime hard-edged glow discs on wall tops (predates M16); sun shafts are subtle and few layouts have windows; Multiverse void is uniform black at night (check intent); lightmap not re-baked after a WebGL context loss; `validateLayout` could warn on `constructor`/`prototype` kinds; tuning constants (bake interval, flicker cap) could move to settings
 - [ ] M15 follow-ups: phone first framing after a floor switch is off-centre until Fit (unclassified, may predate M15); guild dual-grid render perf has little headroom under load (315 ms vs 400 ms cap); live harness for the cat half-gap and NPC chase (unit-tested only); Multiverse realm-border cells take one realm's outline palette
 - [ ] Name plates of characters standing on the same tile (e.g. at a realm gate) overlap; plates are obstacles for bubbles but not for each other
 - [ ] Sprite pack / Tiled map support (optional; the procedural guild skin comes first)

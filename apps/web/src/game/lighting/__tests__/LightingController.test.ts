@@ -168,6 +168,53 @@ describe('LightingController', () => {
     expect(b.sun.phase).toBe('night');
   });
 
+  it('re-announces the phase after setMap (theme switch at an unchanged phase)', () => {
+    const { scene } = stubScene();
+    const { host, phases } = makeHost();
+    const c = new LightingController(scene, host);
+    c.applySettings(lighting(), clock, undefined);
+    c.setMap();
+    expect(phases).toEqual(['night', 'night']);
+  });
+
+  it('leaves the GPU-size overlay fallback once the map fits again', () => {
+    const { scene, log } = stubScene(8);
+    const max = { v: 8 };
+    (scene as { sys: { game: { renderer: { getMaxTextureSize: () => number } } } }).sys.game.renderer.getMaxTextureSize = () => max.v;
+    const { host } = makeHost();
+    const c = new LightingController(scene, host);
+    c.applySettings(lighting(), clock, undefined);
+    expect(log['renderTexture'] ?? 0).toBe(0);
+    max.v = 4096; // stands in for a smaller map
+    c.setMap();
+    expect(log['renderTexture']).toBe(1);
+  });
+
+  it('re-bakes when the runtime quality changes without a settings change', () => {
+    const { scene } = stubScene();
+    const q = { v: 'high' as 'high' | 'low' };
+    const { host, t } = makeHost({ quality: () => q.v });
+    const c = new LightingController(scene, host);
+    c.applySettings(lighting(), clock, undefined);
+    expect(c.bakes).toBe(1);
+    q.v = 'low';
+    t.now += MIN_BAKE_INTERVAL_MS;
+    c.update(0, 16);
+    expect(c.bakes).toBe(2);
+    c.update(0, 16);
+    expect(c.bakes).toBe(2);
+  });
+
+  it('a reconnect that only changes measuredAt does not re-bake; the pre-bake sun is cached', () => {
+    const { scene } = stubScene();
+    const { host } = makeHost();
+    const c = new LightingController(scene, host);
+    expect(c.sun).toBe(c.sun);
+    c.applySettings(lighting(), clock, undefined);
+    c.applySettings(lighting(), { ...clock, measuredAt: 99 }, undefined);
+    expect(c.bakes).toBe(1);
+  });
+
   it('destroy tears the layers down and is safe twice', () => {
     const { scene } = stubScene();
     const { host } = makeHost();

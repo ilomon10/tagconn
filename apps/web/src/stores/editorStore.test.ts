@@ -818,10 +818,10 @@ describe('editorStore M16 furnishing: slots, ghosts, rotate, palette', () => {
     s().endGesture();
     const after = generateMap({ ...s().draft!, background: 'hall', corridorWidth: 2, id: 'drag', builtin: false, createdAt: 0, updatedAt: 0 });
     expect(after.furniture.filter((f) => f.pinned && f.roomId === desks.id && f.kind === 'work-desk')).toHaveLength(1);
-    // never a duplicate: the slot is not placed again; the pin may push a neighbour out of the way (at most one desk lost)
+    // never a duplicate: the slot is not placed again; the pin may cost at most one neighbouring desk
     expect(after.furniture.some((f) => f.roomId === desks.id && !f.pinned && f.slotId === desk.slotId)).toBe(false);
     expect(count(after)).toBeLessThanOrEqual(count(base));
-    expect(count(after)).toBeGreaterThanOrEqual(count(base) - 2);
+    expect(count(after)).toBeGreaterThanOrEqual(count(base) - 1);
   });
 
   it('suppressSlot adds a ghost in one commit; undo removes it; a repeat is refused', () => {

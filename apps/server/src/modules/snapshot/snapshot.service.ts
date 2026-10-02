@@ -1,4 +1,4 @@
-import type { OfficeSnapshot, Session } from '@tagconn/shared';
+import { HostClockSchema, type HostClock, type OfficeSnapshot, type Session } from '@tagconn/shared';
 import type { Deps } from '../../core/di/index.js';
 import { publicAgent } from '../agents/index.js';
 
@@ -48,7 +48,15 @@ export class SnapshotService {
       // M14: stored progress of those heroes (heroes without a row are level 1 on the client).
       progress: d.progressionRepository.listViews(pid, d.settings.get()),
       // M16: the host's wall clock so every browser renders the HOST's day (not its own). Carries no secrets.
-      clock: { serverNow: now, tzOffsetMin: -new Date(now).getTimezoneOffset(), tz: Intl.DateTimeFormat().resolvedOptions().timeZone },
+      clock: hostClock(now),
     };
   }
+}
+
+/** The host clock; a zone name the client schema would reject is omitted (the client then shows the UTC offset). */
+export function hostClock(now: number): HostClock {
+  const clock: HostClock = { serverNow: now, tzOffsetMin: -new Date(now).getTimezoneOffset() };
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (HostClockSchema.shape.tz.safeParse(tz).success) clock.tz = tz;
+  return clock;
 }

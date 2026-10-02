@@ -42,8 +42,11 @@ function wireLive() {
   // 'office:subscribe' (handled in `resync()` below). Kept for any future/alternate server that does.
   s.on('snapshot', (snap) => {
     office().applySnapshot(snap);
-    const at = Date.now();
-    office().setClockSync(syncClock(snap.clock, at, at));
+    // sentAt === receivedAt here (no round trip): never overwrite a better midpoint measurement from resync().
+    if (!office().clockSync) {
+      const at = Date.now();
+      office().setClockSync(syncClock(snap.clock, at, at));
+    }
     if (snap.layouts) useLayoutStore.getState().setLayouts(snap.layouts);
     if (snap.heroes) useHeroStore.getState().setHeroes(snap.heroes);
     useProgressStore.getState().setAll(snap.progress ?? []);

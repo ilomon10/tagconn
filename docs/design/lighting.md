@@ -40,10 +40,11 @@ characters onto walls, lights that move (the Receptionist's candle stays where i
    (`office.lighting.sunStepMinutes`, default 15 game minutes), a light changes, or the map/skin/settings change.
    A frame does only: the step check, the ambient tint uniform and the character cast shadows (§4.3). Measured in
    `lighting.perf.test.ts` (`*.perf.test.ts`, so `pnpm test:perf`).
-6. **Fallback = today's overlay, driven by the sun.** On the canvas renderer, on `low` quality or with
-   `office.lighting.lightmap = false`, the scene keeps one flat tinted rectangle whose alpha is
+6. **Fallback = today's overlay, driven by the sun.** On the canvas renderer, with
+   `office.lighting.lightmap = false`, or when the GPU texture limit is exceeded, the scene keeps one flat tinted rectangle whose alpha is
    `theme.lighting.nightAlpha * (1 - sun.ambient)` (§2.4). Nothing in this milestone makes a floor darker than today's
-   night on that path.
+   night on that path. (As landed: `low` quality keeps the lightmap at quarter resolution with fewer bands, no shafts
+   and blob shadows; see `resolveLightingMode`.)
 7. **`office.theme` keeps working.** `day` / `night` / `auto` map onto the new settings (§1.3): `auto` = the configured
    cycle (default `host-clock`), `day` = fixed 13:00, `night` = fixed 01:00. A per-browser ☰ override wins over both.
 8. **Hot files are PM-only.** `OfficeScene.ts`, `OfficeView.tsx`, `OfficeGame.ts` are wired by the PM in Wave 3 (§7).
@@ -481,7 +482,7 @@ setCastShadow(s: Readonly<CastShadow>): void;
 ```
 
 The cast image is added to the container right after `this.shadow` (so it is under the legs and over the floor), origin
-`(0.5, 1)` at the feet, `scaleX = 1`, `scaleY = len / 10`, rotated to `atan2(dy, dx) - π/2`, alpha from the plan. The existing
+`(0.5, 1)` at the feet, `scaleX = 1`, `scaleY = len / 10`, rotated to `atan2(dx, -dy)` (Phaser rotates clockwise in y-down; as landed in L4), alpha from the plan. The existing
 `ch-shadow` ellipse stays (it is the "blob"). `destroyAll()` destroys it; the selection glow stays on `this.shadow`
 (`Character.ts:697`), untouched.
 

@@ -48,6 +48,42 @@ that moves in the office — ambient effects and shader flicker/wobble alike —
 respects your OS/browser's **reduced motion** preference (`prefers-reduced-motion: reduce`): it's
 not a setting inside tagconn, tagconn just honors the one your system already has.
 
+## Lighting and time of day
+
+The office follows the host's clock. Light ramps smoothly through dawn, day, dusk and night. Every room has its own lights, and the light stops at walls. Windows cast sun shafts by day and moonlight at night. Furniture and characters cast shadows from the strongest light.
+
+**Time of day (this browser only).** The ☰ menu has a **Time of day** row under the screen effect.
+
+| Control | Effect |
+|---|---|
+| Follow the office clock (switch, on by default) | Use the host's time |
+| Slider (when the switch is off) | Pick an hour from 0 to 24 in 15-minute steps; nobody else sees it |
+| **Now** | Jump the slider to the current host time |
+| **Default** | Clear the override and follow the host again |
+
+The hint under the row shows the host's time zone. In Docker the host time zone comes from `TZ` in `.env`; without it the office runs on UTC.
+
+**Settings** (`office.lighting.*`, in Settings or `config/office.yaml`):
+
+| Key | Default | Effect |
+|---|---|---|
+| `cycle` | `host-clock` | `host-clock` follows the server's local time; `fixed` stays at `fixedHour`; `accelerated` runs a whole day every `cycleMinutes` |
+| `fixedHour` | `14` | Hour for `fixed` (decimal, 14.5 = 14:30), and the start hour of `accelerated` |
+| `cycleMinutes` | `24` | Real minutes per day in `accelerated` |
+| `dawnHour` / `duskHour` | `6.5` / `18.5` | Centre of sunrise (0–11) and sunset (13–24) |
+| `twilightHours` | `1.5` | Length of each dawn and dusk ramp |
+| `nightAmbient` | `0.35` | Brightness at deep night (0 = pitch black, 1 = no night) |
+| `lightScale` | `1` | Multiplies the reach of every light |
+| `shadows` | `cast` | `off`, `blob` (the ellipse under characters only), or `cast` (furniture and character shadows from the dominant light) |
+| `lightmap` | `true` | The wall-clipped lightmap; off shows the flat overlay of earlier versions |
+| `resolution` | `half` | Lightmap resolution; `quarter` is used automatically on low quality |
+| `sunStepMinutes` | `15` | Game minutes between light and shadow re-bakes |
+| `windowShafts` | `true` | Sun shafts and moonlight in front of windows |
+
+`office.theme` still works: `day` pins 13:00, `night` pins 01:00, and `auto` follows the cycle above. The browser override wins over both.
+
+**Quality and fallback.** Low shader quality uses a quarter-resolution lightmap, fewer light bands, no shafts and blob shadows. The canvas renderer, or `lightmap: false`, shows a flat overlay whose darkness follows the sun. Reduced motion turns off light flicker.
+
 ## New in this release: screen effects & edge vignette (v0.4.0, unreleased)
 
 ### Screen effect (per browser)

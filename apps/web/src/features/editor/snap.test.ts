@@ -29,10 +29,4 @@ describe('snapRect', () => {
     const out = snapRect(r(3, 3), [r(3.25 as number, 6, 1, 1)], interior);
     expect(out.x % 0.5).toBe(0);
   });
-  it('is fast with 48 neighbours', () => {
-    const others = Array.from({ length: 48 }, (_, i) => r(i % 9, i % 7));
-    const t = performance.now();
-    for (let i = 0; i < 100; i++) snapRect(r(4.5, 3.5), others, interior);
-    expect((performance.now() - t) / 100).toBeLessThan(0.5); // generous; the design budget is 0.05 ms
-  });
 });

@@ -47,6 +47,20 @@ Core: config (layered), db (Drizzle/better-sqlite3, WAL), event-bus, di (awilix)
 Phaser game (`game/*`), which uses a procedurally generated map with zones, generated character textures,
 a half-tile navigation grid with true clearance and macro A* pathfinding, micro line-of-sight and string-pulled
 smooth sub-tile movement, and a dual-grid render pass for wall caps and floor shadows (behind `office.dualGrid`).
+
+**Game lighting** (`game/lighting/`): host-clock sun cycle with smooth dawn/dusk ramps; dynamic lightmap with
+visibility polygons, room/wall/point/window lights, and character/furniture cast shadows (pure planning modules:
+`sun.ts`, `occluders.ts`, `visibility.ts`, `plan.ts`, `shadows.ts`; Phaser `LightmapLayer` and `ShadowLayer` only draw);
+per-frame baking on sun-step or light changes; canvas fallback to flat tinted overlay. Controlled by `office.lighting.*` settings.
+
+**Furniture harmony** (`game/procgen/harmony.ts`, `recipes.ts`): functional furniture groups (chairs face desks,
+sofas come with tables, bookcases stand against walls) with slot identity, facing (N/E/S/W), group affinity and candidate
+scoring. A per-room `MAX_GROUP_INSTANCES` limit prevents repeats. Shapes have directional insets (`KIND_SHAPE` with `insetFor`)
+so characters can stand closer to desks. `placeGroup` / `tryAnchor` honor pinned items and consumed slots.
+
+**Procgen and nav** (`game/procgen/generate.ts`, `game/nav/shapes.ts`): per-kind collision insets, denser furniture recipes,
+half-tile sizes, painter audit for fractional sizes. `rotateShape`, `insetFor`, `KIND_HEIGHT` for shadows/visibility.
+
 `?demo=1` runs a scripted simulation without a server.
 
 ## Settings layering

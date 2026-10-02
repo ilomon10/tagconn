@@ -679,9 +679,29 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
         (c) => insideRect(c, interior) && !reserved.has(key(c)) && !blocked.has(key(c)) && !pinnedCells.has(key(c)),
       );
     };
+    // A relocated desk takes its chairs along (same group, soft): group id -> the shift it got.
+    const shifts = new Map<string, { dx: number; dy: number }>();
+    // Soft items later in the recipe will be kept where they stand, so a moved desk must not land on them: tile -> group id.
+    const softAt = new Map<string, string>();
+    const seatMoves = new Map<string, Point | null>(); // old chair tile -> new tile (null = chair gone)
     for (const item of recipe.furniture) {
       let placed: RecipeItem = item;
-      if (!fitsAt(item)) {
+      const shift = !item.blocking && item.groupId ? shifts.get(item.groupId) : undefined;
+      if (shift) {
+        // The chair follows its desk; it is dropped when the new spot is taken.
+        const to = { ...item, x: item.x + shift.dx, y: item.y + shift.dy };
+        const oldTile = key({ x: Math.floor(item.x), y: Math.floor(item.y) });
+        const free = fitsAt(to) && rectCells(to).every((c) => (softAt.get(key(c)) ?? item.groupId) === item.groupId && !softAt.has(`kept:${key(c)}`));
+        droppedForPins.push(item);
+        if (!free) {
+          seatMoves.set(oldTile, null);
+          continue;
+        }
+        for (const c of rectCells(to)) softAt.set(`kept:${key(c)}`, item.groupId ?? '');
+        moveGrid?.mark(to, CELL_SOFT, 0);
+        seatMoves.set(oldTile, { x: Math.floor(to.x), y: Math.floor(to.y) });
+        placed = to;
+      } else if (!fitsAt(item)) {
         // Only rejected-by-pin/apron items are worth moving; the grid holds everything already kept plus the aprons and pins.
         if (!moveGrid) {
           moveGrid = new OccupancyGrid(interior);
@@ -690,6 +710,11 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
             moveGrid.mark({ x: ax!, y: ay!, w: 1, h: 1 }, CELL_RESERVED, 0);
           }
           for (const k of keptItems) moveGrid.mark(k, k.blocking ? CELL_BLOCKING : CELL_SOFT, 0);
+          for (const it of recipe.furniture) {
+            if (it.blocking || !fitsAt(it)) continue;
+            moveGrid.mark(it, CELL_SOFT, 0);
+            for (const c of rectCells(it)) softAt.set(key(c), it.groupId ?? '');
+          }
         }
         const g = moveGrid;
         const moved = item.blocking
@@ -698,6 +723,7 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
         droppedForPins.push(item);
         if (!moved) continue;
         placed = moved;
+        if (item.groupId) shifts.set(item.groupId, { dx: moved.x - item.x, dy: moved.y - item.y });
         relocatedSeats.push(...seatsFor(moved.kind, moved, interior, moved.facing));
       }
       keptItems.push({ ...placed, roomId: room.id, roomType: room.type });
@@ -708,6 +734,12 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       }
     }
     let recipeSeats = recipe.seats;
+    if (seatMoves.size) {
+      recipeSeats = recipeSeats.flatMap((s) => {
+        const to = seatMoves.get(key(s));
+        return to === undefined ? [s] : to ? [{ ...s, ...to }] : [];
+      });
+    }
     if (droppedForPins.length) {
       // Recipe seats carry no owner, so a seat belongs to a seat-giving item standing cardinally next to it (or under it).
       // M15: a half-offset pin supports the ring around the tiles it covers (identity for integer rects).
@@ -758,6 +790,8 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       }
       return seen;
     };
+    const recipeSeatKeys = new Set(recipeSeats.map(key));
+    const lockedOnlySeats = new Set(pinSeats.map(key).filter((k) => !recipeSeatKeys.has(k)));
     const reachStarts = aprons.length ? aprons : rectCells(interior).slice(0, 1);
     const totalFloor = interior.w * interior.h;
     // M8 8p: step 8b (below) needs this room's local reach too, against the FINAL `blocked`. Captured
@@ -776,7 +810,9 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     while (guard-- > 0) {
       const reach = localReach(blocked, reachStarts);
       lastReach = reach;
-      const unreachableSeats = seats.filter((s) => !reach.has(key(s)));
+      // A locked desk's own seats may sit in a pocket the lock itself seals (dragged next to a tight row); removing the
+      // generated furniture can never open it, so those seats do not drive the retry (they are dropped below instead).
+      const unreachableSeats = seats.filter((s) => !reach.has(key(s)) && !lockedOnlySeats.has(key(s)));
       // The 10% tolerance is against the WALKABLE floor (interior minus blocking furniture), not the
       // whole interior (M8 8n fix): a denser recipe can legitimately cover 60-85% of the room in
       // furniture by design, and none of that occupied area is "unreachable" - it's just occupied.
@@ -798,7 +834,21 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       }
       // Locked furniture is never removed by the retry (M12).
       let lastBlockingIdx = -1;
-      for (let i = keptItems.length - 1; i >= 0; i--) {
+      // M16: with locks in the room the cause is usually local (a drag walled a pocket in), so the generated item standing
+      // next to the first walled-in seat goes, not whatever came last (which would strip the room one item per pass).
+      const stuck = pins.items.length ? unreachableSeats[0] : undefined;
+      for (let i = keptItems.length - 1; stuck && i >= 0; i--) {
+        const it = keptItems[i]!;
+        if (!it.blocking || it.pinned) continue;
+        const c = coveredTileRect(it);
+        const dx = stuck.x < c.x ? c.x - stuck.x : stuck.x >= c.x + c.w ? stuck.x - (c.x + c.w - 1) : 0;
+        const dy = stuck.y < c.y ? c.y - stuck.y : stuck.y >= c.y + c.h ? stuck.y - (c.y + c.h - 1) : 0;
+        if (dx + dy === 1) {
+          lastBlockingIdx = i;
+          break;
+        }
+      }
+      for (let i = keptItems.length - 1; lastBlockingIdx === -1 && i >= 0; i--) {
         if (keptItems[i]!.blocking && !keptItems[i]!.pinned) {
           lastBlockingIdx = i;
           break;
@@ -813,6 +863,15 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
       }
       const removed = keptItems.splice(lastBlockingIdx, 1)[0]!;
       for (const c of rectCells({ x: removed.x, y: removed.y, w: removed.w, h: removed.h })) blocked.delete(key(c));
+    }
+
+    if (lockedOnlySeats.size && lastReach) {
+      const sealed = seats.filter((s) => lockedOnlySeats.has(key(s)) && !lastReach!.has(key(s)));
+      if (sealed.length) {
+        const gone = new Set(sealed.map(key));
+        seats = seats.filter((s) => !gone.has(key(s)));
+        issues.push({ severity: 'warning', code: 'unreachable-seat', message: `${room.name ?? room.type}: ${sealed.length} seat(s) of locked furniture are walled in and were dropped.`, roomIds: [room.id] });
+      }
     }
 
     // --- 8b. standing appliances (M8 8p, docs/design/back-wall.md section 2.3) -----------------

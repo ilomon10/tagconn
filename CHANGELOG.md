@@ -7,6 +7,24 @@ Cut a release with `pnpm release <patch|minor|major>` (see [CONTRIBUTING.md](CON
 
 ## [Unreleased]
 
+### Added
+- **Host-clock sun cycle** (M16): light follows the server's local time with smooth dawn and dusk ramps (`office.lighting.cycle`: `host-clock`, `fixed` or `accelerated`). The ☰ menu's **Time of day** row lets one browser pick its own hour. In Docker, set `TZ` in `.env` (the office otherwise runs on UTC).
+- **Lightmap with wall-clipped room lights** (M16): every room gets ceiling lights, lamps and torches whose light stops at walls; windows cast sun shafts by day and moonlight at night (`office.lighting.lightmap`, `lightScale`, `windowShafts`). Low quality and the canvas renderer use a lighter fallback.
+- **Shadows** (M16): furniture and characters cast shadows from the dominant light (`office.lighting.shadows`: `off`, `blob`, `cast`).
+- **Guild chandeliers** (M16): guild rooms hang a candle chandelier at each room light.
+- **Furniture harmony engine** (M16): Generated furniture now forms functional groups: chairs face desks, sofas come with tables and rugs, bookcases stand against walls, plants take corners. The generator tries multiple arrangements and picks the best one. Furniture pieces have **facing** (N/E/S/W) for asymmetric kinds; chairs face desks, benches face tables. Facing is shown in the Hall Planner with a small triangle and can be rotated with `R`.
+- **Pinned furniture with slot identity and facing** (M16): Locked furniture pieces now keep their identity across rerolls by slot id (`fromSlot`), and support rotation and facing art. `suppressed` pins consume a slot without placing anything, useful for keeping layouts stable.
+- **Hall Planner rotate, delete, palette and snap guides** (M16): `R` rotates a selected furniture item (N/E/S/W; refused if it won't fit). `Delete` removes a locked piece or restores a ghosted one. **Add furniture** palette lets you place custom pieces. Drags snap to walls and neighbouring pieces with cyan guides (hold `Alt` for free placement).
+- **Half-tile sizes and kind glyphs** (M16): furniture sizes may now be halves (e.g. 1.5 tiles), and the Hall Planner shows each piece's icon and name.
+
+### Changed
+- **REQUIRED compatibility note**: Layouts that use half-tile furniture sizes, facing, `fromSlot` or `suppressed` pins are not readable by v0.9 and older — keep backups before downgrading.
+- Procgen room furnishing changed: existing generated rooms look different when their layout is regenerated (pinned items are preserved; unpinned items reflect the new harmony engine).
+
+### Fixed
+- Dragging a generated piece in the Hall Planner no longer leaves a second copy behind.
+- A locked blocking piece in front of a door is kept and reported as a warning instead of being dropped.
+
 ## [0.9.0] - 2026-10-02
 
 ### Added
