@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { ProjectProfileMeta } from './attribution.js';
 import type { Hero } from './heroes.js';
 import type { HeroProgress } from './progression.js';
@@ -137,6 +138,28 @@ export interface OfficeEvent {
   summary: string;
 }
 
+/** M16: the server's wall clock at snapshot time, so every browser renders the HOST's day, not its own. */
+export interface HostClock {
+  /** `Date.now()` on the server when the snapshot was built (epoch ms, UTC). */
+  serverNow: number;
+  /** Minutes EAST of UTC for the server's local zone at `serverNow` (DST-correct): `-new Date(serverNow).getTimezoneOffset()`.
+   *  Jakarta = 420, New York in summer = -240, UTC = 0. */
+  tzOffsetMin: number;
+  /** IANA zone name when the host knows it (`process.env.TZ` or `Intl.DateTimeFormat().resolvedOptions().timeZone`), for the HUD. */
+  tz?: string;
+}
+
+/** M16: runtime guard for a received `HostClock` (the client safeParses it; a failure means "no clock"). */
+export const HostClockSchema = z.object({
+  serverNow: z.number().int().min(0).max(8.64e15),
+  tzOffsetMin: z.number().int().min(-720).max(840),
+  tz: z
+    .string()
+    .max(64)
+    .regex(/^[A-Za-z0-9_+\-/]+$/)
+    .optional(),
+});
+
 export interface OfficeSnapshot {
   projects: Project[];
   sessions: Session[];
@@ -149,4 +172,6 @@ export interface OfficeSnapshot {
   heroes?: Hero[];
   /** M14: stored progress of the subscribed floor(s)' heroes (heroes without a row are level 1). Optional for pre-M14 servers/fixtures. */
   progress?: HeroProgress[];
+  /** M16: host clock (optional so pre-M16 servers and fixtures stay valid; the client falls back to its own clock). */
+  clock?: HostClock;
 }

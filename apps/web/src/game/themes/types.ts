@@ -218,6 +218,27 @@ export interface ThemeDefinition {
   life?: LifeContent;
   /** M13: NPC skins per semantic kind. */
   npcs?: NpcContent;
-  lighting: { dayTint: number; nightTint: number; nightAlpha: number; glowAtNight: boolean };
+  lighting: {
+    dayTint: number;
+    nightTint: number;
+    /** The fallback overlay's max alpha. */
+    nightAlpha: number;
+    glowAtNight: boolean;
+    /** M16 (docs/design/lighting.md section 2.2). Omitted fields fall back to LIGHTING_DEFAULTS[theme.id]. */
+    /** Sky colour blended into the ambient at dawn (modern 0xffd9b0, guild 0xffc890, rift 0xd0b0ff). */
+    dawnTint?: number;
+    /** (modern 0xffb080, guild 0xff9a60, rift 0xb080ff) */
+    duskTint?: number;
+    /** Night ambient colour (modern 0x3a4a80, guild 0x4a3a80, rift 0x30206a). */
+    moonTint?: number;
+    /** Window shaft colour by day (modern 0xfff2c8, guild 0xffd89a, rift 0xa8f0ff). */
+    sunColor?: number;
+    /** Window shaft colour by night (modern 0x9ab0ff, guild 0xa090ff, rift 0x7ef0e8). */
+    moonColor?: number;
+    /** The procgen ceiling light's colour (modern 0xfff4dc cool-white, guild 0xffb060 chandelier amber, rift 0x9fd8ff). */
+    roomLight?: number;
+    /** 0..1 darkness of cast shadows (modern 0.22, guild 0.28, rift 0.2). */
+    shadowAlpha?: number;
+  };
   floorLabel(index: number, projectName: string): string;
 }

@@ -47,6 +47,8 @@ export class SnapshotService {
       heroes: d.heroesRepository.list(pid),
       // M14: stored progress of those heroes (heroes without a row are level 1 on the client).
       progress: d.progressionRepository.listViews(pid, d.settings.get()),
+      // M16: the host's wall clock so every browser renders the HOST's day (not its own). Carries no secrets.
+      clock: { serverNow: now, tzOffsetMin: -new Date(now).getTimezoneOffset(), tz: Intl.DateTimeFormat().resolvedOptions().timeZone },
     };
   }
 }

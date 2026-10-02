@@ -235,6 +235,35 @@ export const SettingsSchema = z.object({
     .object({
       /** Day/night lighting. Independent of `style`. */
       theme: z.enum(['day', 'night', 'auto']).default('auto'),
+      /** M16: host-time sun cycle and the lightmap (docs/design/lighting.md). */
+      lighting: z
+        .object({
+          /** `host-clock`: the server's local time. `fixed`: always `fixedHour`. `accelerated`: a full day every `cycleMinutes` real minutes. */
+          cycle: z.enum(['host-clock', 'fixed', 'accelerated']).default('host-clock'),
+          /** Decimal hour (14.5 = 14:30) used by `fixed`, and the starting hour of `accelerated`. */
+          fixedHour: z.number().min(0).max(24).default(14),
+          /** Real minutes per 24-hour cycle in `accelerated` mode. */
+          cycleMinutes: z.number().min(1).max(1440).default(24),
+          /** Sunrise / sunset centre hours (at least 2 h apart) and the length of each twilight ramp (hours). Stylised, not astronomical. */
+          dawnHour: z.number().min(0).max(11).default(6.5),
+          duskHour: z.number().min(13).max(24).default(18.5),
+          twilightHours: z.number().min(0.25).max(4).default(1.5),
+          /** Ambient brightness at deep night (0 = pitch black, 1 = no night). The old overlay alpha scales with `1 - ambient`. */
+          nightAmbient: z.number().min(0).max(1).default(0.35),
+          /** Multiplies every light's reach (room lights, lamps, torches, windows). */
+          lightScale: z.number().min(0.25).max(3).default(1),
+          /** `off` = none; `blob` = the static ellipse under characters only; `cast` = skewed furniture + character shadows from the dominant light. */
+          shadows: z.enum(['off', 'blob', 'cast']).default('cast'),
+          /** The occluded lightmap (WebGL, `high` quality). Off = the flat sun-driven overlay of M8. */
+          lightmap: z.boolean().default(true),
+          /** Lightmap resolution as a fraction of the world: `half` (1/2) on high quality; `quarter` is used on low automatically. */
+          resolution: z.enum(['half', 'quarter']).default('half'),
+          /** Game minutes between sun updates (lightmap and shadow re-bakes). */
+          sunStepMinutes: z.number().int().min(1).max(120).default(15),
+          /** Sun shafts (moonlight at night) on the floor in front of windows. */
+          windowShafts: z.boolean().default(true),
+        })
+        .prefault({}),
       walkSpeed: z.number().min(10).max(1000).default(120),
       maxCharacters: z.number().int().min(1).default(40),
       showBubbles: z.boolean().default(true),

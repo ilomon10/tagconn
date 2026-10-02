@@ -4,7 +4,8 @@ import { useHeroStore } from '../stores/heroStore';
 import { useOfficeStore } from '../stores/officeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { DEFAULT_ROLES } from './defaultRoles';
-import { demoHeroes } from './mock';
+import { HostClockSchema } from '@tagconn/shared';
+import { demoClock, demoHeroes } from './mock';
 
 /**
  * `mock.ts` demo hero binding (docs/design/living-office.md section 3.2/8i, task W2). No jsdom is
@@ -176,5 +177,15 @@ describe('mock.ts demo hero binding', () => {
       });
       expect(() => demoHeroes.saveDemoHeroes()).not.toThrow();
     });
+  });
+});
+
+describe('demoClock (M16)', () => {
+  it('is a valid HostClock in the browser zone', () => {
+    const now = Date.UTC(2026, 9, 2, 12, 0, 0);
+    const c = demoClock(now);
+    expect(HostClockSchema.safeParse(c).success).toBe(true);
+    expect(c.serverNow).toBe(now);
+    expect(c.tzOffsetMin).toBe(-new Date(now).getTimezoneOffset());
   });
 });

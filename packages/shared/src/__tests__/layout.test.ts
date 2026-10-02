@@ -39,9 +39,9 @@ describe('PinnedFurnitureSchema (M15 half-tile positions)', () => {
     }
   });
 
-  it('keeps sizes whole tiles', () => {
-    expect(PinnedFurnitureSchema.safeParse(pin({ w: 1.5 })).success).toBe(false);
-    expect(PinnedFurnitureSchema.safeParse(pin({ h: 2.5 })).success).toBe(false);
+  it('keeps sizes on the half-tile grid (M16 widened them from whole tiles)', () => {
+    expect(PinnedFurnitureSchema.safeParse(pin({ w: 1.25 })).success).toBe(false);
+    expect(PinnedFurnitureSchema.safeParse(pin({ h: 2.75 })).success).toBe(false);
     expect(PinnedFurnitureSchema.safeParse(pin({ w: 2, h: 3 })).success).toBe(true);
   });
 
@@ -130,5 +130,58 @@ describe('validateLayout with half-tile pins', () => {
   it('flags two pins overlapping by half a tile', () => {
     expect(pinnedIssues([pin({ x: 2, y: 2 }), pin({ x: 2.5, y: 2 })]).map((i) => i.message)).toEqual(['meeting-room: two locked items overlap.']);
     expect(pinnedIssues([pin({ x: 2, y: 2 }), pin({ x: 3, y: 2 })])).toEqual([]);
+  });
+});
+
+describe('PinnedFurnitureSchema (M16 superset: half sizes, facing, fromSlot, suppressed)', () => {
+  const ok = (o: Record<string, unknown>) => PinnedFurnitureSchema.safeParse({ kind: 'plant', x: 1, y: 1, w: 1, h: 1, ...o }).success;
+
+  it('still parses every pre-M16 row (integer sizes, no new fields)', () => {
+    expect(ok({})).toBe(true);
+    expect(ok({ w: 8, h: 8, variant: 3 })).toBe(true);
+    expect(PinnedFurnitureSchema.parse({ kind: 'plant', x: 1, y: 1, w: 2, h: 1 })).toEqual({ kind: 'plant', x: 1, y: 1, w: 2, h: 1 });
+  });
+
+  it('accepts exact half-step sizes and rejects off-grid ones', () => {
+    expect(ok({ w: 2.5 })).toBe(true);
+    expect(ok({ w: 0.5, h: 1.5 })).toBe(true);
+    expect(ok({ w: 2.25 })).toBe(false);
+    expect(ok({ h: 2.500000000000001 })).toBe(false);
+    expect(ok({ w: 0 })).toBe(false);
+    expect(ok({ w: 8.5 })).toBe(false);
+  });
+
+  it('accepts facing, fromSlot and suppressed; rejects bad values', () => {
+    expect(ok({ facing: 'n', fromSlot: 'desk:3', suppressed: true })).toBe(true);
+    expect(ok({ facing: 'x' })).toBe(false);
+    expect(ok({ fromSlot: 'Desk:3' })).toBe(false);
+    expect(ok({ fromSlot: 'desk' })).toBe(false);
+    expect(ok({ suppressed: 'yes' })).toBe(false);
+  });
+
+  it('a suppressed pin overlapping another pin raises no warning', () => {
+    const layout = {
+      width: 24,
+      height: 16,
+      rooms: [
+        { id: 'r', type: 'meeting-room', x: 1, y: 1, w: 9, h: 9, furniture: [pin({ x: 2, y: 2 }), { ...pin({ x: 2, y: 2 }), suppressed: true }] } as LayoutRoom,
+        { id: 'e', type: 'entrance', x: 12, y: 1, w: 4, h: 4 } as LayoutRoom,
+        { id: 's', type: 'stairs', x: 18, y: 1, w: 2, h: 2 } as LayoutRoom,
+      ],
+    };
+    expect(validateLayout(layout).filter((i) => i.code === 'pinned-invalid')).toEqual([]);
+  });
+
+  it('a suppressed pin outside the interior still warns (bounds are checked first)', () => {
+    const layout = {
+      width: 24,
+      height: 16,
+      rooms: [
+        { id: 'r', type: 'meeting-room', x: 1, y: 1, w: 9, h: 9, furniture: [{ ...pin({ x: 20, y: 2 }), suppressed: true }] } as LayoutRoom,
+        { id: 'e', type: 'entrance', x: 12, y: 1, w: 4, h: 4 } as LayoutRoom,
+        { id: 's', type: 'stairs', x: 18, y: 1, w: 2, h: 2 } as LayoutRoom,
+      ],
+    };
+    expect(validateLayout(layout).filter((i) => i.code === 'pinned-invalid')).toHaveLength(1);
   });
 });

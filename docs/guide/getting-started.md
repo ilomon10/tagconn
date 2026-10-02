@@ -76,6 +76,7 @@ pnpm office:up
 
 Docker Compose builds and starts the server (`:4317`) and web app (`:4318`), both bound to
 `127.0.0.1` only. Stop it with `pnpm office:down` (not `pnpm up`, which is `pnpm update`).
+Docker: set `TZ` in `.env` (e.g. `TZ=Asia/Jakarta`) or the office runs on UTC; the day/night cycle follows the host's clock.
 
 ## Verify the install
 

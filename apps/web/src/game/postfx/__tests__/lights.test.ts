@@ -169,4 +169,16 @@ describe('extractLightSources', () => {
       expect(a).toEqual(b);
     });
   });
+
+  it('tags every source with its M16 kind (wall, window, point, tiny) without changing the list', () => {
+    const decor: GeneratedMap['decor'] = [{ x: 0, y: 0, kind: 'wall-light', roomId: 'r1', variant: 0 }];
+    const northWall = [{ x: 4, y: 0, span: 2, kind: 'window', roomId: 'r1', variant: 0 }] as GeneratedMap['northWall'];
+    const furniture = [
+      { x: 0, y: 2, w: 1, h: 1, kind: 'lamp', blocking: true, roomId: 'r1', roomType: 'desks', variant: 0 },
+      { x: 3, y: 2, w: 1, h: 1, kind: 'fireplace', blocking: true, roomId: 'r1', roomType: 'lounge', variant: 0 },
+      { x: 6, y: 2, w: 1, h: 1, kind: 'fridge', blocking: true, roomId: 'r1', roomType: 'lounge', variant: 0 },
+    ] as GeneratedMap['furniture'];
+    const lights = extractLightSources(mapWith(decor, furniture, northWall), 'modern', -1);
+    expect(lights.map((l) => l.kind)).toEqual(['wall', 'window', 'point', 'point', 'tiny']);
+  });
 });

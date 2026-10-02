@@ -1,4 +1,4 @@
-import type { Activity, Agent, AgentStatus, BoundAgentState, Hero, HeroNamePools, OfficeLayout, OfficeLayoutInput, Project, Session, Task, TaskStatus, TokenUsage, Zone } from '@tagconn/shared';
+import type { Activity, Agent, AgentStatus, BoundAgentState, Hero, HostClock, HeroNamePools, OfficeLayout, OfficeLayoutInput, Project, Session, Task, TaskStatus, TokenUsage, Zone } from '@tagconn/shared';
 import { DEFAULT_LAYOUT, HeroSchema, chooseHeroForAgent, generateHeroAppearance, heroRoleFor, heroSeed, namePoolFor, pickHeroName } from '@tagconn/shared';
 import { generateRandomLayout } from '../game/procgen';
 import { useHeroStore } from '../stores/heroStore';
@@ -205,6 +205,18 @@ function releaseAllHeroes() {
 /** Not part of the public demo API — exported so tests can drive the binding rule and the
  *  `localStorage` persistence directly instead of running the full timer-based script. */
 export const demoHeroes = { DEMO_HEROES_KEY, loadDemoHeroes, saveDemoHeroes, bindHeroForAgent, releaseHeroForAgent, releaseAllHeroes };
+
+/** M16: the demo has no server, so the "host" is this browser: `?demo=1` behaves like a local host (docs/design/lighting.md section 1.1). */
+export function demoClock(now: number = Date.now()): HostClock {
+  const clock: HostClock = { serverNow: now, tzOffsetMin: -new Date(now).getTimezoneOffset() };
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz) clock.tz = tz;
+  } catch {
+    // no Intl zone: the HUD simply omits the zone name
+  }
+  return clock;
+}
 
 type Step = [seconds: number, run: () => void];
 

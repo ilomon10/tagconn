@@ -1,4 +1,4 @@
-import { HALF_TILE, LAYOUT_LIMITS, coveredTileRect, isRoomWalled, roomInterior, type LayoutRoom, type PinnedFurniture } from '@tagconn/shared';
+import { HALF_TILE, LAYOUT_LIMITS, coveredTileRect, isRoomWalled, roomInterior, type Facing, type LayoutRoom, type PinnedFurniture } from '@tagconn/shared';
 import type { GeneratedMap, PlacedFurniture } from '../../game/procgen';
 
 /**
@@ -20,7 +20,7 @@ interface Rect {
 export interface FurnitureHit {
   room: LayoutRoom;
   /** Absolute world-tile rect, kind and variant of the item. */
-  item: Rect & { kind: string; variant?: number };
+  item: Rect & { kind: string; variant?: number; facing?: Facing; slotId?: string };
   /** Index into `room.furniture` when the item is a pin, else null (generated). */
   pinIndex: number | null;
 }
@@ -46,15 +46,18 @@ export function unpinnableReason(item: { kind: string; w: number; h: number }): 
 }
 
 /** A generated item as an interior-relative pin. */
-export function pinFromPlaced(item: Rect & { kind: string; variant?: number }, interior: Rect): PinnedFurniture {
+export function pinFromPlaced(item: Rect & { kind: string; variant?: number; facing?: Facing; slotId?: string }, interior: Rect): PinnedFurniture {
   const pin: PinnedFurniture = { kind: item.kind, x: item.x - interior.x, y: item.y - interior.y, w: item.w, h: item.h };
   if (item.variant !== undefined) pin.variant = item.variant;
+  // M16 type plumbing (furnishing.md section 1): a locked generated item keeps its facing and remembers its recipe slot.
+  if (item.facing !== undefined) pin.facing = item.facing;
+  if (item.slotId !== undefined) pin.fromSlot = item.slotId;
   return pin;
 }
 
 /** A pin as an absolute world-tile rect. */
-export function pinToWorld(pin: PinnedFurniture, interior: Rect): Rect & { kind: string; variant?: number } {
-  return { kind: pin.kind, x: interior.x + pin.x, y: interior.y + pin.y, w: pin.w, h: pin.h, ...(pin.variant !== undefined ? { variant: pin.variant } : {}) };
+export function pinToWorld(pin: PinnedFurniture, interior: Rect): Rect & { kind: string; variant?: number; facing?: Facing } {
+  return { kind: pin.kind, x: interior.x + pin.x, y: interior.y + pin.y, w: pin.w, h: pin.h, ...(pin.variant !== undefined ? { variant: pin.variant } : {}), ...(pin.facing !== undefined ? { facing: pin.facing } : {}) };
 }
 
 const intersects = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;

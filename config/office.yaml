@@ -141,7 +141,7 @@ activity: {}
   #             # Overriding this key replaces the whole list, not just one rule.
 
 office: {}
-  # theme: "auto"          # day | night | auto
+  # theme: "auto"          # day | night | auto. auto follows office.lighting.cycle
   # walkSpeed: 120
   # maxCharacters: 40
   # showBubbles: true
@@ -160,6 +160,21 @@ office: {}
   # ambientEffects: true             # dust motes, torch flicker, sparkles (guild style)
   # dualGrid: true                   # M15 dual-grid tile edges: real corners and wall outlines.
   #                                  # false = flat per-tile paint (the pre-M15 look).
+  # lighting: {}                     # M16 host-time sun cycle and lightmap. Docker: set TZ or the host
+  #                                    clock is UTC.
+  #   cycle: "host-clock"            #   host-clock | fixed | accelerated
+  #   fixedHour: 14                  #   0..24 decimal hour for fixed / accelerated start
+  #   cycleMinutes: 24               #   1..1440 real minutes per day (accelerated)
+  #   dawnHour: 6.5                  #   0..11 sunrise centre
+  #   duskHour: 18.5                 #   13..24 sunset centre
+  #   twilightHours: 1.5             #   0.25..4 ramp length
+  #   nightAmbient: 0.35             #   0..1 brightness at deep night
+  #   lightScale: 1                  #   0.25..3 light reach multiplier
+  #   shadows: "cast"                #   off | blob | cast
+  #   lightmap: true                 #   occluded lightmap (WebGL high); false = flat overlay
+  #   resolution: "half"             #   half | quarter
+  #   sunStepMinutes: 15             #   1..120 minutes between re-bakes
+  #   windowShafts: true             #   sun/moon shafts in front of windows
   # pmMode: "single"                 # single | per-session (M8 8b). single: one Guild Master
   #                                  # sprite per floor + a session count chip; per-session:
   #                                  # today's behaviour (one sprite per main session).

@@ -280,13 +280,18 @@ published first. Designs: `docs/design/dual-grid.md`, `docs/design/navigation.md
 - [→] W4 (optional): shape insets per kind, denser recipe pitches, painter audit for fractional sizes → moved to M16 (furniture harmony)
 - [x] Gate: QA (all suites green; frame-sampled walks smooth/any-angle, seats, toggle repaints with no reseat, half-tile editor, reduced motion, phone, zero writes) + review (1 Med: navigator repair returned null → teleport; lows) + security (no exploitable issues; Low: float-tolerant multipleOf) + docs → fixes [x] (give-up keeps last tile path, re-peek after arrive, exact half-step refine, door-frame corners square) → v0.9.0
 
-## M16: Light, time and harmonious rooms → v0.10.0 [todo]
+## M16: Light, time and harmonious rooms → v0.10.0 [in progress]
 
+Plan: `~/.claude-sessions/profiles/ilomon/plans/pasted-content-id-1097-tagconn-features-lucky-milner.md` (sections 15.1–15.4 of the
+2026-10-01 plan, renumbered M16), plus the M15 W4 carry-over (per-kind collision insets, denser recipe pitches, painter audit for
+fractional sizes). Designs: `docs/design/lighting.md`, `docs/design/furnishing.md`.
+
+- [x] W0 designs (lighting + furnishing) + threat check + contract (server clock in snapshot, `office.lighting.*`, `facing`/`slotId` on furniture and pins) [Architect]
 - [ ] Host-clock sun cycle (server time + tz, dawn/dusk ramps, fixed/accelerated modes, HUD slider)
 - [ ] Lightmap with wall occlusion (visibility polygons), room-filling lights, window sun shafts, furniture + character shadows
-- [ ] Furniture harmony: functional groups, wall/corner/centre affinity, facing, clearance, candidate scoring
+- [ ] Furniture harmony: functional groups, wall/corner/centre affinity, facing, clearance, candidate scoring; collision insets per kind (M15 W4)
 - [ ] Furniture editor: no duplicate on drag (slot consumption), stable decor, displaced items move, labels/icons, rotate/delete/palette
-- [ ] Gate → v0.9.0
+- [ ] Gate → v0.10.0
 
 ## M17: Deep 3/4 RPG renderer (2.5D) → v1.0.0 [todo]
 

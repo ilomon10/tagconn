@@ -82,7 +82,7 @@ export function extractLightSources(map: GeneratedMap, style: OfficeStyle | type
     const y = slot.y * T + T / 2;
     // Only the guild torch reads as an open flame (see `guild.ts`'s own `torchFlicker` on its
     // static art) — the modern sconce is electric and the rift lantern is a steady magical glow.
-    sources.push({ x, y, depth: slot.y * T, color: palette.wallLight, radius: WALL_LIGHT_RADIUS, flicker: style === 'guild' });
+    sources.push({ x, y, depth: slot.y * T, color: palette.wallLight, radius: WALL_LIGHT_RADIUS, flicker: style === 'guild', kind: 'wall' });
   }
 
   for (const slot of map.northWall) {
@@ -92,7 +92,7 @@ export function extractLightSources(map: GeneratedMap, style: OfficeStyle | type
     const x = (slot.x + slot.span / 2) * T;
     const y = slot.y * T + T / 2;
     const radius = WINDOW_RADIUS_BASE + (slot.span - 1) * WINDOW_RADIUS_PER_SPAN;
-    sources.push({ x, y, depth: slot.y * T, color: palette.windowLight, radius, flicker: false });
+    sources.push({ x, y, depth: slot.y * T, color: palette.windowLight, radius, flicker: false, kind: 'window' });
   }
 
   for (const f of map.furniture) {
@@ -105,7 +105,7 @@ export function extractLightSources(map: GeneratedMap, style: OfficeStyle | type
     const y = (f.y + f.h / 2) * T;
     const depth = (f.y + f.h) * T;
     if (isTiny) {
-      tiny.push({ x, y, depth, color: f.kind === 'coffee-machine' ? palette.warmLight : palette.coolLight, radius: TINY_LIGHT_RADIUS, flicker: false });
+      tiny.push({ x, y, depth, color: f.kind === 'coffee-machine' ? palette.warmLight : palette.coolLight, radius: TINY_LIGHT_RADIUS, flicker: false, kind: 'tiny' });
       continue;
     }
     sources.push({
@@ -115,6 +115,7 @@ export function extractLightSources(map: GeneratedMap, style: OfficeStyle | type
       color: isFire ? FIRE_COLOR : isWarm ? palette.warmLight : palette.coolLight,
       radius: isFire ? FIRE_RADIUS : isWarm ? WARM_LIGHT_RADIUS : COOL_LIGHT_RADIUS,
       flicker: isFire && style === 'guild',
+      kind: 'point',
     });
   }
 

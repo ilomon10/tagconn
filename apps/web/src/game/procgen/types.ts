@@ -3,7 +3,7 @@
 // See docs/design/guild-hall.md section 4. This file is type-only (no Phaser, no runtime code) so
 // 7d (themes) can import it the moment it lands. `generateMap` and `generateRandomLayout` are
 // declared in generate.ts and bsp.ts respectively and re-exported from index.ts.
-import type { DoorSide, DoorSpec, LayoutIssue, RoomType, Zone } from '@tagconn/shared';
+import type { DoorSide, DoorSpec, Facing, LayoutIssue, RoomType, Zone } from '@tagconn/shared';
 import type { NavGrid } from '../nav/types';
 
 export interface Point {
@@ -90,6 +90,12 @@ export interface PlacedFurniture extends Rect {
   pinned?: true;
   /** M12 G3: this item is the floor's trigger for `action` (exactly one item per action, at most). */
   trigger?: FurnitureAction;
+  /** M16: facing (docs/design/furnishing.md). Painters read `f.facing ?? 's'`; `w`/`h` are already swapped for `e`/`w`. */
+  facing?: Facing;
+  /** M16: the recipe slot this item came from (`<group>:<index>`); absent on pins, appliances, triggers, decor and stairs. */
+  slotId?: string;
+  /** M16: the group instance this item belongs to (`<group>#<n>` within the room), for the editor's "move the group" hint and tests. */
+  groupId?: string;
 }
 export interface Seat extends Point {
   zone: Zone;
@@ -164,6 +170,13 @@ export interface ReachabilityReport {
   unreachableRooms: UnreachableRoom[];
   unreachableSeats: number;
 }
+/** M16: a style-independent ceiling light guaranteed per room (about one per `ROOM_LIGHT_TILES` tiles). No footprint, never blocks. */
+export interface RoomLight extends Point {
+  /** Tile coordinates (integers; `x + 0.5` is the px centre). */
+  roomId: string;
+  /** Reach in tiles before `lightScale`: `clamp(2.5, sqrt(area / count) * 0.9, 5)`. */
+  reachTiles: number;
+}
 export interface GeneratedMap {
   layoutId: string;
   seed: number;
@@ -190,4 +203,6 @@ export interface GeneratedMap {
   frontDoor: Point | null; // outer-wall gate tile (visual only)
   issues: LayoutIssue[]; // generation issues (validateLayout issues are included too)
   reachability: ReachabilityReport;
+  /** M16: ceiling lights per room (lighting.md section 1.7). Optional so pre-M16 maps and hand-built test maps stay valid; `generateMap` always emits it. */
+  lights?: RoomLight[];
 }

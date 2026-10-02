@@ -27,6 +27,9 @@ export interface GradingPreset {
   warmth: number;
 }
 
+/** M16: what a light source is, so the lightmap can size and fade it (docs/design/lighting.md section 1.8). */
+export type LightSourceKind = 'wall' | 'window' | 'point' | 'tiny' | 'ambient-fill';
+
 /** A light-emitting point pulled out of a `GeneratedMap` (torches, lanterns, desk lamps, glowing
  *  screens) that the bloom light layer draws a soft additive glow sprite at. World-space pixels,
  *  same coordinate space as everything else the scene draws in (`tile * tileSize`). */
@@ -42,6 +45,8 @@ export interface LightSource {
   /** Open flames flicker (torches/braziers); electric light sources (lamps, screens, lanterns)
    *  hold steady — flicker is skipped outright under reduced motion by the caller. */
   flicker: boolean;
+  /** M16: wall light / window / lamp-console-equipment-fireplace / indicator LED / procgen ceiling light. */
+  kind: LightSourceKind;
 }
 
 /** Resolved `office.shaders` vignette fields, ready for `VignettePipeline`'s uniforms; `strength: 0`

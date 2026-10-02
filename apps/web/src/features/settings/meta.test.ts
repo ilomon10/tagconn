@@ -32,6 +32,8 @@ const flatten = (prefix: string, o: Record<string, unknown>): string[] =>
 const M14_LEAVES = [...flatten('progression', settings.progression), ...flatten('battle', settings.battle)];
 const nestedLeafPaths: string[] = Object.keys(settings.office.shaders)
   .map((k) => `office.shaders.${k}`)
+  // M16: `office.lighting` is a fixed-shape object whose keys carry their own hints.
+  .concat(Object.keys(settings.office.lighting).map((k) => `office.lighting.${k}`))
   // M12: `office.drama` is a fixed-shape object whose keys carry their own hints.
   .concat(Object.keys(settings.office.drama).map((k) => `office.drama.${k}`))
   // M13: fixed-shape sections with their own hints.
@@ -66,6 +68,12 @@ describe('KEY_HINTS', () => {
   it('covers the M15 dual-grid switch', () => {
     expect(leafPaths).toContain('office.dualGrid');
     expect(KEY_HINTS['office.dualGrid']).toBeTruthy();
+  });
+
+  it('covers every office.lighting key (M16)', () => {
+    expect(Object.keys(settings.office.lighting).filter((k) => !KEY_HINTS[`office.lighting.${k}`])).toEqual([]);
+    expect(ENUM_OPTIONS['office.lighting.cycle']).toEqual(['host-clock', 'fixed', 'accelerated']);
+    expect(numberBounds('office.lighting.sunStepMinutes')).toEqual({ min: 1, max: 120, int: true });
   });
 
   it('covers every office.shaders key (M8 8o)', () => {

@@ -1099,5 +1099,6 @@ function build(layout: OfficeLayout, baseIssues: LayoutIssue[] = [], genOpts?: {
     frontDoor,
     issues: dedupePinIssues(issues),
     reachability: { unreachableRooms, unreachableSeats: unreachableSeatsTotal },
+    lights: [], // M16: planRoomLights (procgen/roomLights.ts, L3)
   };
 }

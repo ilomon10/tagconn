@@ -34,6 +34,13 @@ describe('socket.io /office', () => {
     );
     expect(ack.ok).toBe(true);
     expect((ack as { data: OfficeSnapshot }).data.agents).toEqual([]);
+    // M16: the ack (every resync) carries the host clock; GET /api/snapshot uses the same builder.
+    const clock = (ack as { data: OfficeSnapshot }).data.clock;
+    expect(Math.abs((clock?.serverNow ?? 0) - Date.now())).toBeLessThan(1000);
+    expect(clock?.tzOffsetMin).toBe(-new Date().getTimezoneOffset());
+    expect(clock?.tz).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    const rest = await app.inject({ method: 'GET', url: '/api/snapshot' });
+    expect(rest.json<OfficeSnapshot>().clock?.tzOffsetMin).toBe(-new Date().getTimezoneOffset());
 
     const upsert = new Promise<Agent>((resolve) => client.on('agent:upsert', resolve));
     const [start] = loadFixture();

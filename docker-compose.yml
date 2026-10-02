@@ -16,6 +16,8 @@ services:
       OFFICE_PATHS__AGENTS_DIR: /claude/agents
       OFFICE_PATHS__PROJECTS_DIR: /claude/projects
       OFFICE_CONFIG: /app/config/office.yaml
+      # M16: the office follows the host's clock; set TZ in .env (e.g. Asia/Jakarta) or the container runs on UTC.
+      TZ: ${TZ:-UTC}
     volumes:
       # Named volume (not ./data): Docker would create a host bind dir as root, which the non-root server can't write.
       - office-data:/data

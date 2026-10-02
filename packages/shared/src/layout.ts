@@ -158,17 +158,32 @@ export const HALF_TILE = 0.5;
 /** Exact half-tile check (`v * 2` is exact in IEEE doubles, unlike a float remainder). */
 const isHalfStep = (v: number): boolean => Number.isInteger(v * 2);
 
+export const FACINGS = ['n', 'e', 's', 'w'] as const;
+/** M16: which side an item "looks" at. `s` is the default of every painter (the 3/4 view faces the camera). */
+export type Facing = (typeof FACINGS)[number];
+
+/** M16: a recipe slot id `<group>:<index>` (docs/design/furnishing.md section 3.2), stable for a given room type, interior size, furnish options and seed. */
+export const SLOT_ID_RE = /^[a-z][a-z0-9-]{0,23}:\d{1,3}$/;
+
 export const PinnedFurnitureSchema = z.object({
   kind: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
   /** M15: positions snap to half tiles (`HALF_TILE`); a superset of the old integer grid, so stored rows keep parsing. */
   // zod's float-tolerant multipleOf lets 2.500000000000001 through; doubling a float is exact, so this check is not.
   x: z.number().min(0).max(LAYOUT_LIMITS.maxWidth).refine(isHalfStep, 'x must be a multiple of half a tile'),
   y: z.number().min(0).max(LAYOUT_LIMITS.maxHeight).refine(isHalfStep, 'y must be a multiple of half a tile'),
-  /** Sizes stay whole tiles this milestone (the furniture painters loop per integer tile). */
-  w: z.number().int().min(1).max(8),
-  h: z.number().int().min(1).max(8),
+  /** M16: half-tile sizes (the painters clip to fractional footprints, furnishing.md section 5). Superset of the old `.int()`. */
+  w: z.number().min(0.5).max(8).refine(isHalfStep, 'w must be a multiple of half a tile'),
+  h: z.number().min(0.5).max(8).refine(isHalfStep, 'h must be a multiple of half a tile'),
   /** Paint variant index, as generated. */
   variant: z.number().int().min(0).max(255).optional(),
+  /** M16: facing; omitted = the recipe's or `s`. Only values in the kind's FACING_SUPPORT are honoured (others fall back, with no issue). */
+  facing: z.enum(FACINGS).optional(),
+  /** M16: the recipe slot this pin replaced; the recipe skips that slot instead of placing the item again (no duplicate on drag).
+   *  Omitted = a free pin (palette item, legacy pin). A slot that no longer exists (room resized) is simply ignored. */
+  fromSlot: z.string().regex(SLOT_ID_RE).optional(),
+  /** M16: "deleted from generation": the slot is consumed and nothing is placed. The rect is the slot's rect (the planner draws a ghost).
+   *  A suppressed pin occupies nothing: it is exempt from overlap and apron checks. */
+  suppressed: z.boolean().optional(),
 });
 export type PinnedFurniture = z.infer<typeof PinnedFurnitureSchema>;
 
@@ -436,6 +451,7 @@ export function validateLayout(layout: LayoutGeometry): LayoutIssue[] {
         warn('pinned-invalid', `${name}: a locked ${f.kind} sits outside the room.`, [r.id]);
         continue;
       }
+      if (f.suppressed) continue; // a ghost blocks nothing: exempt from overlap and apron checks (bounds are still checked)
       if (placed.some((p) => rectsIntersect(p, f))) {
         warn('pinned-invalid', `${name}: two locked items overlap.`, [r.id]);
       }
