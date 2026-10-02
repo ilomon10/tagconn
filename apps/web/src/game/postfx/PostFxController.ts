@@ -4,6 +4,7 @@
 // `cameras.main` for the whole scene lifetime (created once, never re-added — see the note on
 // `setPostPipeline` having no dedupe guard, which is why every toggle below is a uniform flip
 // rather than an add/remove), in chain order:
+//   0. `PerspectivePipeline` — M17 far-row compression + haze, FIRST in the chain; disabled via `perspective = 0` (k = 0 is identity).
 //   1. `GradingPipeline` — disabled by swapping in the identity preset (a true no-op grade).
 //   2. `ScreenPipeline` — the monitor screen effect (CRT/LCD/VHS); disabled via `mode = 0` (a true
 //      no-op pass, see its own header).
@@ -22,6 +23,7 @@ import { IDENTITY_GRADING } from './grading';
 import { GradingPipeline } from './GradingPipeline';
 import { extractLightSources } from './lights';
 import { LightLayer } from './LightLayer';
+import { PerspectivePipeline } from './PerspectivePipeline';
 import { createAutoQualityState, effectiveQuality, resolveAutoQuality, sampleAutoQuality, type AutoQualityState } from './quality';
 import { ScreenPipeline } from './ScreenPipeline';
 import type { ShaderQuality } from './types';
@@ -32,10 +34,17 @@ import { VignettePipeline } from './VignettePipeline';
  *  the dark-mode overlay instead of being dimmed by it — the whole point of a "cozy lit" mood. */
 const LIGHT_LAYER_DEPTH = 95_000;
 
+/** M17: `office.camera.perspective` and the theme's `palette.bg` (the haze colour). Optional so older callers keep working (no perspective). */
+export interface PerspectiveInput {
+  amount: number;
+  bgColor: number;
+}
+
 let loggedFailure = false;
 
 export class PostFxController {
   private webgl = false;
+  private perspectivePipeline: PerspectivePipeline | null = null;
   private gradingPipeline: GradingPipeline | null = null;
   private screenPipeline: ScreenPipeline | null = null;
   private vignettePipeline: VignettePipeline | null = null;
@@ -53,12 +62,15 @@ export class PostFxController {
       // before `camera.setPostPipeline(TheClass)` can find them — `addPostPipeline` is itself
       // idempotent (keyed by name), so re-running this on every scene create is harmless.
       const pipelines = (renderer as Phaser.Renderer.WebGL.WebGLRenderer).pipelines;
+      pipelines.addPostPipeline('office-perspective', PerspectivePipeline);
       pipelines.addPostPipeline('office-grading', GradingPipeline);
       pipelines.addPostPipeline('office-screen', ScreenPipeline);
       pipelines.addPostPipeline('office-vignette', VignettePipeline);
 
       const cam = scene.cameras.main;
-      // Chain order: grading -> screen -> vignette.
+      // Chain order: perspective -> grading -> screen -> vignette.
+      cam.setPostPipeline(PerspectivePipeline);
+      this.perspectivePipeline = firstPipeline<PerspectivePipeline>(cam.getPostPipeline(PerspectivePipeline));
       cam.setPostPipeline(GradingPipeline);
       this.gradingPipeline = firstPipeline<GradingPipeline>(cam.getPostPipeline(GradingPipeline));
       cam.setPostPipeline(ScreenPipeline);
@@ -66,7 +78,7 @@ export class PostFxController {
       cam.setPostPipeline(VignettePipeline);
       this.vignettePipeline = firstPipeline<VignettePipeline>(cam.getPostPipeline(VignettePipeline));
       this.lightLayer = new LightLayer(scene, LIGHT_LAYER_DEPTH);
-      this.webgl = !!this.gradingPipeline && !!this.screenPipeline && !!this.vignettePipeline;
+      this.webgl = !!this.perspectivePipeline && !!this.gradingPipeline && !!this.screenPipeline && !!this.vignettePipeline;
     } catch (err) {
       this.disable(err);
     }
@@ -84,12 +96,14 @@ export class PostFxController {
     }
     this.webgl = false;
     try {
+      if (this.perspectivePipeline) this.scene.cameras.main.removePostPipeline(this.perspectivePipeline);
       if (this.gradingPipeline) this.scene.cameras.main.removePostPipeline(this.gradingPipeline);
       if (this.screenPipeline) this.scene.cameras.main.removePostPipeline(this.screenPipeline);
       if (this.vignettePipeline) this.scene.cameras.main.removePostPipeline(this.vignettePipeline);
     } catch {
       /* best effort */
     }
+    this.perspectivePipeline = null;
     this.gradingPipeline = null;
     this.screenPipeline = null;
     this.vignettePipeline = null;
@@ -127,11 +141,16 @@ export class PostFxController {
    * no dedupe guard, so toggling by add/remove would leak duplicates). `reducedMotion` freezes the
    * screen effect's time-based motion (CRT flicker, VHS wobble/drift) — pass `prefersReducedMotion()`.
    */
-  applySettings(shaders: ShaderSettings, style: OfficeStyle | typeof MULTIVERSE_THEME_ID, reducedMotion: boolean, screenOverride?: ScreenOverride): void {
+  applySettings(shaders: ShaderSettings, style: OfficeStyle | typeof MULTIVERSE_THEME_ID, reducedMotion: boolean, screenOverride?: ScreenOverride, perspective?: PerspectiveInput): void {
     if (!this.webgl) return;
     const quality = this.resolveQuality(shaders.quality);
     const cfg = resolveShaderConfig(shaders, style, quality, screenOverride);
     try {
+      if (this.perspectivePipeline) {
+        // `shaders.enabled = false` turns every shader off, perspective included.
+        this.perspectivePipeline.perspective = shaders.enabled && perspective ? perspective.amount : 0;
+        this.perspectivePipeline.bgColor = perspective?.bgColor ?? 0;
+      }
       this.gradingPipeline?.setPreset(cfg.grading ?? IDENTITY_GRADING);
       if (this.screenPipeline) {
         this.screenPipeline.setEffect(cfg.screen.mode);
@@ -157,6 +176,7 @@ export class PostFxController {
    *  handler, `zoomBy`, `resetView`, `fitCamera`), not just `setOfficeState`. */
   setZoom(zoom: number): void {
     if (!this.webgl) return;
+    if (this.perspectivePipeline) this.perspectivePipeline.zoom = zoom;
     if (this.screenPipeline) this.screenPipeline.zoom = zoom;
     if (this.vignettePipeline) this.vignettePipeline.zoom = zoom;
   }
@@ -178,6 +198,7 @@ export class PostFxController {
 
   destroy(): void {
     try {
+      if (this.perspectivePipeline) this.scene.cameras.main.removePostPipeline(this.perspectivePipeline);
       if (this.gradingPipeline) this.scene.cameras.main.removePostPipeline(this.gradingPipeline);
       if (this.screenPipeline) this.scene.cameras.main.removePostPipeline(this.screenPipeline);
       if (this.vignettePipeline) this.scene.cameras.main.removePostPipeline(this.vignettePipeline);
@@ -186,6 +207,7 @@ export class PostFxController {
     }
     this.lightLayer?.destroy();
     this.lightLayer = null;
+    this.perspectivePipeline = null;
     this.gradingPipeline = null;
     this.screenPipeline = null;
     this.vignettePipeline = null;

@@ -126,6 +126,38 @@ describe('renderGeneratedMap', () => {
     }
   });
 
+  it('bakeItem (M17) skips the items it rejects; no option is the unchanged stream; the pass order is untouched', () => {
+    const map = generateMap(DEFAULT_LAYOUT);
+    const seen: string[] = [];
+    const spy = (): ThemeDefinition => ({
+      ...modernTheme,
+      paintFurniture: (g, f, T) => {
+        seen.push(f.kind);
+        modernTheme.paintFurniture(g, f, T);
+      },
+    });
+    const all = makeFakeScene({ recordRects: true });
+    renderGeneratedMap(all.scene, map, spy());
+    expect(seen).toEqual(map.furniture.map((f) => f.kind));
+    const base = makeFakeScene({ recordRects: true });
+    renderGeneratedMap(base.scene, map, modernTheme);
+    expect(all.commands).toEqual(base.commands);
+
+    seen.length = 0;
+    const keep = new Set(map.furniture.filter((_f, i) => i % 2 === 0));
+    const part = makeFakeScene({ recordRects: true });
+    renderGeneratedMap(part.scene, map, spy(), [], { bakeItem: (f) => keep.has(f) });
+    expect(seen).toEqual(map.furniture.filter((f) => keep.has(f)).map((f) => f.kind));
+    // everything before the furniture pass (tiles, dual cells, back wall, decor, doors) is the same prefix, then the kept items, then the bake
+    const none = makeFakeScene({ recordRects: true });
+    renderGeneratedMap(none.scene, { ...map, furniture: [] }, modernTheme);
+    const prefix = none.commands.slice(0, -2);
+    expect(prefix.length).toBeGreaterThan(1000);
+    expect(part.commands.slice(0, prefix.length)).toEqual(prefix);
+    expect(part.commands.slice(-2).map((c) => c[0])).toEqual(['generateTexture', 'destroy']);
+    expect(part.commands.length).toBeLessThan(base.commands.length);
+  });
+
   it('generates the texture exactly once', () => {
     const map = generateMap(DEFAULT_LAYOUT);
     const { scene } = makeFakeScene();

@@ -1,6 +1,6 @@
 import type * as Phaser from 'phaser';
 import type { RoomType } from '@tagconn/shared';
-import type { GeneratedMap, Rect } from '../procgen/types';
+import type { GeneratedMap, PlacedFurniture, Rect } from '../procgen/types';
 import { buildDualCells, cellOrigin, quadrantTile, type DualCell } from './dual/dualGrid';
 import type { DualCtx, ThemeDefinition } from './types';
 
@@ -37,6 +37,8 @@ export interface RenderOptions {
   /** Run the dual pass (2b: wall outlines, corner cuts, floor shadows, cliffs). Defaults to true, matching the
    *  `office.dualGrid` setting; `false` renders the exact pre-M15 command stream (flat per-tile paint). */
   dualGrid?: boolean;
+  /** M17: paint only the items this returns true for (the sprite plan's `baked` set). Omitted = every item, the v0.10 stream. */
+  bakeItem?: (f: PlacedFurniture) => boolean;
 }
 
 /** The order in which a dual cell's quadrants pick its theme (section 2.2): the first non-void one wins. */
@@ -199,7 +201,10 @@ export function renderGeneratedMap(scene: Phaser.Scene, map: GeneratedMap, theme
     themeAt(map.frontDoor.x, map.frontDoor.y).paintDoor(g, 'entrance', map.frontDoor.x * T - T / 2, map.frontDoor.y * T, true, rand);
   }
 
-  for (const f of map.furniture) themeAt(f.x, f.y).paintFurniture(g, f, T);
+  for (const f of map.furniture) {
+    if (opts.bakeItem && !opts.bakeItem(f)) continue;
+    themeAt(f.x, f.y).paintFurniture(g, f, T);
+  }
 
   if (scene.textures.exists(THEME_BASE_TEXTURE)) scene.textures.remove(THEME_BASE_TEXTURE);
   g.generateTexture(THEME_BASE_TEXTURE, map.cols * T, map.rows * T);

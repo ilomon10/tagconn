@@ -53,6 +53,10 @@ function makeStubGameObject(kind: string): Record<string, unknown> {
   ]) {
     obj[m] = chain(m);
   }
+  // M17: sprites keep their depth/alpha and report `active` like a Phaser game object (SeeThroughController reads it).
+  obj.active = true;
+  obj.setDepth = (v: unknown) => ((obj.depth = v), obj);
+  obj.setAlpha = (v: unknown) => ((obj.alpha = v), obj);
   obj.add = (children: unknown) => {
     (obj.children as unknown[]).push(...(Array.isArray(children) ? children : [children]));
     return obj;
@@ -63,6 +67,7 @@ function makeStubGameObject(kind: string): Record<string, unknown> {
     return obj;
   };
   obj.destroy = () => {
+    obj.active = false;
     for (const cb of (obj.destroyListeners as (() => void)[] | undefined) ?? []) cb();
   };
   return obj;
@@ -112,6 +117,15 @@ export interface FakeScene {
   /** Every draw-method name of every `make.graphics()` in call order (`makeStubGraphics` `calls`); with
    *  `recordRects` only. Lets a test compare two whole command streams, not just their rects. */
   calls: string[];
+  /** Every `make.graphics()` draw call WITH its arguments, in call order; with `recordRects` only (M17). */
+  commands: RecordedCommand[];
+  /** Per texture key: the frames added with `textures.get(key).add` (M17 furniture atlas); keys of removed textures are dropped. */
+  frames: Map<string, Map<string, RecordedRect>>;
+  /** Every `generateTexture(key, w, h)` in call order (M17). */
+  generated: { key: string; w: number; h: number }[];
+  /** The args of every `add.image` call, and the images it returned, in call order (M17). */
+  imageArgs: unknown[][];
+  images: Record<string, unknown>[];
 }
 
 export interface FakeSceneOptions {
@@ -128,6 +142,11 @@ export function makeFakeScene(opts: FakeSceneOptions = {}): FakeScene {
   let images = 0;
   const rects: RecordedRect[] = [];
   const allCalls: string[] = [];
+  const allCommands: RecordedCommand[] = [];
+  const frames = new Map<string, Map<string, RecordedRect>>();
+  const generated: { key: string; w: number; h: number }[] = [];
+  const imageArgs: unknown[][] = [];
+  const imageObjs: Record<string, unknown>[] = [];
   const scene = {
     make: {
       graphics: () => {
@@ -136,8 +155,15 @@ export function makeFakeScene(opts: FakeSceneOptions = {}): FakeScene {
         const original = raw.generateTexture!;
         raw.generateTexture = (...args: unknown[]) => {
           textureKeys.add(args[0] as string);
+          generated.push({ key: args[0] as string, w: args[1] as number, h: args[2] as number });
           return original(...args);
         };
+        if (opts.recordRects) {
+          for (const name of Object.keys(raw)) {
+            const inner = raw[name]!;
+            raw[name] = (...args: unknown[]) => (allCommands.push([name, ...args]), inner(...args));
+          }
+        }
         if (opts.recordRects) {
           const originalFillRect = raw.fillRect!;
           raw.fillRect = (...args: unknown[]) => {
@@ -151,12 +177,23 @@ export function makeFakeScene(opts: FakeSceneOptions = {}): FakeScene {
     },
     textures: {
       exists: (key: string) => textureKeys.has(key),
-      remove: (key: string) => textureKeys.delete(key),
+      remove: (key: string) => (frames.delete(key), textureKeys.delete(key)),
+      get: (key: string) => ({
+        add: (name: string, _source: number, x: number, y: number, w: number, h: number) => {
+          if (!textureKeys.has(key)) throw new Error(`texture ${key} does not exist`);
+          const m = frames.get(key) ?? new Map<string, RecordedRect>();
+          frames.set(key, m.set(name, { x, y, w, h }));
+        },
+        has: (name: string) => frames.get(key)?.has(name) ?? false,
+      }),
     },
     add: {
-      image: (..._args: unknown[]) => {
+      image: (...args: unknown[]) => {
         images++;
-        return makeStubGameObject('image');
+        imageArgs.push(args);
+        const obj = makeStubGameObject('image');
+        imageObjs.push(obj);
+        return obj;
       },
       container: (..._args: unknown[]) => makeStubGameObject('container'),
     },
@@ -174,11 +211,65 @@ export function makeFakeScene(opts: FakeSceneOptions = {}): FakeScene {
     imageCount: () => images,
     rects,
     calls: allCalls,
+    commands: allCommands,
+    frames,
+    generated,
+    imageArgs,
+    images: imageObjs,
   };
 }
 
 /** One recorded draw call: method name plus its numeric/other args (colours and alphas included). */
 export type RecordedCommand = [string, ...unknown[]];
+
+type Matrix = [number, number, number, number, number, number];
+const mulMatrix = (p: Matrix, q: Matrix): Matrix => [
+  p[0] * q[0] + p[2] * q[1],
+  p[1] * q[0] + p[3] * q[1],
+  p[0] * q[2] + p[2] * q[3],
+  p[1] * q[2] + p[3] * q[3],
+  p[0] * q[4] + p[2] * q[5] + p[4],
+  p[1] * q[4] + p[3] * q[5] + p[5],
+];
+
+/**
+ * M17: like `makeCommandGraphics` but transform-aware: `save`/`restore`/`translateCanvas`/`rotateCanvas`/`scaleCanvas` keep a matrix
+ * stack and `bounds()` is the world-space box of every filled or stroked shape (corners of the transformed rect). Needed to see where a
+ * rotated or translated painter really lands (the atlas paints every frame under a canvas translate). `bounds()` is null when nothing was drawn.
+ */
+export function makeTransformRecorder(): { g: Phaser.GameObjects.Graphics; bounds: () => { minX: number; minY: number; maxX: number; maxY: number } | null } {
+  let m: Matrix = [1, 0, 0, 1, 0, 0];
+  const stack: Matrix[] = [];
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const addRect = (x: number, y: number, w: number, h: number) => {
+    for (const [px, py] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]] as const) {
+      const wx = m[0] * px + m[2] * py + m[4];
+      const wy = m[1] * px + m[3] * py + m[5];
+      minX = Math.min(minX, wx);
+      maxX = Math.max(maxX, wx);
+      minY = Math.min(minY, wy);
+      maxY = Math.max(maxY, wy);
+    }
+  };
+  const g: Record<string, (...a: number[]) => unknown> = {};
+  for (const n of ['fillStyle', 'lineStyle', 'generateTexture', 'destroy']) g[n] = () => g;
+  g.save = () => (stack.push([...m] as Matrix), g);
+  g.restore = () => ((m = stack.pop() ?? m), g);
+  g.translateCanvas = (x = 0, y = 0) => ((m = mulMatrix(m, [1, 0, 0, 1, x, y])), g);
+  g.rotateCanvas = (a = 0) => ((m = mulMatrix(m, [Math.cos(a), Math.sin(a), -Math.sin(a), Math.cos(a), 0, 0])), g);
+  g.scaleCanvas = (x = 1, y = 1) => ((m = mulMatrix(m, [x, 0, 0, y, 0, 0])), g);
+  g.fillRect = (x = 0, y = 0, w = 0, h = 0) => (addRect(x, y, w, h), g);
+  g.fillCircle = (x = 0, y = 0, r = 0) => (addRect(x - r, y - r, 2 * r, 2 * r), g);
+  g.strokeCircle = g.fillCircle;
+  g.fillEllipse = (x = 0, y = 0, w = 0, h = 0) => (addRect(x - w / 2, y - h / 2, w, h), g);
+  g.strokeEllipse = g.fillEllipse;
+  g.fillTriangle = (x1 = 0, y1 = 0, x2 = 0, y2 = 0, x3 = 0, y3 = 0) =>
+    (addRect(Math.min(x1, x2, x3), Math.min(y1, y2, y3), Math.max(x1, x2, x3) - Math.min(x1, x2, x3), Math.max(y1, y2, y3) - Math.min(y1, y2, y3)), g);
+  return { g: g as unknown as Phaser.GameObjects.Graphics, bounds: () => (minX === Infinity ? null : { minX, minY, maxX, maxY }) };
+}
 
 /**
  * M16 F3 rect-recording harness: records the FULL command stream (for byte-identity snapshots) and the pixel bounds of
