@@ -39,11 +39,10 @@ const inRect = (r: Rect, x: number, y: number) => x >= r.x && y >= r.y && x < r.
 export function renderFloor(scene: Phaser.Scene, map: GeneratedMap, theme: ThemeDefinition, regions: ThemeRegion[], opts: RenderFloorOptions): FloorRender {
   const gen = ++generation;
   const themeAt = (x: number, y: number): ThemeDefinition => regions.find((r) => inRect(r.rect, x, y))?.theme ?? theme;
-  const plan = planSprites({ map, sprites: opts.sprites, maxSprites: opts.maxSprites, themeIdAt: (x, y) => themeAt(x, y).id });
-  const bakedSet = new Set(plan.baked);
+  let plan = planSprites({ map, sprites: opts.sprites, maxSprites: opts.maxSprites, themeIdAt: (x, y) => themeAt(x, y).id });
+  let bakedSet = new Set(plan.baked);
   renderGeneratedMap(scene, map, theme, regions, { dualGrid: opts.dualGrid, bakeItem: (f) => bakedSet.has(f) });
   baseOwners.set(scene.textures, gen);
-  const base = scene.add.image(0, 0, THEME_BASE_TEXTURE).setOrigin(0).setDepth(-10);
 
   const T = map.tileSize;
   const byTheme = new Map<string, FrameSpec[]>();
@@ -60,6 +59,19 @@ export function renderFloor(scene: Phaser.Scene, map: GeneratedMap, theme: Theme
     atlases.push(atlas);
     atlasOf.set(themeId, atlas);
   }
+
+  // Frames an atlas dropped (page or own-texture cap): their items are baked instead, so the base is painted again with them and
+  // the frames' sprites go (a sit-in item is baked already, only its strip goes). Rare path: the default layout demotes nothing.
+  const dropped = (s: FurnitureSprite) => atlasOf.get(s.themeId)?.demoted.has(s.strip ? s.frame.slice(0, -'#strip'.length) : s.frame) ?? false;
+  if (plan.sprites.some(dropped)) {
+    bakedSet = new Set(plan.baked);
+    for (const s of plan.sprites) if (dropped(s)) bakedSet.add(s.item);
+    const kept = plan.sprites.filter((s) => !dropped(s));
+    const demotedItems = plan.sprites.filter((s) => !s.strip && dropped(s)).length;
+    plan = { ...plan, sprites: kept, baked: [...bakedSet], demoted: plan.demoted + demotedItems };
+    renderGeneratedMap(scene, map, theme, regions, { dualGrid: opts.dualGrid, bakeItem: (f) => bakedSet.has(f) });
+  }
+  const base = scene.add.image(0, 0, THEME_BASE_TEXTURE).setOrigin(0).setDepth(-10);
 
   const images: Phaser.GameObjects.Image[] = [];
   for (const s of plan.sprites) {

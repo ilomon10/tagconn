@@ -24,6 +24,9 @@ export const DEPTH_EPSILON = 0.5;
 export const SEE_THROUGH_MIN_HEIGHT = 10;
 export const ATLAS_WIDTH = 1024;
 export const ATLAS_MAX_HEIGHT = 2048;
+/** Hard caps on GPU textures per theme atlas (security audit L1, L2): frames past either cap are demoted to baked. */
+export const ATLAS_MAX_PAGES = 2;
+export const ATLAS_MAX_OWN_TEXTURES = 64;
 
 export const isSitInKind = (k: string): k is SitInKind => Object.hasOwn(FRONT_STRIP_PX, k);
 /** `sit-in` for the table above, `sprite` when `kindHeight(kind) > 0`, else `baked`. Own-property guarded (`constructor` → `baked`). */

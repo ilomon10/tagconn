@@ -1816,7 +1816,6 @@ export class OfficeScene extends Phaser.Scene {
     // Pixel-vignette blocks and the LCD grid follow the camera zoom (incl. transition tweens); a field set.
     this.postFx.setZoom(zoom);
     // M17: the perspective shader snaps whole art rows in phase with the camera scroll.
-    this.postFx.setScroll(this.cameras.main.scrollY);
     // M9 8f: cheaply (once per frame, only on an actual change) keep every hit target's rendered
     // size at or above the WCAG 2.5.8 minimum as the camera zooms — covers the wheel handler,
     // `fitCamera` and the stairs transition's zoom tween alike, since they all just move `cam.zoom`.

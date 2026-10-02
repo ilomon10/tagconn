@@ -7,8 +7,10 @@ import { modernTheme } from '../../themes/modern';
 import { renderGeneratedMap, THEME_BASE_TEXTURE, type ThemeRegion } from '../../themes/renderTheme';
 import type { ThemeDefinition } from '../../themes/types';
 import { makeFakeScene } from '../../themes/__tests__/testUtils';
+import { maxRoomsLayout, toLayout } from '../../nav/__tests__/perfLayout';
 import { renderFloor } from '../renderFloor';
-import { DEPTH_EPSILON, spriteClassOf } from '../tables';
+import { planFrameKey } from '../spritePlan';
+import { ATLAS_MAX_OWN_TEXTURES, ATLAS_MAX_PAGES, DEPTH_EPSILON, spriteClassOf } from '../tables';
 
 const OPTS = { dualGrid: true, sprites: true, maxSprites: 1500 };
 const map = generateMap(DEFAULT_LAYOUT);
@@ -108,5 +110,55 @@ describe('renderFloor', () => {
     const r = renderFloor(fake.scene, map, modernTheme, [], { ...OPTS, maxSprites: 3 });
     expect(r.sprites.filter((s) => s.strip === null)).toHaveLength(3);
     expect(r.plan.demoted).toBeGreaterThan(0);
+  });
+
+  it('caps atlas pages per style on a worst-case layout: demoted items are baked, in the base bake set, and have no image', () => {
+    const big = generateMap(toLayout(maxRoomsLayout(), 'cap'));
+    const T = big.tileSize;
+    const furniture: PlacedFurniture[] = [];
+    for (const room of big.rooms) {
+      for (let i = 0; i < 48; i++) {
+        const size = i % 4 === 0 ? 1 : 2;
+        furniture.push({ x: room.footprint.x + (i % 6) * 2, y: room.footprint.y + Math.floor(i / 6) * 2, w: size, h: size, kind: 'bookcase', blocking: true, roomId: room.id, roomType: room.type, variant: furniture.length });
+      }
+    }
+    const painted: PlacedFurniture[] = [];
+    const spy: ThemeDefinition = { ...modernTheme, paintFurniture: (g, f, t) => (painted.push(f), modernTheme.paintFurniture(g, f, t)) };
+    const fake = makeFakeScene();
+    const r = renderFloor(fake.scene, { ...big, furniture }, spy, [], { ...OPTS, maxSprites: 100000 });
+    expect(T).toBeGreaterThan(0);
+    expect(r.atlases[0]!.pageKeys.length).toBeLessThanOrEqual(ATLAS_MAX_PAGES);
+    const demoted = r.atlases[0]!.demoted;
+    expect(demoted.size).toBeGreaterThan(0);
+    const bakedSet = new Set(r.plan.baked);
+    const spriteItems = new Set(r.sprites.map((s) => s.item));
+    for (const f of furniture) {
+      const d = demoted.has(planFrameKey('modern', f));
+      expect(bakedSet.has(f)).toBe(d);
+      expect(spriteItems.has(f)).toBe(!d);
+    }
+    expect(r.images).toHaveLength(r.sprites.length);
+    expect(fake.imageCount()).toBe(1 + r.sprites.length);
+  });
+
+  it('a painter that always overshoots makes at most ATLAS_MAX_OWN_TEXTURES own textures; the rest are baked', () => {
+    const fake = makeFakeScene();
+    const over: ThemeDefinition = { ...modernTheme, paintFurniture: (g, f, t) => (modernTheme.paintFurniture(g, f, t), g.fillRect(f.x * t - 40, f.y * t - 40, 4, 4)) };
+    const r = renderFloor(fake.scene, map, over, [], OPTS);
+    const a = r.atlases[0]!;
+    const frames = [...r.plan.frames.values()];
+    expect(a.demoted.size).toBeGreaterThan(0);
+    const own = new Set(frames.map((f) => a.textureOf(f.key)).filter((k): k is string => !!k && !a.pageKeys.includes(k)));
+    expect(own.size).toBeLessThanOrEqual(ATLAS_MAX_OWN_TEXTURES);
+    for (const s of r.sprites) expect(a.demoted.has(s.strip ? s.frame.slice(0, -6) : s.frame)).toBe(false);
+    for (const spec of a.demoted) expect(a.textureOf(spec)).toBeUndefined();
+    expect(r.images).toHaveLength(r.sprites.length);
+  });
+
+  it('DEFAULT_LAYOUT: one page, zero own textures, nothing demoted', () => {
+    const r = renderFloor(makeFakeScene().scene, map, modernTheme, [], OPTS);
+    expect(r.atlases[0]!.pageKeys).toHaveLength(1);
+    expect(r.atlases[0]!.demoted.size).toBe(0);
+    expect(r.plan.demoted).toBe(0);
   });
 });

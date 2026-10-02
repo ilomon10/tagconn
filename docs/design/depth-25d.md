@@ -541,14 +541,14 @@ grid already follow `postFx.setZoom(zoom)`.
 export interface PerspectiveUniforms { k: number; hazeStrength: number; haze: [number, number, number]; texel: number }
 export const PERSPECTIVE_K_MAX = 0.3;       // compression of the top row at perspective = 1
 export const PERSPECTIVE_HAZE_MAX = 0.18;
-/** k = perspective * K_MAX; hazeStrength = perspective * HAZE_MAX; haze = theme `palette.bg` as rgb 0..1; texel = zoom / viewportHeightPx
- *  (one art row in UV units) so the remap snaps to whole art rows. perspective 0 → every value 0 (identity). */
+/** k = perspective * K_MAX; hazeStrength = perspective * HAZE_MAX; haze = theme `palette.bg` as rgb 0..1; texel = 1 / viewportHeightPx
+ *  (one screen row in UV units) so the remap snaps to whole screen rows. perspective 0 → every value 0 (identity). */
 export function perspectiveUniforms(perspective: number, zoom: number, viewportH: number, bgColor: number): PerspectiveUniforms;
 ```
 
 Fragment: with `t` = distance from the **top** of the screen in [0, 1] (same orientation convention as `VignettePipeline`,
 checked against it), `srcT = t + k · (t − t²)` (monotonic, derivative `1 + k` at the top and `1 − k` at the bottom: the far
-rows are compressed, the near rows stretched), `srcT = (floor(srcT / texel) + 0.5) · texel` (whole art rows, no blur),
+rows are compressed, the near rows stretched), `srcT = (floor(srcT / texel) + 0.5) · texel` (whole screen rows, no blur; rows snap to screen pixels, not art pixels, because name plates and bubble text are drawn at screen resolution and an art-row snap collapsed them into vertical strips at zoom ≥ 5),
 `color = mix(sample(uv.x, srcT), haze, hazeStrength · (1 − t))`. Registered in `PostFxController` as `office-perspective`
 and attached **first** (before grading), toggled by uniform like the others (`k = 0` is identity; the pipeline stays
 attached, no `setPostPipeline` churn). Canvas renderer and `perspective = 0`: nothing. Known cost: pointer → world mapping
@@ -613,7 +613,7 @@ against v0.10.0 with 40 characters; no dropped frames while following a walking 
 - **Room labels under tall items.** Depth 1 labels can be covered by a bookcase on the label row (today they draw over baked art). Listed as a follow-up: a wall-mounted plaque, or depth `labelAt.y·T + T` with a tested no-overlap against sprites on that row.
 - **Integer zoom leaves margins.** `fit` rounds down, so a floor that fit at 1.4 now shows at 1 with a border. Below 1 the zoom stays continuous, so phones are unaffected. `integerZoom=false` is one toggle away.
 - **Perspective pointer drift.** Documented in §7.3 (≤ 6 px at the default). Hit targets are ≥ 24 px (M9). The hint caps the recommendation at 0.3; the schema allows 1 as the user asked.
-- **Perspective resampling.** Snapping to whole art rows avoids blur but duplicates rows near the bottom at high `k`; at the default it is one duplicated row per ~30. Scrolling shows no shimmer because the snap is in screen space.
+- **Perspective resampling.** Snapping to whole screen rows avoids blur but duplicates rows near the bottom at high `k`; at the default it is one duplicated row per ~30. Scrolling shows no shimmer because the snap is in screen space.
 - **See-through flicker.** A character walking along a cabinet row toggles occluders every tile; `HOLD_MS` and the fade make it a smooth ripple. Desks are excluded by the height threshold.
 - **Atlas rebuild on reskin.** `applySkin` rebuilds base + atlas + images (today it rebuilds the base + ambient). ~+30 ms once per reskin. Generation-suffixed keys avoid an image referencing a removed texture mid-frame.
 - **Memory.** Up to three 1024 × 512 atlases (Multiverse) ≈ 6 MB of GPU textures, next to the 1920 × 1408 base (≈ 10 MB). Fine on every target; `maxTextureSize` is checked and a page over the limit falls back to baking those frames (same path as `demoted`).

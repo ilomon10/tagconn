@@ -21,30 +21,33 @@ export function buildSeeThroughIndex(
 ): SeeThroughIndex {
   const cells = Math.max(0, cols * rows);
   const start = new Int32Array(cells + 1);
-  const span = (s: FurnitureSprite): [number, number, number, number] | null => {
-    if (s.strip !== null || !(s.height >= minHeight)) return null;
-    const [cx, cy, w, h] = coverOf(s, T);
-    if (!(w > 0) || !(h > 0)) return null;
-    return [
-      Math.max(0, Math.floor(cx / T)),
-      Math.min(cols - 1, Math.floor((cx + w - 1e-6) / T)),
-      Math.max(0, Math.floor(cy / T)),
-      Math.min(rows - 1, Math.floor((cy + h - 1e-6) / T)),
-    ];
-  };
-  for (const s of sprites) {
-    const b = span(s);
-    if (!b) continue;
-    for (let ty = b[2]; ty <= b[3]; ty++) for (let tx = b[0]; tx <= b[1]; tx++) start[tx + ty * cols + 1]!++;
+  // One pass computes every sprite's tile span (x0, x1, y0, y1; x1 < 0 = excluded), reused by the count and fill passes.
+  const spans = new Int32Array(sprites.length * 4);
+  for (let i = 0; i < sprites.length; i++) {
+    const s = sprites[i]!;
+    const o = i * 4;
+    spans[o + 1] = -1;
+    if (s.strip !== null || !(s.height >= minHeight)) continue;
+    const up = s.item.againstNorthWall ? MAX_OVERDRAW_PX : 0;
+    const cx = s.x;
+    const cy = s.item.y * T - up;
+    const w = s.item.w * T + 2 * SPRITE_MARGIN.side;
+    const h = up + s.item.h * T + SPRITE_MARGIN.bottom;
+    if (!(w > 0) || !(h > 0)) continue;
+    spans[o] = Math.max(0, Math.floor(cx / T));
+    spans[o + 1] = Math.min(cols - 1, Math.floor((cx + w - 1e-6) / T));
+    spans[o + 2] = Math.max(0, Math.floor(cy / T));
+    spans[o + 3] = Math.min(rows - 1, Math.floor((cy + h - 1e-6) / T));
+    for (let ty = spans[o + 2]!; ty <= spans[o + 3]!; ty++) for (let tx = spans[o]!; tx <= spans[o + 1]!; tx++) start[tx + ty * cols + 1]!++;
   }
   for (let c = 0; c < cells; c++) start[c + 1]! += start[c]!;
   const items = new Int32Array(start[cells] ?? 0);
   const fill = start.slice(0, cells);
-  sprites.forEach((s, i) => {
-    const b = span(s);
-    if (!b) return;
-    for (let ty = b[2]; ty <= b[3]; ty++) for (let tx = b[0]; tx <= b[1]; tx++) items[fill[tx + ty * cols]!++] = i;
-  });
+  for (let i = 0; i < sprites.length; i++) {
+    const o = i * 4;
+    if (spans[o + 1]! < 0) continue;
+    for (let ty = spans[o + 2]!; ty <= spans[o + 3]!; ty++) for (let tx = spans[o]!; tx <= spans[o + 1]!; tx++) items[fill[tx + ty * cols]!++] = i;
+  }
   return { cols, rows, T, sprites, start, items };
 }
 

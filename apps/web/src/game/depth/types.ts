@@ -45,7 +45,8 @@ export interface SpritePlan {
 
 /** Shelf-packed atlas layout (pure; pages are `ATLAS_WIDTH` wide, heights grow in powers of two up to `ATLAS_MAX_HEIGHT`). */
 export interface PackedFrame { key: string; page: number; x: number; y: number; w: number; h: number }
-export interface AtlasLayout { pages: { w: number; h: number }[]; frames: Map<string, PackedFrame> }
+/** `demoted`: keys of frames that would have opened a page past `ATLAS_MAX_PAGES`; they are not in `frames`. */
+export interface AtlasLayout { pages: { w: number; h: number }[]; frames: Map<string, PackedFrame>; demoted: string[] }
 
 /** Per-tile bucket of occluding sprites for the see-through test (CSR like `LightIndex`). */
 export interface SeeThroughIndex {

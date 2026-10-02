@@ -14,7 +14,7 @@ describe('perspectiveUniforms', () => {
     expect(u.haze[0]).toBe(1);
     expect(u.haze[1]).toBeCloseTo(128 / 255);
     expect(u.haze[2]).toBe(0);
-    expect(u.texel).toBeCloseTo(2 / 800);
+    expect(u.texel).toBeCloseTo(1 / 800);
   });
   it('clamps out-of-range and guards a zero viewport', () => {
     expect(perspectiveUniforms(5, 1, 0, 0).k).toBe(PERSPECTIVE_K_MAX);
@@ -23,18 +23,21 @@ describe('perspectiveUniforms', () => {
   });
 });
 
-describe('perspectiveUniforms phase', () => {
-  it('is the fractional art-row offset of the scroll in UV units, 0 for no scroll or a whole number of rows', () => {
-    expect(perspectiveUniforms(0.5, 2, 800, 0).phase).toBe(0);
-    expect(perspectiveUniforms(0.5, 2, 800, 10).phase).toBeCloseTo(0);
-    expect(perspectiveUniforms(0.5, 2, 800, 10.25).phase).toBeCloseTo(0.5 / 800);
-    expect(perspectiveUniforms(0.5, 2, 800, -0.25).phase).toBeCloseTo(1.5 / 800);
-    expect(perspectiveUniforms(0.5, 2, 0, 3.3).phase).toBe(0);
-    expect(perspectiveUniforms(0, 2, 800, 3.3).k).toBe(0);
-  });
-});
-
 describe('perspectiveSource / unproject', () => {
+  it('snaps to screen rows (texel 1/H): the remap is monotonic and stays within the viewport', () => {
+    const H = 800;
+    const { texel, k } = perspectiveUniforms(0.5, 6, H, 0);
+    expect(texel).toBeCloseTo(1 / H);
+    let prev = -1;
+    for (let y = 0; y < H; y++) {
+      const t = (y + 0.5) / H;
+      const snapped = (Math.floor(perspectiveSource(t, k) / texel) + 0.5) * texel;
+      expect(snapped).toBeGreaterThanOrEqual(prev);
+      expect(snapped).toBeGreaterThan(0);
+      expect(snapped).toBeLessThan(1);
+      prev = snapped;
+    }
+  });
   it('keeps the endpoints and is monotonic', () => {
     const k = PERSPECTIVE_K_MAX;
     expect(perspectiveSource(0, k)).toBe(0);

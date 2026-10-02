@@ -3,7 +3,7 @@ import type * as Phaser from 'phaser';
 import type { PlacedFurniture } from '../procgen/types';
 import type { ThemeDefinition } from '../themes/types';
 import { packFrames } from './pack';
-import { FRONT_STRIP_PX, SPRITE_MARGIN, isSitInKind } from './tables';
+import { ATLAS_MAX_OWN_TEXTURES, FRONT_STRIP_PX, SPRITE_MARGIN, isSitInKind } from './tables';
 import type { FrameSpec, PackedFrame } from './types';
 
 export interface FurnitureAtlas {
@@ -12,6 +12,8 @@ export interface FurnitureAtlas {
   frames: Map<string, PackedFrame>;
   /** The texture key holding a frame (or its `#strip`): the page, or the frame's own texture when its painter overshoots its slot. */
   textureOf(frame: string): string | undefined;
+  /** Frame keys left out (page cap or own-texture cap); the caller must bake those items into the base texture instead. */
+  demoted: ReadonlySet<string>;
   destroy(): void;
 }
 export const atlasKey = (themeId: string, page: number, generation: number) => `furniture-atlas-${themeId}-${page}-${generation}`;
@@ -112,7 +114,7 @@ function fitsSlot(rec: Recording, item: PlacedFurniture, T: number): boolean {
  *  frame and `texture.add(frameKey + '#strip', …)` for sit-in frames (strip rect from `FRONT_STRIP_PX`). `generation` makes keys
  *  unique across rebuilds so an in-flight image never points at a removed texture; `destroy()` removes the pages.
  *  A painter that overshoots its slot (so it would bleed into a neighbour) gets a texture of its own instead of a page slot, which
- *  clips it to the slot; `textureOf` says where each frame lives. */
+ *  clips it to the slot (at most `ATLAS_MAX_OWN_TEXTURES`, then the frame is demoted like a page-cap overflow, see `demoted`); `textureOf` says where each frame lives. */
 export function buildFurnitureAtlas(scene: Phaser.Scene, theme: ThemeDefinition, frames: readonly FrameSpec[], T: number, generation: number): FurnitureAtlas {
   const start = import.meta.env.DEV ? performance.now() : 0;
   const layout = packFrames(frames);
@@ -121,6 +123,7 @@ export function buildFurnitureAtlas(scene: Phaser.Scene, theme: ThemeDefinition,
   const pageKeys: string[] = [];
   const owned: string[] = [];
   const where = new Map<string, string>();
+  const demoted = new Set<string>(layout.demoted);
   const gs: Phaser.GameObjects.Graphics[] = [];
   const live = new Set<Phaser.GameObjects.Graphics>();
   const makeGraphics = () => {
@@ -157,6 +160,9 @@ export function buildFurnitureAtlas(scene: Phaser.Scene, theme: ThemeDefinition,
         g.translateCanvas(ox - (fx - SPRITE_MARGIN.side), oy - (fy - SPRITE_MARGIN.top));
         replay(g, rec.ops);
         g.restore();
+      } else if (own.length >= ATLAS_MAX_OWN_TEXTURES) {
+        demoted.add(spec.key);
+        continue;
       } else {
         tex = `${allKeys[slot.page]!}-x${own.length}`;
         ox = 0;
@@ -208,6 +214,7 @@ export function buildFurnitureAtlas(scene: Phaser.Scene, theme: ThemeDefinition,
     pageKeys,
     frames: layout.frames,
     textureOf: (frame) => where.get(frame),
+    demoted,
     destroy() {
       for (const key of owned.splice(0)) if (scene.textures.exists(key)) scene.textures.remove(key);
       where.clear();

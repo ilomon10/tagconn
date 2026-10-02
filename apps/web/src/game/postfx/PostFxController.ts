@@ -181,12 +181,6 @@ export class PostFxController {
     if (this.vignettePipeline) this.vignettePipeline.zoom = zoom;
   }
 
-  /** M17: the camera's scrollY in world px; call every frame while following. The perspective pass snaps to the art rows, which
-   *  start at a fractional screen offset when `scrollY * zoom` is not a whole number of art rows. */
-  setScroll(scrollY: number): void {
-    if (this.perspectivePipeline) this.perspectivePipeline.scrollY = scrollY;
-  }
-
   /** Rebuilds the light layer's glow sprites for the current map — call from `buildWorld`/`applySkin`
    *  (a geometry or style change), not per frame. `shaders`/`style` are the same values passed to
    *  `applySettings`, so the light cap always matches the resolved quality tier. */

@@ -7,7 +7,7 @@ import { makeFakeScene } from '../../themes/__tests__/testUtils';
 import { atlasKey, buildFurnitureAtlas } from '../furnitureAtlas';
 import { packFrames } from '../pack';
 import { planSprites } from '../spritePlan';
-import { FRONT_STRIP_PX, SPRITE_MARGIN, isSitInKind } from '../tables';
+import { ATLAS_MAX_OWN_TEXTURES, FRONT_STRIP_PX, SPRITE_MARGIN, isSitInKind } from '../tables';
 
 const T = 16;
 const frames = () => {
@@ -145,10 +145,14 @@ describe('buildFurnitureAtlas', () => {
     const made = track(fake);
     const atlas = buildFurnitureAtlas(fake.scene, theme, specs, T, 6);
     expect(atlas.pageKeys).toEqual([]);
-    expect(fake.generated.length).toBe(specs.length);
+    expect(fake.generated.length).toBe(Math.min(specs.length, ATLAS_MAX_OWN_TEXTURES));
+    expect(atlas.demoted.size).toBe(specs.length - fake.generated.length);
     expect(fake.generated.every((g) => !g.key.startsWith(atlasKey('modern', 0, 6)) || g.key.includes('-x'))).toBe(true);
     expect(made.every((m) => m.destroyed)).toBe(true);
-    for (const s of specs) expect(atlas.textureOf(s.key)).toContain('-x');
+    for (const s of specs) {
+      if (atlas.demoted.has(s.key)) expect(atlas.textureOf(s.key)).toBeUndefined();
+      else expect(atlas.textureOf(s.key)).toContain('-x');
+    }
     atlas.destroy();
   });
 });

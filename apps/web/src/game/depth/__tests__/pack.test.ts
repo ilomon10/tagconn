@@ -17,7 +17,7 @@ const randomFrames = (n: number, seed: number): FrameSpec[] => {
 };
 
 function expectValid(frames: FrameSpec[]) {
-  const layout = packFrames(frames);
+  const layout = packFrames(frames, Infinity); // the geometry rules, without the page cap
   expect(layout.frames.size).toBe(frames.length);
   const placed = [...layout.frames.values()];
   for (const p of placed) {
@@ -71,11 +71,28 @@ describe('packFrames', () => {
   });
 
   it('handles degenerate input', () => {
-    expect(packFrames([])).toEqual({ pages: [], frames: new Map() });
+    expect(packFrames([])).toEqual({ pages: [], frames: new Map(), demoted: [] });
     const huge = packFrames([spec('huge', 3000, 3000), spec('small', 20, 20)]);
     expect(huge.frames.get('huge')).toMatchObject({ x: 0, y: 0, w: 3000, h: 3000 });
     expect(huge.pages[huge.frames.get('huge')!.page]).toEqual({ w: 4096, h: 4096 });
     expect(huge.pages[huge.frames.get('small')!.page]!.w).toBe(ATLAS_WIDTH);
     expectValid([spec('a', 1, 1)]);
+  });
+});
+
+describe('packFrames page cap', () => {
+  it('never opens more than the cap and lists the overflow in demoted, deterministically', () => {
+    const frames = Array.from({ length: 3000 }, (_v, i) => spec(`k${i}`, 37, 53));
+    const a = packFrames(frames);
+    expect(a.pages.length).toBeLessThanOrEqual(2);
+    expect(a.demoted.length).toBeGreaterThan(0);
+    expect(a.frames.size + a.demoted.length).toBe(frames.length);
+    for (const k of a.demoted) expect(a.frames.has(k)).toBe(false);
+    expect(packFrames([...frames].reverse()).demoted).toEqual(a.demoted);
+  });
+  it('an oversize frame past the cap is demoted', () => {
+    const a = packFrames([spec('a', 2000, 10), spec('b', 2000, 10), spec('c', 2000, 10)], 2);
+    expect(a.pages).toHaveLength(2);
+    expect(a.demoted).toHaveLength(1);
   });
 });
