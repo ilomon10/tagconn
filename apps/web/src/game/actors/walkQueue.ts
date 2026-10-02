@@ -5,11 +5,14 @@
 // time, so the line-of-sight work of a long path is spread over the walk and never paid for a walk that
 // gets replaced). No Phaser: tested directly in actors/__tests__/characterNav.test.ts.
 import { FEET_DY, TILE_PX } from '../nav/constants';
+import type { Facing } from '@tagconn/shared';
 import type { NavPath } from '../nav/navigator';
 import type { Point } from '../procgen/types';
 
-/** M17 hook: the direction a character walks in; today only the sprite's horizontal flip reads it. */
-export type Facing = 'n' | 'e' | 's' | 'w';
+export type { Facing } from '@tagconn/shared';
+/** The three drawn views; `w` is `e` flipped. */
+export type View = 's' | 'n' | 'e';
+export const viewOf = (f: Facing): { view: View; flip: boolean } => (f === 'w' ? { view: 'e', flip: true } : { view: f, flip: false });
 
 /** Feet px of a nav point (the nav point is the feet shifted up by FEET_DY). */
 export const feetOfNavPoint = (p: Point): Point => ({ x: p.x, y: p.y + FEET_DY });

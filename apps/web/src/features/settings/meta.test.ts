@@ -34,6 +34,9 @@ const nestedLeafPaths: string[] = Object.keys(settings.office.shaders)
   .map((k) => `office.shaders.${k}`)
   // M16: `office.lighting` is a fixed-shape object whose keys carry their own hints.
   .concat(Object.keys(settings.office.lighting).map((k) => `office.lighting.${k}`))
+  // M17: `office.camera` and `office.depth` are fixed-shape objects whose keys carry their own hints.
+  .concat(Object.keys(settings.office.camera).map((k) => `office.camera.${k}`))
+  .concat(Object.keys(settings.office.depth).map((k) => `office.depth.${k}`))
   // M12: `office.drama` is a fixed-shape object whose keys carry their own hints.
   .concat(Object.keys(settings.office.drama).map((k) => `office.drama.${k}`))
   // M13: fixed-shape sections with their own hints.
@@ -74,6 +77,18 @@ describe('KEY_HINTS', () => {
     expect(Object.keys(settings.office.lighting).filter((k) => !KEY_HINTS[`office.lighting.${k}`])).toEqual([]);
     expect(ENUM_OPTIONS['office.lighting.cycle']).toEqual(['host-clock', 'fixed', 'accelerated']);
     expect(numberBounds('office.lighting.sunStepMinutes')).toEqual({ min: 1, max: 120, int: true });
+  });
+
+  it('covers every office.camera and office.depth key (M17)', () => {
+    const keys = [
+      ...Object.keys(settings.office.camera).map((k) => `office.camera.${k}`),
+      ...Object.keys(settings.office.depth).map((k) => `office.depth.${k}`),
+    ];
+    expect(keys.length).toBeGreaterThan(0);
+    expect(keys.filter((k) => !KEY_HINTS[k])).toEqual([]);
+    expect(ENUM_OPTIONS['office.camera.follow']).toEqual(['manual', 'selected']);
+    expect(numberBounds('office.camera.deadzone')).toEqual({ min: 0, max: 0.8, int: false });
+    expect(numberBounds('office.depth.maxSprites')).toEqual({ min: 0, max: 5000, int: true });
   });
 
   it('covers every office.shaders key (M8 8o)', () => {

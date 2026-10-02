@@ -264,6 +264,38 @@ export const SettingsSchema = z.object({
           windowShafts: z.boolean().default(true),
         })
         .prefault({}),
+      /** M17: camera behaviour (docs/design/depth-25d.md section 7). */
+      camera: z
+        .object({
+          /** `manual`: only the Follow button follows a character (today). `selected`: selecting a character also starts following it. */
+          follow: z.enum(['manual', 'selected']).default('manual'),
+          /** Fraction of the safe viewport (width and height) the followed character may roam before the camera moves; 0 = always centred. */
+          deadzone: z.number().min(0).max(0.8).default(0.3),
+          /** Follow smoothing time constant (ms, exponential); 0 = instant. Reduced motion is always instant. */
+          followLagMs: z.number().int().min(0).max(2000).default(180),
+          /** Snap zoom levels at or above 1 to whole numbers so art pixels stay crisp; below 1 the zoom stays continuous, so a floor can still fit a phone. */
+          integerZoom: z.boolean().default(true),
+          /** Subtle perspective post-shader (far rows compressed, distance haze); 0 = off. WebGL only; keep below 0.3 for exact pointer hits. */
+          perspective: z.number().min(0).max(1).default(0.1),
+        })
+        .prefault({}),
+      /** M17: depth rendering (docs/design/depth-25d.md): y-sorted furniture sprites, see-through, 4-direction characters. */
+      depth: z
+        .object({
+          /** Tall furniture as y-sorted sprites (walk behind bookcases and desks). Off = every item baked flat, the v0.10 look. Seat front strips always render. */
+          sprites: z.boolean().default(true),
+          /** Alpha of a tall item while it hides a character (1 = no fade). */
+          seeThrough: z.number().min(0).max(1).default(0.45),
+          /** Fade in/out time of the see-through, ms. */
+          seeThroughFadeMs: z.number().int().min(0).max(1000).default(160),
+          /** Cap on furniture sprites per floor; the lowest items past it are baked flat (tall items are kept first). */
+          maxSprites: z.number().int().min(0).max(5000).default(1500),
+          /** Front, back and side views with walk cycles. Off = the single front view with a horizontal flip. */
+          fourDirections: z.boolean().default(true),
+          /** Walls cast day shadows onto the floor (length from the wall height and the sun's elevation). */
+          wallShadows: z.boolean().default(true),
+        })
+        .prefault({}),
       walkSpeed: z.number().min(10).max(1000).default(120),
       maxCharacters: z.number().int().min(1).default(40),
       showBubbles: z.boolean().default(true),
